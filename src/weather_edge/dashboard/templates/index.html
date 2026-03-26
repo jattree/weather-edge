@@ -1088,7 +1088,7 @@
         }
         .blotter-header, .blotter-row {
             display: grid;
-            grid-template-columns: 40px 65px 42px 35px 42px 50px 50px 50px 56px 52px;
+            grid-template-columns: 40px 65px 42px 35px 42px 50px 50px 50px 56px 52px 62px;
             gap: 6px;
             padding: 5px 4px;
             font-family: 'JetBrains Mono', monospace;
@@ -2593,7 +2593,12 @@
                     pnlDiv.textContent = fmtPnl(t.pnl);
                 } else {
                     pnlDiv.className = 'trade-pnl pending';
-                    pnlDiv.textContent = 'open';
+                    var openText = 'open';
+                    if (t.resolves_in) {
+                        openText += ' \u00B7 ' + (t.resolves_in === 'OVERDUE' ? '\u231B OVERDUE' : '\u23F1 ' + t.resolves_in);
+                    }
+                    pnlDiv.textContent = openText;
+                    if (t.resolves_in === 'OVERDUE') pnlDiv.style.color = 'var(--orange)';
                 }
 
                 var timeEl = el('div', 'trade-time', t.time || '');
@@ -2737,15 +2742,19 @@
                         status: t.status || (t.pnl != null ? (t.pnl >= 0 ? 'won' : 'lost') : 'open'),
                         description: t.description || '',
                         tier: t.tier || 'core',
+                        resolves_in: t.resolves_in || '',
+                        resolves_at: t.resolves_at || null,
                         _raw: t
                     });
                 } else {
-                    /* Update P&L/status of existing trade */
+                    /* Update P&L/status/resolution of existing trade */
                     for (var i = 0; i < allTrades.length; i++) {
                         var x = allTrades[i];
                         if (((x.time || '') + '_' + (x.city || '') + '_' + (x.side || '')) === key) {
                             x.pnl = t.pnl;
                             x.status = t.status || (t.pnl != null ? (t.pnl >= 0 ? 'won' : 'lost') : 'open');
+                            x.resolves_in = t.resolves_in || '';
+                            x.resolves_at = t.resolves_at || null;
                             x._raw = t;
                             break;
                         }
@@ -2813,7 +2822,8 @@
                 { key: 'entry', label: 'Entry' },
                 { key: 'exit', label: 'Exit' },
                 { key: 'pnl', label: 'P&L' },
-                { key: 'status', label: 'Status' }
+                { key: 'status', label: 'Status' },
+                { key: 'resolves_in', label: 'Resolves' }
             ];
             cols.forEach(function(c) {
                 var hCell = el('span', null, c.label + (blotterSortCol === c.key ? (blotterSortAsc ? ' \u25B2' : ' \u25BC') : ''));
@@ -2871,6 +2881,16 @@
                     else if (t.status === 'lost') statusCell.style.color = 'var(--red)';
                     else statusCell.style.color = 'var(--yellow)';
 
+                    var resolvesCell = el('span', null, t.status === 'open' && t.resolves_in ? t.resolves_in : '--');
+                    if (t.resolves_in === 'OVERDUE') {
+                        resolvesCell.style.color = 'var(--orange)';
+                        resolvesCell.style.fontWeight = '600';
+                    } else if (t.status === 'open' && t.resolves_in) {
+                        resolvesCell.style.color = 'var(--cyan)';
+                    } else {
+                        resolvesCell.style.color = 'var(--text-muted)';
+                    }
+
                     row.appendChild(idCell);
                     row.appendChild(timeCell);
                     row.appendChild(cityCell);
@@ -2881,6 +2901,7 @@
                     row.appendChild(exitCell);
                     row.appendChild(pnlCell);
                     row.appendChild(statusCell);
+                    row.appendChild(resolvesCell);
                     tableWrap.appendChild(row);
 
                     row.addEventListener('click', function() { openTradeModal(t._raw); });
@@ -2891,7 +2912,7 @@
         }
 
         function exportBlotterCSV() {
-            var lines = ['ID,Time,City,Side,Strategy,Size,Entry,Exit,PnL,Status'];
+            var lines = ['ID,Time,City,Side,Strategy,Size,Entry,Exit,PnL,Status,Resolves'];
             allTrades.forEach(function(t) {
                 lines.push([
                     t.id, t.time, t.city, t.side, t.strategy,
@@ -2899,7 +2920,8 @@
                     t.entry != null ? t.entry.toFixed(4) : '',
                     t.exit != null ? t.exit.toFixed(4) : '',
                     t.pnl != null ? t.pnl.toFixed(2) : '',
-                    t.status
+                    t.status,
+                    t.resolves_in || ''
                 ].join(','));
             });
             var csv = lines.join('\n');
@@ -3302,7 +3324,28 @@
                 barFill.style.background = g.risk > 0 ? 'var(--cyan)' : 'var(--border)';
                 barWrap.appendChild(barFill);
 
-                var statEl = el('div', 'calendar-stat', g.count + ' positions ($' + g.risk.toFixed(0) + ' at risk)');
+                /* Show earliest resolution countdown for open trades in this date group */
+                var resText = '';
+                if (g.count > 0) {
+                    var openTrades = allTrades.filter(function(t) { return t.status === 'open' && t.resolves_in; });
+                    if (openTrades.length > 0) {
+                        /* Find the earliest resolves_at among trades in this group */
+                        var earliest = null;
+                        openTrades.forEach(function(t) {
+                            if (t.resolves_in === 'OVERDUE') {
+                                if (!earliest) earliest = 'OVERDUE';
+                            } else if (t.resolves_in && (!earliest || earliest === 'OVERDUE')) {
+                                earliest = t.resolves_in;
+                            }
+                        });
+                        if (earliest) {
+                            resText = earliest === 'OVERDUE' ? ' \u00B7 OVERDUE' : ' \u00B7 Resolves in ' + earliest;
+                        }
+                    }
+                }
+
+                var statEl = el('div', 'calendar-stat', g.count + ' positions ($' + g.risk.toFixed(0) + ' at risk)' + resText);
+                if (resText.indexOf('OVERDUE') >= 0) statEl.style.color = 'var(--orange)';
 
                 row.appendChild(dateEl);
                 row.appendChild(barWrap);
