@@ -354,7 +354,10 @@ async def api_start():
     """Start automated trading."""
     global trading_active
     trading_active = True
+    latest_state["trading_active"] = True
     logger.info("Trading STARTED")
+    # Broadcast the state change immediately so UI updates
+    await broadcast(latest_state)
     # Run first cycle in background, don't block the response
     asyncio.create_task(run_dashboard_cycle())
     return {"status": "started", "trading_active": True}
