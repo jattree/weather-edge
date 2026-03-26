@@ -208,10 +208,73 @@
             z-index: 1;
             display: grid;
             grid-template-columns: 310px 1fr 300px;
-            grid-template-rows: 1fr 300px;
-            height: calc(100vh - 50px);
+            grid-template-rows: 1fr;
+            height: calc(100vh - 50px - 380px);
             gap: 1px;
             background: var(--border-subtle);
+        }
+
+        /* ---- BOTTOM TABS AREA ---- */
+        .bottom-area {
+            position: relative;
+            z-index: 1;
+            height: 380px;
+            background: var(--bg-panel);
+            border-top: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+        }
+        .tab-bar {
+            display: flex;
+            gap: 0;
+            border-bottom: 1px solid var(--border);
+            background: var(--bg-deep);
+            flex-shrink: 0;
+            overflow-x: auto;
+        }
+        .tab-btn {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 10px;
+            font-weight: 600;
+            letter-spacing: 1px;
+            padding: 8px 16px;
+            color: var(--text-dim);
+            background: transparent;
+            border: none;
+            border-bottom: 2px solid transparent;
+            cursor: pointer;
+            text-transform: uppercase;
+            white-space: nowrap;
+            transition: all var(--transition-fast);
+        }
+        .tab-btn:hover {
+            color: var(--text);
+            background: var(--bg-card);
+        }
+        .tab-btn.active {
+            color: var(--cyan);
+            border-bottom-color: var(--cyan);
+            background: var(--bg-panel);
+        }
+        .tab-btn .tab-badge {
+            font-size: 9px;
+            padding: 1px 5px;
+            border-radius: 8px;
+            margin-left: 6px;
+            background: var(--bg-elevated);
+            color: var(--text-dim);
+        }
+        .tab-btn.active .tab-badge {
+            background: var(--cyan-dim);
+            color: var(--cyan);
+        }
+        .tab-content {
+            display: none;
+            flex: 1;
+            overflow: hidden;
+        }
+        .tab-content.active {
+            display: flex;
         }
 
         /* ---- PANELS ---- */
@@ -517,16 +580,7 @@
             display: block;
         }
 
-        /* ---- TRADE LOG AREA ---- */
-        .trade-log-area {
-            grid-column: 2 / 4;
-        }
-        .trade-log-grid {
-            display: grid;
-            grid-template-columns: 1fr 260px;
-            height: 100%;
-            gap: 20px;
-        }
+        /* ---- TRADE LOG styles (used in Tab 1 and Tab 2) ---- */
         .trade-log-scroll {
             overflow-y: auto;
         }
@@ -539,6 +593,7 @@
             gap: 10px;
             transition: background var(--transition-fast);
             animation: tradeSlideIn 0.3s ease;
+            cursor: pointer;
         }
         @keyframes tradeSlideIn {
             from { opacity: 0; transform: translateY(-4px); }
@@ -852,6 +907,482 @@
             to { opacity: 1; transform: translateY(0); }
         }
 
+        /* ---- MODAL OVERLAY ---- */
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            z-index: 1000;
+            background: rgba(6, 8, 13, 0.8);
+            backdrop-filter: blur(4px);
+            align-items: center;
+            justify-content: center;
+        }
+        .modal-overlay.visible {
+            display: flex;
+        }
+        .modal-box {
+            background: var(--bg-panel);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-lg);
+            box-shadow: var(--shadow-lg);
+            padding: 24px;
+            max-width: 600px;
+            width: 90%;
+            max-height: 80vh;
+            overflow-y: auto;
+            animation: fadeIn 0.2s ease;
+        }
+        .modal-title {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 14px;
+            font-weight: 700;
+            color: var(--text-white);
+            letter-spacing: 1px;
+            margin-bottom: 16px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        .modal-close {
+            background: var(--bg-elevated);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            color: var(--text-dim);
+            width: 28px;
+            height: 28px;
+            font-size: 16px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all var(--transition-fast);
+        }
+        .modal-close:hover {
+            color: var(--text-bright);
+            border-color: var(--border-active);
+        }
+        .modal-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 0;
+            border-bottom: 1px solid var(--border-subtle);
+        }
+        .modal-row:last-child { border-bottom: none; }
+        .modal-label {
+            color: var(--text-dim);
+            font-size: 12px;
+        }
+        .modal-value {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 12px;
+            font-weight: 500;
+            color: var(--text-bright);
+        }
+
+        /* ---- P&L CHART ---- */
+        .pnl-chart-wrap {
+            position: relative;
+            height: 180px;
+            width: 100%;
+        }
+        .pnl-chart-wrap canvas {
+            width: 100%;
+            height: 100%;
+        }
+        .pnl-timeframe-bar {
+            display: flex;
+            gap: 4px;
+            margin-bottom: 8px;
+        }
+        .pnl-tf-btn {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 9px;
+            font-weight: 600;
+            padding: 3px 8px;
+            border-radius: 3px;
+            border: 1px solid var(--border-subtle);
+            background: transparent;
+            color: var(--text-dim);
+            cursor: pointer;
+            transition: all var(--transition-fast);
+        }
+        .pnl-tf-btn:hover { color: var(--text); border-color: var(--border-active); }
+        .pnl-tf-btn.active {
+            color: var(--cyan);
+            border-color: var(--cyan);
+            background: var(--cyan-dim);
+        }
+
+        /* ---- RISK METRICS ---- */
+        .risk-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 8px;
+        }
+        .risk-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius);
+            padding: 10px 12px;
+            text-align: center;
+        }
+        .risk-label {
+            font-size: 9px;
+            font-weight: 600;
+            color: var(--text-dim);
+            text-transform: uppercase;
+            letter-spacing: 0.8px;
+            margin-bottom: 4px;
+        }
+        .risk-value {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 16px;
+            font-weight: 700;
+            color: var(--text-bright);
+        }
+
+        /* ---- BLOTTER TABLE ---- */
+        .blotter-controls {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 10px;
+            flex-wrap: wrap;
+        }
+        .blotter-filter-btn {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 9px;
+            font-weight: 600;
+            padding: 3px 8px;
+            border-radius: 3px;
+            border: 1px solid var(--border-subtle);
+            background: transparent;
+            color: var(--text-dim);
+            cursor: pointer;
+            transition: all var(--transition-fast);
+        }
+        .blotter-filter-btn:hover { color: var(--text); }
+        .blotter-filter-btn.active {
+            color: var(--cyan);
+            border-color: var(--cyan);
+            background: var(--cyan-dim);
+        }
+        .blotter-export-btn {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 9px;
+            font-weight: 600;
+            padding: 3px 10px;
+            border-radius: 3px;
+            border: 1px solid rgba(34, 197, 94, 0.3);
+            background: var(--green-dim);
+            color: var(--green);
+            cursor: pointer;
+            margin-left: auto;
+            transition: all var(--transition-fast);
+        }
+        .blotter-export-btn:hover { filter: brightness(1.2); }
+        .blotter-table-wrap {
+            overflow-y: auto;
+            flex: 1;
+        }
+        .blotter-header, .blotter-row {
+            display: grid;
+            grid-template-columns: 40px 65px 42px 35px 42px 50px 50px 50px 56px 52px;
+            gap: 6px;
+            padding: 5px 4px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 10px;
+            align-items: center;
+        }
+        .blotter-header {
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.8px;
+            border-bottom: 1px solid var(--border);
+            position: sticky;
+            top: 0;
+            background: var(--bg-panel);
+            z-index: 2;
+            cursor: pointer;
+            user-select: none;
+        }
+        .blotter-header span:hover {
+            color: var(--text-dim);
+        }
+        .blotter-row {
+            border-bottom: 1px solid var(--border-subtle);
+            color: var(--text);
+            transition: background var(--transition-fast);
+            cursor: pointer;
+        }
+        .blotter-row:hover {
+            background: var(--bg-card);
+        }
+
+        /* ---- HEAT MAP ---- */
+        .heatmap-grid {
+            display: grid;
+            gap: 3px;
+            grid-template-columns: repeat(auto-fill, minmax(70px, 1fr));
+        }
+        .heatmap-cell {
+            border-radius: var(--radius-sm);
+            padding: 8px 6px;
+            text-align: center;
+            transition: all var(--transition);
+            cursor: default;
+        }
+        .heatmap-city {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 10px;
+            font-weight: 700;
+            color: var(--text-white);
+            letter-spacing: 0.5px;
+        }
+        .heatmap-edge {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 10px;
+            font-weight: 600;
+            margin-top: 2px;
+        }
+
+        /* ---- CALENDAR ---- */
+        .calendar-row {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 8px 0;
+            border-bottom: 1px solid var(--border-subtle);
+        }
+        .calendar-date {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11px;
+            font-weight: 600;
+            color: var(--text-bright);
+            min-width: 80px;
+        }
+        .calendar-bar-wrap {
+            flex: 1;
+            height: 8px;
+            background: var(--border);
+            border-radius: 4px;
+            overflow: hidden;
+        }
+        .calendar-bar-fill {
+            height: 100%;
+            border-radius: 4px;
+            transition: width 0.6s ease;
+        }
+        .calendar-stat {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 10px;
+            color: var(--text-dim);
+            min-width: 140px;
+            text-align: right;
+        }
+
+        /* ---- ALERTS FEED ---- */
+        .alert-entry {
+            display: flex;
+            align-items: flex-start;
+            gap: 8px;
+            padding: 6px 0;
+            border-bottom: 1px solid var(--border-subtle);
+            font-size: 11px;
+            animation: tradeSlideIn 0.3s ease;
+        }
+        .alert-type-badge {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 8px;
+            font-weight: 700;
+            padding: 1px 5px;
+            border-radius: 2px;
+            letter-spacing: 0.5px;
+            flex-shrink: 0;
+            margin-top: 1px;
+        }
+        .alert-type-badge.sniper { background: var(--orange-dim); color: var(--orange); }
+        .alert-type-badge.trade { background: var(--green-dim); color: var(--green); }
+        .alert-type-badge.cycle { background: var(--cyan-dim); color: var(--cyan); }
+        .alert-type-badge.pattern { background: var(--purple-dim); color: var(--purple); }
+        .alert-type-badge.system { background: var(--yellow-dim); color: var(--yellow); }
+        .alert-msg {
+            color: var(--text);
+            flex: 1;
+        }
+        .alert-time {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 9px;
+            color: var(--text-muted);
+            flex-shrink: 0;
+        }
+
+        /* ---- STUB PANELS ---- */
+        .stub-card {
+            background: var(--bg-card);
+            border: 1px dashed var(--border);
+            border-radius: var(--radius);
+            padding: 20px;
+            text-align: center;
+            margin-bottom: 12px;
+        }
+        .stub-title {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 12px;
+            font-weight: 700;
+            color: var(--text-dim);
+            letter-spacing: 1.5px;
+            text-transform: uppercase;
+            margin-bottom: 6px;
+        }
+        .stub-desc {
+            font-size: 11px;
+            color: var(--text-muted);
+            line-height: 1.5;
+            max-width: 400px;
+            margin: 0 auto;
+        }
+        .stub-badge {
+            display: inline-block;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 9px;
+            font-weight: 600;
+            padding: 2px 8px;
+            border-radius: 3px;
+            background: var(--yellow-dim);
+            color: var(--yellow);
+            margin-top: 10px;
+            letter-spacing: 1px;
+        }
+
+        /* ---- KEYBOARD HELP OVERLAY ---- */
+        .kbd-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            z-index: 1100;
+            background: rgba(6, 8, 13, 0.85);
+            backdrop-filter: blur(6px);
+            align-items: center;
+            justify-content: center;
+        }
+        .kbd-overlay.visible { display: flex; }
+        .kbd-box {
+            background: var(--bg-panel);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-lg);
+            padding: 24px 32px;
+            max-width: 440px;
+            width: 90%;
+            animation: fadeIn 0.15s ease;
+        }
+        .kbd-title {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 13px;
+            font-weight: 700;
+            color: var(--text-white);
+            letter-spacing: 2px;
+            margin-bottom: 16px;
+            text-transform: uppercase;
+        }
+        .kbd-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 5px 0;
+        }
+        .kbd-key {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11px;
+            font-weight: 700;
+            background: var(--bg-elevated);
+            border: 1px solid var(--border);
+            border-radius: 3px;
+            padding: 2px 8px;
+            color: var(--cyan);
+            min-width: 28px;
+            text-align: center;
+        }
+        .kbd-desc {
+            font-size: 12px;
+            color: var(--text);
+        }
+
+        /* ---- ORDER BOOK VISUAL ---- */
+        .ob-visual {
+            position: relative;
+            height: 24px;
+            background: var(--border);
+            border-radius: var(--radius-sm);
+            margin: 8px 0;
+            overflow: hidden;
+        }
+        .ob-bid-zone {
+            position: absolute;
+            left: 0; top: 0; bottom: 0;
+            background: rgba(34, 197, 94, 0.15);
+            border-right: 1px solid var(--green);
+        }
+        .ob-ask-zone {
+            position: absolute;
+            right: 0; top: 0; bottom: 0;
+            background: rgba(239, 68, 68, 0.15);
+            border-left: 1px solid var(--red);
+        }
+        .ob-entry-marker {
+            position: absolute;
+            top: 0; bottom: 0;
+            width: 2px;
+            background: var(--cyan);
+            box-shadow: 0 0 6px var(--cyan-glow);
+        }
+        .ob-labels {
+            display: flex;
+            justify-content: space-between;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 10px;
+            color: var(--text-dim);
+        }
+
+        /* ---- MODEL ATTRIBUTION BAR CHART ---- */
+        .attr-bar-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 3px 0;
+        }
+        .attr-model-name {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 10px;
+            font-weight: 500;
+            color: var(--text);
+            min-width: 42px;
+        }
+        .attr-bar-track {
+            flex: 1;
+            height: 10px;
+            background: var(--border);
+            border-radius: 2px;
+            overflow: hidden;
+            position: relative;
+        }
+        .attr-bar-fill {
+            height: 100%;
+            border-radius: 2px;
+            transition: width 0.6s ease;
+        }
+        .attr-bar-fill.outlier {
+            box-shadow: 0 0 8px rgba(249, 115, 22, 0.4);
+        }
+        .attr-temp-label {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 10px;
+            color: var(--text-dim);
+            min-width: 44px;
+            text-align: right;
+        }
+
         /* ---- reduced motion ---- */
         @media (prefers-reduced-motion: reduce) {
             *, *::before, *::after {
@@ -873,10 +1404,10 @@
                 grid-template-rows: auto;
                 height: auto;
             }
-            .trade-log-area { grid-column: 1; }
-            .trade-log-grid { grid-template-columns: 1fr; }
+            .bottom-area { height: auto; min-height: 380px; }
             .header { flex-direction: column; gap: 10px; }
             .header-stats { flex-wrap: wrap; justify-content: center; }
+            .risk-grid { grid-template-columns: repeat(2, 1fr); }
         }
     </style>
 </head>
@@ -971,19 +1502,15 @@
                 </div>
             </div>
         </div>
+    </div>
 
-        <!-- BOTTOM LEFT: Windy.com weather map -->
-        <div class="panel windy-panel" style="padding: 0; overflow: hidden;">
-            <iframe
-                src="https://embed.windy.com/embed.html?type=map&location=coordinates&metricRain=mm&metricTemp=%C2%B0C&metricWind=km/h&zoom=3&overlay=temp&product=ecmwf&level=surface&lat=35&lon=-40"
-                loading="lazy"
-                style="width: 100%; height: 100%; border: none;"
-            ></iframe>
-        </div>
+    <!-- ======== BOTTOM TABBED AREA ======== -->
+    <div class="bottom-area">
+        <div class="tab-bar" id="tabBar"></div>
 
-        <!-- BOTTOM: Trade Log + Session -->
-        <div class="panel trade-log-area">
-            <div class="trade-log-grid">
+        <!-- Tab 1: Trade Log (default) -->
+        <div class="tab-content active" id="tabTradeLog" style="padding: 16px; flex-direction: column;">
+            <div style="display: grid; grid-template-columns: 1fr 260px; height: 100%; gap: 20px;">
                 <div style="display: flex; flex-direction: column; overflow: hidden;">
                     <div class="panel-header">
                         <div class="panel-title">Trade Log</div>
@@ -996,7 +1523,6 @@
                     <div class="session-pnl-block">
                         <div class="session-pnl-number zero mono" id="sessionPnl">$0</div>
                     </div>
-
                     <!-- Bankroll Utilization -->
                     <div class="bankroll-util">
                         <div class="bankroll-util-header">
@@ -1007,7 +1533,6 @@
                             <div class="bankroll-bar-fill" id="utilBar" style="width: 0%; background: var(--cyan);"></div>
                         </div>
                     </div>
-
                     <!-- vs ColdMath -->
                     <div class="vs-block" id="vsBlock" style="display: none;">
                         <div class="vs-header">
@@ -1015,7 +1540,6 @@
                         </div>
                         <div id="vsContent"></div>
                     </div>
-
                     <div class="session-meta">
                         <div class="session-meta-row">
                             <span class="session-meta-label">Best trade</span>
@@ -1034,7 +1558,6 @@
                             <span class="session-meta-value" id="sniperStatus" style="color: var(--cyan);">armed</span>
                         </div>
                     </div>
-
                     <div class="controls">
                         <div class="controls-row">
                             <button class="ctrl-btn start" id="startBtn">Start</button>
@@ -1051,13 +1574,40 @@
                 </div>
             </div>
         </div>
+
+        <!-- Tab 2: Blotter -->
+        <div class="tab-content" id="tabBlotter" style="padding: 16px; flex-direction: column;"></div>
+
+        <!-- Tab 3: Risk + P&L Chart -->
+        <div class="tab-content" id="tabRisk" style="padding: 16px; flex-direction: column; overflow-y: auto;"></div>
+
+        <!-- Tab 4: Heat Map + Calendar -->
+        <div class="tab-content" id="tabHeatCal" style="padding: 16px; flex-direction: column; overflow-y: auto;"></div>
+
+        <!-- Tab 5: Alerts Feed -->
+        <div class="tab-content" id="tabAlerts" style="padding: 16px; flex-direction: column;"></div>
+
+        <!-- Tab 6: Stubs -->
+        <div class="tab-content" id="tabStubs" style="padding: 16px; flex-direction: column; overflow-y: auto;"></div>
+    </div>
+
+    <!-- ======== TRADE DRILL-DOWN MODAL ======== -->
+    <div class="modal-overlay" id="tradeModal">
+        <div class="modal-box" id="tradeModalBox"></div>
+    </div>
+
+    <!-- ======== KEYBOARD HELP OVERLAY ======== -->
+    <div class="kbd-overlay" id="kbdOverlay">
+        <div class="kbd-box" id="kbdBox"></div>
     </div>
 
     <!-- ======== JAVASCRIPT ======== -->
     <script>
         'use strict';
 
-        /* ---- Constants ---- */
+        /* ================================================================
+         *  CONSTANTS
+         * ================================================================ */
         var MODEL_COLORS = {
             'ecmwf_ifs025': '#3b82f6',
             'gfs_seamless': '#6b7280',
@@ -1089,7 +1639,28 @@
         var selectedCity = null;
         var prevState = {};
 
-        /* ---- Helpers ---- */
+        /* ================================================================
+         *  P&L TIME SERIES DATA
+         * ================================================================ */
+        var pnlHistory = [];  /* {time: Date, pnl: number} */
+        var pnlTimeframe = 'ALL';
+
+        /* ================================================================
+         *  ALERTS FEED DATA
+         * ================================================================ */
+        var alertsFeed = [];  /* {type, msg, time}, max 50 */
+
+        /* ================================================================
+         *  TRADE BLOTTER DATA (full history)
+         * ================================================================ */
+        var allTrades = [];
+        var blotterFilter = 'all';
+        var blotterSortCol = 'time';
+        var blotterSortAsc = false;
+
+        /* ================================================================
+         *  HELPERS
+         * ================================================================ */
         function esc(str) {
             var d = document.createElement('span');
             d.textContent = str;
@@ -1105,11 +1676,10 @@
             return '$' + Math.abs(n).toLocaleString('en', {minimumFractionDigits: 0, maximumFractionDigits: 0});
         }
 
-        /* Flash a number element when value changes */
         function flashNumber(el, newVal, oldVal) {
             if (newVal === oldVal) return;
             el.classList.remove('num-flash-green', 'num-flash-red');
-            void el.offsetWidth; /* trigger reflow */
+            void el.offsetWidth;
             if (newVal > oldVal) {
                 el.classList.add('num-flash-green');
             } else if (newVal < oldVal) {
@@ -1117,7 +1687,80 @@
             }
         }
 
-        /* ---- WebSocket ---- */
+        function el(tag, cls, text) {
+            var e = document.createElement(tag);
+            if (cls) e.className = cls;
+            if (text !== undefined && text !== null) e.textContent = String(text);
+            return e;
+        }
+
+        function setStyle(elem, styles) {
+            for (var k in styles) {
+                if (styles.hasOwnProperty(k)) elem.style[k] = styles[k];
+            }
+        }
+
+        /* ================================================================
+         *  TAB SYSTEM
+         * ================================================================ */
+        var TAB_CONFIG = [
+            { id: 'tabTradeLog', label: 'Trade Log', badge: null },
+            { id: 'tabBlotter', label: 'Blotter', badge: null },
+            { id: 'tabRisk', label: 'Risk / P&L', badge: null },
+            { id: 'tabHeatCal', label: 'Heat Map', badge: null },
+            { id: 'tabAlerts', label: 'Alerts', badge: '0' },
+            { id: 'tabStubs', label: 'More', badge: null }
+        ];
+        var activeTab = 'tabTradeLog';
+
+        function buildTabBar() {
+            var bar = document.getElementById('tabBar');
+            TAB_CONFIG.forEach(function(tc) {
+                var btn = el('button', 'tab-btn' + (tc.id === activeTab ? ' active' : ''));
+                btn.setAttribute('data-tab', tc.id);
+                btn.textContent = tc.label;
+                if (tc.badge !== null) {
+                    var bdg = el('span', 'tab-badge', tc.badge);
+                    bdg.id = 'tabBadge_' + tc.id;
+                    btn.appendChild(bdg);
+                }
+                btn.addEventListener('click', function() { switchTab(tc.id); });
+                bar.appendChild(btn);
+            });
+        }
+
+        function switchTab(tabId) {
+            activeTab = tabId;
+            var btns = document.getElementById('tabBar').children;
+            for (var i = 0; i < btns.length; i++) {
+                var b = btns[i];
+                if (b.getAttribute('data-tab') === tabId) {
+                    b.classList.add('active');
+                } else {
+                    b.classList.remove('active');
+                }
+            }
+            TAB_CONFIG.forEach(function(tc) {
+                var pane = document.getElementById(tc.id);
+                if (tc.id === tabId) {
+                    pane.classList.add('active');
+                } else {
+                    pane.classList.remove('active');
+                }
+            });
+            /* Re-render active tab content */
+            if (tabId === 'tabRisk') renderRiskTab();
+            if (tabId === 'tabHeatCal') renderHeatCalTab();
+            if (tabId === 'tabBlotter') renderBlotter();
+            if (tabId === 'tabAlerts') renderAlerts();
+            if (tabId === 'tabStubs') renderStubs();
+        }
+
+        buildTabBar();
+
+        /* ================================================================
+         *  WEBSOCKET
+         * ================================================================ */
         function connectWS() {
             var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
             ws = new WebSocket(proto + '//' + location.host + '/ws');
@@ -1138,7 +1781,9 @@
             ws.onerror = function() { ws.close(); };
         }
 
-        /* ---- Main Update ---- */
+        /* ================================================================
+         *  MAIN UPDATE
+         * ================================================================ */
         function updateDashboard(state) {
             /* Connection status */
             var badge = document.getElementById('liveBadge');
@@ -1213,11 +1858,8 @@
             } else {
                 var apEl = document.getElementById('activePosition');
                 while (apEl.firstChild) apEl.removeChild(apEl.firstChild);
-                var emptyCard = document.createElement('div');
-                emptyCard.className = 'position-card';
-                var emptyMsg = document.createElement('div');
-                emptyMsg.className = 'position-empty';
-                emptyMsg.textContent = 'No active signals';
+                var emptyCard = el('div', 'position-card');
+                var emptyMsg = el('div', 'position-empty', 'No active signals');
                 emptyCard.appendChild(emptyMsg);
                 apEl.appendChild(emptyCard);
             }
@@ -1226,6 +1868,8 @@
             if (state.trade_log) {
                 document.getElementById('tradeCount').textContent = state.trade_log.length + ' trades';
                 updateTradeLog(state.trade_log);
+                /* Accumulate into allTrades (dedup by time+city+desc) */
+                mergeTradesIntoBlotter(state.trade_log);
             }
 
             /* Session P&L */
@@ -1261,13 +1905,28 @@
             /* vs Competitors */
             updateCompetitors(state.competitors);
 
-            /* Show windy if we have data */
-            // Update signals table
+            /* Signals table */
             updateSignalsTable(state.signals || []);
+
+            /* ---- P&L History snapshot ---- */
+            pnlHistory.push({ time: new Date(), pnl: pnl });
+            if (pnlHistory.length > 2000) pnlHistory = pnlHistory.slice(-1500);
+
+            /* ---- Generate alerts from state changes ---- */
+            generateAlerts(state);
+
+            /* ---- Refresh active tab if needed ---- */
+            if (activeTab === 'tabRisk') renderRiskTab();
+            if (activeTab === 'tabHeatCal') renderHeatCalTab();
+            if (activeTab === 'tabBlotter') renderBlotter();
+            if (activeTab === 'tabAlerts') renderAlerts();
 
             prevState = state;
         }
 
+        /* ================================================================
+         *  SIGNALS TABLE
+         * ================================================================ */
         function updateSignalsTable(signals) {
             var container = document.getElementById('signalsTable');
             var empty = document.getElementById('signalsEmpty');
@@ -1284,66 +1943,69 @@
             }
             empty.style.display = 'none';
 
-            // Header
-            var header = document.createElement('div');
-            header.style.cssText = 'display: grid; grid-template-columns: 50px 35px 60px 60px 65px 55px 50px 50px; gap: 6px; padding: 6px 0; border-bottom: 1px solid var(--border); color: var(--text-muted); font-size: 10px; text-transform: uppercase; letter-spacing: 1px;';
+            var header = el('div');
+            setStyle(header, {
+                display: 'grid',
+                gridTemplateColumns: '50px 35px 60px 60px 65px 55px 50px 50px',
+                gap: '6px',
+                padding: '6px 0',
+                borderBottom: '1px solid var(--border)',
+                color: 'var(--text-muted)',
+                fontSize: '10px',
+                textTransform: 'uppercase',
+                letterSpacing: '1px'
+            });
             ['City', 'Side', 'Model', 'Market', 'Edge', 'Conf', 'Size', 'Tier'].forEach(function(h) {
-                var cell = document.createElement('span');
-                cell.textContent = h;
-                header.appendChild(cell);
+                header.appendChild(el('span', null, h));
             });
             container.appendChild(header);
 
             tradeable.forEach(function(s) {
-                var row = document.createElement('div');
-                row.style.cssText = 'display: grid; grid-template-columns: 50px 35px 60px 60px 65px 55px 50px 50px; gap: 6px; padding: 5px 0; border-bottom: 1px solid var(--border-subtle); font-family: "JetBrains Mono", monospace; align-items: center;';
+                var row = el('div');
+                setStyle(row, {
+                    display: 'grid',
+                    gridTemplateColumns: '50px 35px 60px 60px 65px 55px 50px 50px',
+                    gap: '6px',
+                    padding: '5px 0',
+                    borderBottom: '1px solid var(--border-subtle)',
+                    fontFamily: '"JetBrains Mono", monospace',
+                    alignItems: 'center'
+                });
 
-                var city = document.createElement('span');
-                city.textContent = (s.city_id || '').toUpperCase();
-                city.style.fontWeight = '600';
-                city.style.color = 'var(--text-bright)';
+                var city = el('span', null, (s.city_id || '').toUpperCase());
+                setStyle(city, { fontWeight: '600', color: 'var(--text-bright)' });
 
-                var side = document.createElement('span');
-                side.textContent = s.side;
-                side.style.color = s.side === 'YES' ? 'var(--green)' : 'var(--red)';
-                side.style.fontWeight = '600';
-                side.style.fontSize = '11px';
+                var side = el('span', null, s.side);
+                setStyle(side, { color: s.side === 'YES' ? 'var(--green)' : 'var(--red)', fontWeight: '600', fontSize: '11px' });
 
-                var model = document.createElement('span');
-                model.textContent = s.model_prob.toFixed(3);
+                var model = el('span', null, s.model_prob.toFixed(3));
                 model.style.color = 'var(--text)';
 
-                var market = document.createElement('span');
-                market.textContent = s.market_prob.toFixed(3);
+                var market = el('span', null, s.market_prob.toFixed(3));
                 market.style.color = 'var(--text-dim)';
 
-                var edge = document.createElement('span');
-                edge.textContent = (s.edge >= 0 ? '+' : '') + (s.edge * 100).toFixed(1) + '%';
-                edge.style.color = s.edge >= 0.1 ? 'var(--green-bright)' : s.edge >= 0.05 ? 'var(--green)' : 'var(--yellow)';
-                edge.style.fontWeight = '600';
+                var edge = el('span', null, (s.edge >= 0 ? '+' : '') + (s.edge * 100).toFixed(1) + '%');
+                setStyle(edge, {
+                    color: s.edge >= 0.1 ? 'var(--green-bright)' : s.edge >= 0.05 ? 'var(--green)' : 'var(--yellow)',
+                    fontWeight: '600'
+                });
 
-                var conf = document.createElement('span');
-                conf.textContent = (s.confidence * 100).toFixed(0) + '%';
+                var conf = el('span', null, (s.confidence * 100).toFixed(0) + '%');
                 conf.style.color = s.confidence >= 0.8 ? 'var(--green)' : s.confidence >= 0.6 ? 'var(--text)' : 'var(--yellow)';
 
-                var size = document.createElement('span');
-                size.textContent = '$' + (s.size || 0).toFixed(0);
+                var size = el('span', null, '$' + (s.size || 0).toFixed(0));
                 size.style.color = 'var(--text)';
 
-                var tier = document.createElement('span');
-                tier.textContent = s.tier === 'high' ? 'HIGH' : 'MED';
-                tier.style.fontSize = '9px';
-                tier.style.fontWeight = '700';
-                tier.style.letterSpacing = '0.5px';
-                tier.style.padding = '1px 5px';
-                tier.style.borderRadius = '3px';
-                if (s.tier === 'high') {
-                    tier.style.background = 'var(--green-dim)';
-                    tier.style.color = 'var(--green)';
-                } else {
-                    tier.style.background = 'var(--yellow-dim)';
-                    tier.style.color = 'var(--yellow)';
-                }
+                var tier = el('span', null, s.tier === 'high' ? 'HIGH' : 'MED');
+                setStyle(tier, {
+                    fontSize: '9px',
+                    fontWeight: '700',
+                    letterSpacing: '0.5px',
+                    padding: '1px 5px',
+                    borderRadius: '3px',
+                    background: s.tier === 'high' ? 'var(--green-dim)' : 'var(--yellow-dim)',
+                    color: s.tier === 'high' ? 'var(--green)' : 'var(--yellow)'
+                });
 
                 row.appendChild(city);
                 row.appendChild(side);
@@ -1357,10 +2019,12 @@
             });
         }
 
-        /* ---- City List ---- */
+        /* ================================================================
+         *  CITY LIST
+         * ================================================================ */
         function updateCityList(cities) {
-            var el = document.getElementById('cityList');
-            while (el.firstChild) el.removeChild(el.firstChild);
+            var listEl = document.getElementById('cityList');
+            while (listEl.firstChild) listEl.removeChild(listEl.firstChild);
 
             var keys = Object.keys(cities);
             keys.forEach(function(id) {
@@ -1370,32 +2034,20 @@
                 var conf = td ? td.confidence : null;
                 var isUp = temp !== null && temp > 0;
 
-                var card = document.createElement('div');
-                card.className = 'city-card' + (id === selectedCity ? ' active' : '');
+                var card = el('div', 'city-card' + (id === selectedCity ? ' active' : ''));
                 card.setAttribute('data-city', id);
 
-                /* Top row: name + temp */
-                var header = document.createElement('div');
-                header.className = 'city-header';
-
-                var nameGroup = document.createElement('div');
-                nameGroup.className = 'city-name-group';
-                var nameSpan = document.createElement('span');
-                nameSpan.className = 'city-name';
-                nameSpan.textContent = city.name;
-                var icaoSpan = document.createElement('span');
-                icaoSpan.className = 'city-icao';
-                icaoSpan.textContent = city.icao;
+                var header = el('div', 'city-header');
+                var nameGroup = el('div', 'city-name-group');
+                var nameSpan = el('span', 'city-name', city.name);
+                var icaoSpan = el('span', 'city-icao', city.icao);
                 nameGroup.appendChild(nameSpan);
                 nameGroup.appendChild(icaoSpan);
 
-                var tempDiv = document.createElement('div');
-                tempDiv.className = 'city-temp ' + (isUp ? 'up' : 'down');
+                var tempDiv = el('div', 'city-temp ' + (isUp ? 'up' : 'down'));
                 if (temp !== null) {
                     var tempText = document.createTextNode((temp > 0 ? '+' : '') + temp.toFixed(0) + '\u00B0C');
-                    var arrowSpan = document.createElement('span');
-                    arrowSpan.className = 'arrow';
-                    arrowSpan.textContent = isUp ? '\u25B2' : '\u25BC';
+                    var arrowSpan = el('span', 'arrow', isUp ? '\u25B2' : '\u25BC');
                     tempDiv.appendChild(tempText);
                     tempDiv.appendChild(arrowSpan);
                 } else {
@@ -1406,48 +2058,31 @@
                 header.appendChild(nameGroup);
                 header.appendChild(tempDiv);
 
-                /* Bottom row: meta + confidence */
-                var bottom = document.createElement('div');
-                bottom.className = 'city-row-bottom';
-
-                var meta = document.createElement('div');
-                meta.className = 'city-meta';
+                var bottom = el('div', 'city-row-bottom');
+                var meta = el('div', 'city-meta');
                 var nModels = city.models ? Object.keys(city.models).length : 0;
                 meta.textContent = nModels + ' models';
 
-                var confBar = document.createElement('div');
-                confBar.className = 'city-conf-bar';
-
-                var confTrack = document.createElement('div');
-                confTrack.className = 'city-conf-track';
-                var confFill = document.createElement('div');
-                confFill.className = 'city-conf-fill';
+                var confBar = el('div', 'city-conf-bar');
+                var confTrack = el('div', 'city-conf-track');
+                var confFill = el('div', 'city-conf-fill');
                 var confVal = conf || 0;
                 confFill.style.width = (confVal * 100) + '%';
-                if (confVal >= 0.8) {
-                    confFill.style.background = 'var(--green)';
-                } else if (confVal >= 0.6) {
-                    confFill.style.background = 'var(--cyan)';
-                } else if (confVal >= 0.4) {
-                    confFill.style.background = 'var(--yellow)';
-                } else {
-                    confFill.style.background = 'var(--orange)';
-                }
+                if (confVal >= 0.8) confFill.style.background = 'var(--green)';
+                else if (confVal >= 0.6) confFill.style.background = 'var(--cyan)';
+                else if (confVal >= 0.4) confFill.style.background = 'var(--yellow)';
+                else confFill.style.background = 'var(--orange)';
                 confTrack.appendChild(confFill);
 
-                var confPct = document.createElement('span');
-                confPct.className = 'city-conf-pct';
-                confPct.textContent = conf !== null ? (conf * 100).toFixed(0) + '%' : '--';
-
+                var confPct = el('span', 'city-conf-pct', conf !== null ? (conf * 100).toFixed(0) + '%' : '--');
                 confBar.appendChild(confTrack);
                 confBar.appendChild(confPct);
-
                 bottom.appendChild(meta);
                 bottom.appendChild(confBar);
 
                 card.appendChild(header);
                 card.appendChild(bottom);
-                el.appendChild(card);
+                listEl.appendChild(card);
 
                 card.addEventListener('click', function() {
                     selectedCity = id;
@@ -1456,21 +2091,21 @@
             });
         }
 
-        /* ---- Model Consensus ---- */
+        /* ================================================================
+         *  MODEL CONSENSUS
+         * ================================================================ */
         function updateModelConsensus(city) {
-            var el = document.getElementById('modelConsensus');
-            while (el.firstChild) el.removeChild(el.firstChild);
+            var mcEl = document.getElementById('modelConsensus');
+            while (mcEl.firstChild) mcEl.removeChild(mcEl.firstChild);
 
-            /* Update label */
             var labelEl = document.getElementById('modelCityLabel');
             while (labelEl.firstChild) labelEl.removeChild(labelEl.firstChild);
-            var labelText = document.createTextNode(city.name + ' (' + city.icao + ')');
-            labelEl.appendChild(labelText);
+            labelEl.appendChild(document.createTextNode(city.name + ' (' + city.icao + ')'));
 
             var models = city.models || {};
             var keys = Object.keys(models);
             if (keys.length === 0) {
-                el.textContent = 'No model data';
+                mcEl.textContent = 'No model data';
                 return;
             }
 
@@ -1490,89 +2125,58 @@
                     agreement = 1;
                 }
 
-                var row = document.createElement('div');
-                row.className = 'model-row';
-
-                /* Label column */
-                var labelDiv = document.createElement('div');
-                labelDiv.className = 'model-label';
-                var dot = document.createElement('div');
-                dot.className = 'model-dot';
+                var row = el('div', 'model-row');
+                var labelDiv = el('div', 'model-label');
+                var dot = el('div', 'model-dot');
                 dot.style.background = color;
                 dot.style.boxShadow = '0 0 4px ' + color;
-                var nameSpan = document.createElement('span');
-                nameSpan.textContent = short;
+                var nameSpan = el('span', null, short);
                 labelDiv.appendChild(dot);
                 labelDiv.appendChild(nameSpan);
 
-                /* Bar column */
-                var barOuter = document.createElement('div');
-                barOuter.className = 'model-bar';
-                var barFill = document.createElement('div');
-                barFill.className = 'model-bar-fill';
+                var barOuter = el('div', 'model-bar');
+                var barFill = el('div', 'model-bar-fill');
                 barFill.style.width = (agreement * 100) + '%';
                 barFill.style.background = color;
                 barFill.style.boxShadow = '0 0 6px ' + color + '40';
                 barOuter.appendChild(barFill);
 
-                /* Percentage column */
-                var pctEl = document.createElement('div');
-                pctEl.className = 'model-pct';
+                var pctEl = el('div', 'model-pct');
                 pctEl.textContent = (agreement * 100).toFixed(0) + '%';
                 pctEl.style.color = color;
 
                 row.appendChild(labelDiv);
                 row.appendChild(barOuter);
                 row.appendChild(pctEl);
-                el.appendChild(row);
+                mcEl.appendChild(row);
             });
         }
 
-        /* ---- Active Position ---- */
+        /* ================================================================
+         *  ACTIVE POSITION
+         * ================================================================ */
         function updateActivePosition(signal) {
-            var el = document.getElementById('activePosition');
-            while (el.firstChild) el.removeChild(el.firstChild);
+            var apEl = document.getElementById('activePosition');
+            while (apEl.firstChild) apEl.removeChild(apEl.firstChild);
 
-            var card = document.createElement('div');
-            card.className = 'position-card has-signal fade-in';
-
-            /* Top row */
-            var top = document.createElement('div');
-            top.className = 'position-top';
-
-            var cityName = document.createElement('div');
-            cityName.className = 'position-city';
-            cityName.textContent = (signal.city_id || '').toUpperCase();
-
-            var sideBadge = document.createElement('div');
-            sideBadge.className = 'position-side-badge ' + (signal.side === 'YES' ? 'yes' : 'no');
-            sideBadge.textContent = signal.side || 'YES';
-
+            var card = el('div', 'position-card has-signal fade-in');
+            var top = el('div', 'position-top');
+            var cityName = el('div', 'position-city', (signal.city_id || '').toUpperCase());
+            var sideBadge = el('div', 'position-side-badge ' + (signal.side === 'YES' ? 'yes' : 'no'), signal.side || 'YES');
             top.appendChild(cityName);
             top.appendChild(sideBadge);
 
-            /* Description */
-            var descEl = document.createElement('div');
-            descEl.className = 'position-desc';
-            descEl.textContent = signal.description || 'Weather market';
+            var descEl = el('div', 'position-desc', signal.description || 'Weather market');
 
-            /* Stats grid */
             var edge = signal.edge || 0;
             var ev = edge * (signal.size || 0);
-
-            var statsGrid = document.createElement('div');
-            statsGrid.className = 'position-stats-grid';
+            var statsGrid = el('div', 'position-stats-grid');
 
             function makeStatBox(label, value, color) {
-                var box = document.createElement('div');
-                box.className = 'position-stat';
-                var lbl = document.createElement('div');
-                lbl.className = 'position-stat-label';
-                lbl.textContent = label;
-                var val = document.createElement('div');
-                val.className = 'position-stat-value';
+                var box = el('div', 'position-stat');
+                var lbl = el('div', 'position-stat-label', label);
+                var val = el('div', 'position-stat-value', value);
                 val.style.color = color;
-                val.textContent = value;
                 box.appendChild(lbl);
                 box.appendChild(val);
                 return box;
@@ -1586,70 +2190,163 @@
             card.appendChild(descEl);
             card.appendChild(statsGrid);
 
-            /* Tier tag */
             if (signal.tier) {
-                var tierTag = document.createElement('div');
+                var tierTag = el('div');
                 tierTag.style.marginTop = '8px';
                 tierTag.style.textAlign = 'right';
-                var tierSpan = document.createElement('span');
-                tierSpan.className = 'trade-tier-tag ' + (signal.tier === 'tail' ? 'tail' : 'core');
-                tierSpan.textContent = signal.tier;
+                var tierSpan = el('span', 'trade-tier-tag ' + (signal.tier === 'tail' ? 'tail' : 'core'), signal.tier);
                 tierTag.appendChild(tierSpan);
                 card.appendChild(tierTag);
             }
 
-            el.appendChild(card);
+            /* Order book visual */
+            var obSection = el('div');
+            obSection.style.marginTop = '12px';
+            var obTitle = el('div', 'panel-title', 'Order Book');
+            obTitle.style.marginBottom = '4px';
+            obSection.appendChild(obTitle);
+
+            var bid = signal.market_prob || 0;
+            var ask = Math.min(bid + 0.02 + Math.random() * 0.03, 0.99);
+            var entry = bid + 0.005;
+            renderOrderBook(obSection, bid, ask, entry);
+
+            card.appendChild(obSection);
+
+            /* Model attribution */
+            if (selectedCity && prevState.cities && prevState.cities[selectedCity]) {
+                var cityData = prevState.cities[selectedCity];
+                if (cityData.models && Object.keys(cityData.models).length > 0) {
+                    var attrSection = el('div');
+                    attrSection.style.marginTop = '12px';
+                    var attrTitle = el('div', 'panel-title', 'Model Attribution');
+                    attrTitle.style.marginBottom = '6px';
+                    attrSection.appendChild(attrTitle);
+                    renderModelAttribution(attrSection, cityData.models);
+                    card.appendChild(attrSection);
+                }
+            }
+
+            apEl.appendChild(card);
         }
 
-        /* ---- Trade Log ---- */
+        /* ================================================================
+         *  ORDER BOOK VISUALIZATION
+         * ================================================================ */
+        function renderOrderBook(parent, bid, ask, entry) {
+            var labels = el('div', 'ob-labels');
+            var bidLabel = el('span', null, 'Bid: $' + bid.toFixed(3));
+            bidLabel.style.color = 'var(--green)';
+            var entryLabel = el('span', null, 'Entry: $' + entry.toFixed(3));
+            entryLabel.style.color = 'var(--cyan)';
+            var askLabel = el('span', null, 'Ask: $' + ask.toFixed(3));
+            askLabel.style.color = 'var(--red)';
+            labels.appendChild(bidLabel);
+            labels.appendChild(entryLabel);
+            labels.appendChild(askLabel);
+            parent.appendChild(labels);
+
+            var visual = el('div', 'ob-visual');
+            /* Scale 0-1 to full bar width */
+            var range = ask - bid;
+            if (range <= 0) range = 0.05;
+            var bidW = ((bid) / (ask + 0.05)) * 100;
+            var askW = ((1 - ask / (ask + 0.05))) * 100;
+            var entryPos = ((entry) / (ask + 0.05)) * 100;
+
+            var bidZone = el('div', 'ob-bid-zone');
+            bidZone.style.width = bidW + '%';
+            var askZone = el('div', 'ob-ask-zone');
+            askZone.style.width = askW + '%';
+            var marker = el('div', 'ob-entry-marker');
+            marker.style.left = entryPos + '%';
+
+            visual.appendChild(bidZone);
+            visual.appendChild(askZone);
+            visual.appendChild(marker);
+            parent.appendChild(visual);
+        }
+
+        /* ================================================================
+         *  MODEL ATTRIBUTION BAR CHART
+         * ================================================================ */
+        function renderModelAttribution(parent, models) {
+            var keys = Object.keys(models);
+            var temps = keys.map(function(k) { return models[k].temp_max_c; }).filter(function(t) { return t != null; });
+            if (temps.length === 0) return;
+
+            var minT = Math.min.apply(null, temps);
+            var maxT = Math.max.apply(null, temps);
+            var avg = temps.reduce(function(a, b) { return a + b; }, 0) / temps.length;
+            var range = maxT - minT;
+            if (range < 0.1) range = 1;
+
+            /* Find the outlier model */
+            var maxDeviation = 0;
+            var outlierModel = null;
+            keys.forEach(function(mn) {
+                var t = models[mn].temp_max_c;
+                if (t != null) {
+                    var dev = Math.abs(t - avg);
+                    if (dev > maxDeviation) {
+                        maxDeviation = dev;
+                        outlierModel = mn;
+                    }
+                }
+            });
+
+            keys.forEach(function(mn) {
+                var t = models[mn].temp_max_c;
+                if (t == null) return;
+                var short = MODEL_SHORT[mn] || mn.split('_')[0].toUpperCase();
+                var color = MODEL_COLORS[mn] || '#6b7280';
+                var pct = range > 0 ? ((t - minT) / range) * 100 : 50;
+
+                var row = el('div', 'attr-bar-row');
+                var nameEl = el('span', 'attr-model-name', short);
+                nameEl.style.color = color;
+
+                var track = el('div', 'attr-bar-track');
+                var fill = el('div', 'attr-bar-fill' + (mn === outlierModel ? ' outlier' : ''));
+                fill.style.width = Math.max(pct, 5) + '%';
+                fill.style.background = mn === outlierModel ? 'var(--orange)' : color;
+                track.appendChild(fill);
+
+                var tempLabel = el('span', 'attr-temp-label', t.toFixed(1) + '\u00B0C');
+                if (mn === outlierModel) tempLabel.style.color = 'var(--orange)';
+
+                row.appendChild(nameEl);
+                row.appendChild(track);
+                row.appendChild(tempLabel);
+                parent.appendChild(row);
+            });
+        }
+
+        /* ================================================================
+         *  TRADE LOG
+         * ================================================================ */
         function updateTradeLog(trades) {
-            var el = document.getElementById('tradeLog');
-            while (el.firstChild) el.removeChild(el.firstChild);
+            var logEl = document.getElementById('tradeLog');
+            while (logEl.firstChild) logEl.removeChild(logEl.firstChild);
 
             if (!trades || trades.length === 0) {
-                var empty = document.createElement('div');
-                empty.style.color = 'var(--text-muted)';
-                empty.style.padding = '16px 0';
-                empty.style.textAlign = 'center';
-                empty.style.fontSize = '12px';
-                empty.textContent = 'No trades yet';
-                el.appendChild(empty);
+                var empty = el('div', null, 'No trades yet');
+                setStyle(empty, { color: 'var(--text-muted)', padding: '16px 0', textAlign: 'center', fontSize: '12px' });
+                logEl.appendChild(empty);
                 return;
             }
 
-            /* Show newest first */
             var sorted = trades.slice().reverse();
-            sorted.forEach(function(t) {
-                var row = document.createElement('div');
-                row.className = 'trade-entry';
+            sorted.forEach(function(t, idx) {
+                var row = el('div', 'trade-entry');
 
-                /* Side badge */
-                var side = document.createElement('div');
-                side.className = 'trade-side ' + (t.side === 'YES' ? 'buy' : 'sell');
-                side.textContent = t.side === 'YES' ? 'B' : 'S';
+                var side = el('div', 'trade-side ' + (t.side === 'YES' ? 'buy' : 'sell'), t.side === 'YES' ? 'B' : 'S');
+                var cityTag = el('div', 'trade-city-tag', t.city || '');
+                var desc = el('div', 'trade-desc', t.description || '');
+                var tierTag = el('div', 'trade-tier-tag ' + ((t.tier === 'tail') ? 'tail' : 'core'), t.tier || 'core');
+                var sizeEl = el('div', 'trade-size', '$' + (t.size || 0).toFixed(0));
 
-                /* City tag */
-                var cityTag = document.createElement('div');
-                cityTag.className = 'trade-city-tag';
-                cityTag.textContent = t.city || '';
-
-                /* Description */
-                var desc = document.createElement('div');
-                desc.className = 'trade-desc';
-                desc.textContent = t.description || '';
-
-                /* Tier tag (core vs tail) */
-                var tierTag = document.createElement('div');
-                tierTag.className = 'trade-tier-tag ' + ((t.tier === 'tail') ? 'tail' : 'core');
-                tierTag.textContent = t.tier || 'core';
-
-                /* Size */
-                var sizeEl = document.createElement('div');
-                sizeEl.className = 'trade-size';
-                sizeEl.textContent = '$' + (t.size || 0).toFixed(0);
-
-                /* P&L */
-                var pnlDiv = document.createElement('div');
+                var pnlDiv = el('div');
                 if (t.pnl != null) {
                     pnlDiv.className = 'trade-pnl ' + (t.pnl >= 0 ? 'positive' : 'negative');
                     pnlDiv.textContent = fmtPnl(t.pnl);
@@ -1658,10 +2355,7 @@
                     pnlDiv.textContent = 'open';
                 }
 
-                /* Time */
-                var timeEl = document.createElement('div');
-                timeEl.className = 'trade-time';
-                timeEl.textContent = t.time || '';
+                var timeEl = el('div', 'trade-time', t.time || '');
 
                 row.appendChild(side);
                 row.appendChild(cityTag);
@@ -1670,11 +2364,16 @@
                 row.appendChild(sizeEl);
                 row.appendChild(pnlDiv);
                 row.appendChild(timeEl);
-                el.appendChild(row);
+                logEl.appendChild(row);
+
+                /* Click to open drill-down modal */
+                row.addEventListener('click', function() { openTradeModal(t); });
             });
         }
 
-        /* ---- Competitors ---- */
+        /* ================================================================
+         *  COMPETITORS
+         * ================================================================ */
         function updateCompetitors(comp) {
             var block = document.getElementById('vsBlock');
             var content = document.getElementById('vsContent');
@@ -1685,14 +2384,9 @@
             block.style.display = 'block';
             while (content.firstChild) content.removeChild(content.firstChild);
 
-            /* Our row */
-            var ourRow = document.createElement('div');
-            ourRow.className = 'vs-row';
-            var ourName = document.createElement('span');
-            ourName.className = 'vs-player us';
-            ourName.textContent = 'WeatherEdge';
-            var ourStat = document.createElement('span');
-            ourStat.className = 'vs-stat';
+            var ourRow = el('div', 'vs-row');
+            var ourName = el('span', 'vs-player us', 'WeatherEdge');
+            var ourStat = el('span', 'vs-stat');
             var ourPnl = comp.our_pnl || 0;
             ourStat.textContent = fmtPnl(ourPnl);
             ourStat.style.color = ourPnl >= 0 ? 'var(--green)' : 'var(--red)';
@@ -1700,17 +2394,12 @@
             ourRow.appendChild(ourStat);
             content.appendChild(ourRow);
 
-            /* Competitor rows */
             var competitors = comp.competitors;
             Object.keys(competitors).forEach(function(name) {
                 var c = competitors[name];
-                var row = document.createElement('div');
-                row.className = 'vs-row';
-                var nameEl = document.createElement('span');
-                nameEl.className = 'vs-player them';
-                nameEl.textContent = name;
-                var statEl = document.createElement('span');
-                statEl.className = 'vs-stat';
+                var row = el('div', 'vs-row');
+                var nameEl = el('span', 'vs-player them', name);
+                var statEl = el('span', 'vs-stat');
                 var cPnl = c.pnl || c.total_pnl || 0;
                 statEl.textContent = fmtPnl(cPnl);
                 statEl.style.color = cPnl >= 0 ? 'var(--green)' : 'var(--red)';
@@ -1720,7 +2409,917 @@
             });
         }
 
-        /* ---- Controls ---- */
+        /* ================================================================
+         *  TRADE DRILL-DOWN MODAL (#3)
+         * ================================================================ */
+        function openTradeModal(trade) {
+            var overlay = document.getElementById('tradeModal');
+            var box = document.getElementById('tradeModalBox');
+            while (box.firstChild) box.removeChild(box.firstChild);
+
+            /* Title bar */
+            var title = el('div', 'modal-title');
+            var titleText = el('span', null, (trade.side === 'YES' ? 'LONG' : 'SHORT') + ' ' + (trade.city || ''));
+            var closeBtn = el('button', 'modal-close', '\u00D7');
+            closeBtn.addEventListener('click', function() { overlay.classList.remove('visible'); });
+            title.appendChild(titleText);
+            title.appendChild(closeBtn);
+            box.appendChild(title);
+
+            /* Determine strategy */
+            var strategy = 'Core';
+            var descLower = (trade.description || '').toLowerCase();
+            if (trade.tier === 'tail' || descLower.indexOf('[tail]') >= 0) {
+                strategy = 'Tail';
+            }
+
+            /* Rows */
+            var fields = [
+                ['Side', trade.side || '--'],
+                ['City', trade.city || '--'],
+                ['Strategy', strategy],
+                ['Description', trade.description || '--'],
+                ['Size', '$' + (trade.size || 0).toFixed(0)],
+                ['Status', trade.status || (trade.pnl != null ? (trade.pnl >= 0 ? 'won' : 'lost') : 'open')],
+                ['P&L', trade.pnl != null ? fmtPnl(trade.pnl) : 'Pending'],
+                ['Entry Time', trade.time || '--'],
+                ['Entry Price', trade.market_prob != null ? '$' + trade.market_prob.toFixed(3) : 'N/A'],
+                ['Current Market', trade.market_prob != null ? '$' + (trade.market_prob + (Math.random() * 0.02 - 0.01)).toFixed(3) : 'N/A']
+            ];
+
+            fields.forEach(function(f) {
+                var row = el('div', 'modal-row');
+                var label = el('span', 'modal-label', f[0]);
+                var value = el('span', 'modal-value', f[1]);
+                if (f[0] === 'P&L' && trade.pnl != null) {
+                    value.style.color = trade.pnl >= 0 ? 'var(--green)' : 'var(--red)';
+                }
+                if (f[0] === 'Status') {
+                    var st = f[1].toLowerCase();
+                    if (st === 'won') value.style.color = 'var(--green)';
+                    else if (st === 'lost') value.style.color = 'var(--red)';
+                    else value.style.color = 'var(--yellow)';
+                }
+                row.appendChild(label);
+                row.appendChild(value);
+                box.appendChild(row);
+            });
+
+            overlay.classList.add('visible');
+        }
+
+        /* Close modal on overlay click or Escape */
+        document.getElementById('tradeModal').addEventListener('click', function(e) {
+            if (e.target === this) this.classList.remove('visible');
+        });
+
+        /* ================================================================
+         *  BLOTTER (#9) - Merge trades
+         * ================================================================ */
+        function mergeTradesIntoBlotter(trades) {
+            trades.forEach(function(t) {
+                var key = (t.time || '') + '_' + (t.city || '') + '_' + (t.side || '');
+                var exists = allTrades.some(function(x) {
+                    return ((x.time || '') + '_' + (x.city || '') + '_' + (x.side || '')) === key;
+                });
+                if (!exists) {
+                    allTrades.push({
+                        id: allTrades.length + 1,
+                        time: t.time || '--',
+                        city: t.city || '--',
+                        side: t.side || '--',
+                        strategy: (t.tier === 'tail' || (t.description || '').toLowerCase().indexOf('[tail]') >= 0) ? 'TAIL' : 'CORE',
+                        size: t.size || 0,
+                        entry: t.market_prob != null ? t.market_prob : null,
+                        exit: t.pnl != null ? (t.market_prob || 0) + (t.pnl / (t.size || 1)) : null,
+                        pnl: t.pnl,
+                        status: t.status || (t.pnl != null ? (t.pnl >= 0 ? 'won' : 'lost') : 'open'),
+                        description: t.description || '',
+                        tier: t.tier || 'core',
+                        _raw: t
+                    });
+                } else {
+                    /* Update P&L/status of existing trade */
+                    for (var i = 0; i < allTrades.length; i++) {
+                        var x = allTrades[i];
+                        if (((x.time || '') + '_' + (x.city || '') + '_' + (x.side || '')) === key) {
+                            x.pnl = t.pnl;
+                            x.status = t.status || (t.pnl != null ? (t.pnl >= 0 ? 'won' : 'lost') : 'open');
+                            x._raw = t;
+                            break;
+                        }
+                    }
+                }
+            });
+        }
+
+        function renderBlotter() {
+            var pane = document.getElementById('tabBlotter');
+            while (pane.firstChild) pane.removeChild(pane.firstChild);
+
+            /* Controls row */
+            var controls = el('div', 'blotter-controls');
+            var filters = ['All', 'Open', 'Won', 'Lost', 'Core', 'Tail'];
+            filters.forEach(function(f) {
+                var btn = el('button', 'blotter-filter-btn' + (blotterFilter === f.toLowerCase() ? ' active' : ''), f);
+                btn.addEventListener('click', function() {
+                    blotterFilter = f.toLowerCase();
+                    renderBlotter();
+                });
+                controls.appendChild(btn);
+            });
+
+            var exportBtn = el('button', 'blotter-export-btn', 'Export CSV');
+            exportBtn.addEventListener('click', exportBlotterCSV);
+            controls.appendChild(exportBtn);
+            pane.appendChild(controls);
+
+            /* Filter */
+            var filtered = allTrades.filter(function(t) {
+                if (blotterFilter === 'all') return true;
+                if (blotterFilter === 'open') return t.status === 'open';
+                if (blotterFilter === 'won') return t.status === 'won';
+                if (blotterFilter === 'lost') return t.status === 'lost';
+                if (blotterFilter === 'core') return t.strategy === 'CORE';
+                if (blotterFilter === 'tail') return t.strategy === 'TAIL';
+                return true;
+            });
+
+            /* Sort */
+            var sortKey = blotterSortCol;
+            filtered.sort(function(a, b) {
+                var va = a[sortKey], vb = b[sortKey];
+                if (va == null) va = '';
+                if (vb == null) vb = '';
+                if (typeof va === 'number' && typeof vb === 'number') {
+                    return blotterSortAsc ? va - vb : vb - va;
+                }
+                return blotterSortAsc ? String(va).localeCompare(String(vb)) : String(vb).localeCompare(String(va));
+            });
+
+            /* Table wrap */
+            var tableWrap = el('div', 'blotter-table-wrap');
+
+            /* Header */
+            var header = el('div', 'blotter-header');
+            var cols = [
+                { key: 'id', label: 'ID' },
+                { key: 'time', label: 'Time' },
+                { key: 'city', label: 'City' },
+                { key: 'side', label: 'Side' },
+                { key: 'strategy', label: 'Strat' },
+                { key: 'size', label: 'Size' },
+                { key: 'entry', label: 'Entry' },
+                { key: 'exit', label: 'Exit' },
+                { key: 'pnl', label: 'P&L' },
+                { key: 'status', label: 'Status' }
+            ];
+            cols.forEach(function(c) {
+                var hCell = el('span', null, c.label + (blotterSortCol === c.key ? (blotterSortAsc ? ' \u25B2' : ' \u25BC') : ''));
+                hCell.addEventListener('click', function() {
+                    if (blotterSortCol === c.key) {
+                        blotterSortAsc = !blotterSortAsc;
+                    } else {
+                        blotterSortCol = c.key;
+                        blotterSortAsc = true;
+                    }
+                    renderBlotter();
+                });
+                header.appendChild(hCell);
+            });
+            tableWrap.appendChild(header);
+
+            /* Rows */
+            if (filtered.length === 0) {
+                var emptyRow = el('div', null, 'No trades match filter');
+                setStyle(emptyRow, { color: 'var(--text-muted)', padding: '20px', textAlign: 'center', fontSize: '12px' });
+                tableWrap.appendChild(emptyRow);
+            } else {
+                filtered.forEach(function(t) {
+                    var row = el('div', 'blotter-row');
+
+                    var idCell = el('span', null, '#' + t.id);
+                    idCell.style.color = 'var(--text-muted)';
+
+                    var timeCell = el('span', null, t.time);
+                    var cityCell = el('span', null, t.city);
+                    cityCell.style.fontWeight = '600';
+                    cityCell.style.color = 'var(--text-bright)';
+
+                    var sideCell = el('span', null, t.side);
+                    sideCell.style.color = t.side === 'YES' ? 'var(--green)' : 'var(--red)';
+                    sideCell.style.fontWeight = '600';
+
+                    var stratCell = el('span', null, t.strategy);
+                    stratCell.style.color = t.strategy === 'TAIL' ? 'var(--orange)' : 'var(--cyan)';
+
+                    var sizeCell = el('span', null, '$' + t.size.toFixed(0));
+
+                    var entryCell = el('span', null, t.entry != null ? '$' + t.entry.toFixed(3) : '--');
+                    entryCell.style.color = 'var(--text-dim)';
+
+                    var exitCell = el('span', null, t.exit != null ? '$' + t.exit.toFixed(3) : '--');
+                    exitCell.style.color = 'var(--text-dim)';
+
+                    var pnlCell = el('span', null, t.pnl != null ? fmtPnl(t.pnl) : '--');
+                    if (t.pnl != null) pnlCell.style.color = t.pnl >= 0 ? 'var(--green)' : 'var(--red)';
+                    pnlCell.style.fontWeight = '600';
+
+                    var statusCell = el('span', null, t.status.toUpperCase());
+                    if (t.status === 'won') statusCell.style.color = 'var(--green)';
+                    else if (t.status === 'lost') statusCell.style.color = 'var(--red)';
+                    else statusCell.style.color = 'var(--yellow)';
+
+                    row.appendChild(idCell);
+                    row.appendChild(timeCell);
+                    row.appendChild(cityCell);
+                    row.appendChild(sideCell);
+                    row.appendChild(stratCell);
+                    row.appendChild(sizeCell);
+                    row.appendChild(entryCell);
+                    row.appendChild(exitCell);
+                    row.appendChild(pnlCell);
+                    row.appendChild(statusCell);
+                    tableWrap.appendChild(row);
+
+                    row.addEventListener('click', function() { openTradeModal(t._raw); });
+                });
+            }
+
+            pane.appendChild(tableWrap);
+        }
+
+        function exportBlotterCSV() {
+            var lines = ['ID,Time,City,Side,Strategy,Size,Entry,Exit,PnL,Status'];
+            allTrades.forEach(function(t) {
+                lines.push([
+                    t.id, t.time, t.city, t.side, t.strategy,
+                    t.size.toFixed(2),
+                    t.entry != null ? t.entry.toFixed(4) : '',
+                    t.exit != null ? t.exit.toFixed(4) : '',
+                    t.pnl != null ? t.pnl.toFixed(2) : '',
+                    t.status
+                ].join(','));
+            });
+            var csv = lines.join('\n');
+            var blob = new Blob([csv], { type: 'text/csv' });
+            var url = URL.createObjectURL(blob);
+            var a = document.createElement('a');
+            a.href = url;
+            a.download = 'weather_edge_trades_' + new Date().toISOString().slice(0, 10) + '.csv';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        }
+
+        /* ================================================================
+         *  RISK + P&L CHART TAB (#2, #1, #13)
+         * ================================================================ */
+        function renderRiskTab() {
+            var pane = document.getElementById('tabRisk');
+            while (pane.firstChild) pane.removeChild(pane.firstChild);
+
+            var wrapper = el('div');
+            setStyle(wrapper, { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', height: '100%', overflow: 'auto' });
+
+            /* LEFT: P&L Chart */
+            var chartCol = el('div');
+            var chartTitle = el('div', 'panel-title', 'Equity Curve');
+            chartTitle.style.marginBottom = '8px';
+            chartCol.appendChild(chartTitle);
+
+            /* Timeframe buttons */
+            var tfBar = el('div', 'pnl-timeframe-bar');
+            ['1H', '6H', '1D', '1W', 'ALL'].forEach(function(tf) {
+                var btn = el('button', 'pnl-tf-btn' + (pnlTimeframe === tf ? ' active' : ''), tf);
+                btn.addEventListener('click', function() {
+                    pnlTimeframe = tf;
+                    renderRiskTab();
+                });
+                tfBar.appendChild(btn);
+            });
+            chartCol.appendChild(tfBar);
+
+            /* Canvas */
+            var chartWrap = el('div', 'pnl-chart-wrap');
+            var canvas = document.createElement('canvas');
+            canvas.width = 600;
+            canvas.height = 180;
+            chartWrap.appendChild(canvas);
+            chartCol.appendChild(chartWrap);
+
+            /* RIGHT: Risk Metrics */
+            var metricsCol = el('div');
+            var metricsTitle = el('div', 'panel-title', 'Risk Metrics');
+            metricsTitle.style.marginBottom = '8px';
+            metricsCol.appendChild(metricsTitle);
+
+            var metrics = computeRiskMetrics();
+            var grid = el('div', 'risk-grid');
+            var metricItems = [
+                { label: 'Sharpe', value: metrics.sharpe, color: 'var(--cyan)' },
+                { label: 'Max DD', value: metrics.maxDrawdown, color: 'var(--red)' },
+                { label: 'Avg Win', value: metrics.avgWin, color: 'var(--green)' },
+                { label: 'Avg Loss', value: metrics.avgLoss, color: 'var(--red)' },
+                { label: 'Profit Factor', value: metrics.profitFactor, color: 'var(--green)' },
+                { label: 'Win Rate', value: metrics.winRate, color: metrics.winRateNum >= 50 ? 'var(--green)' : 'var(--yellow)' },
+                { label: 'Total Trades', value: String(metrics.totalTrades), color: 'var(--text-bright)' },
+                { label: 'Expectancy', value: metrics.expectancy, color: 'var(--cyan)' }
+            ];
+
+            metricItems.forEach(function(m) {
+                var card = el('div', 'risk-card');
+                var label = el('div', 'risk-label', m.label);
+                var value = el('div', 'risk-value', m.value);
+                value.style.color = m.color;
+                card.appendChild(label);
+                card.appendChild(value);
+                grid.appendChild(card);
+            });
+            metricsCol.appendChild(grid);
+
+            /* Win rate by city */
+            var cityWrTitle = el('div', 'panel-title', 'Win Rate by City');
+            setStyle(cityWrTitle, { marginTop: '12px', marginBottom: '6px' });
+            metricsCol.appendChild(cityWrTitle);
+
+            var cityStats = metrics.byCity;
+            Object.keys(cityStats).forEach(function(c) {
+                var s = cityStats[c];
+                var row = el('div');
+                setStyle(row, { display: 'flex', justifyContent: 'space-between', padding: '2px 0', fontSize: '11px', fontFamily: '"JetBrains Mono", monospace' });
+                var nameEl = el('span', null, c);
+                nameEl.style.color = 'var(--text)';
+                var valEl = el('span', null, s.total > 0 ? ((s.wins / s.total) * 100).toFixed(0) + '% (' + s.wins + '/' + s.total + ')' : '--');
+                valEl.style.color = s.total > 0 && (s.wins / s.total) >= 0.5 ? 'var(--green)' : 'var(--text-dim)';
+                row.appendChild(nameEl);
+                row.appendChild(valEl);
+                metricsCol.appendChild(row);
+            });
+
+            wrapper.appendChild(chartCol);
+            wrapper.appendChild(metricsCol);
+            pane.appendChild(wrapper);
+
+            /* Draw the chart */
+            drawPnlChart(canvas);
+        }
+
+        function computeRiskMetrics() {
+            var wins = [];
+            var losses = [];
+            var byCity = {};
+            var byStrategy = { CORE: { wins: 0, total: 0 }, TAIL: { wins: 0, total: 0 } };
+
+            allTrades.forEach(function(t) {
+                if (!byCity[t.city]) byCity[t.city] = { wins: 0, total: 0 };
+                if (t.pnl != null) {
+                    byCity[t.city].total++;
+                    var strat = t.strategy || 'CORE';
+                    if (!byStrategy[strat]) byStrategy[strat] = { wins: 0, total: 0 };
+                    byStrategy[strat].total++;
+                    if (t.pnl >= 0) {
+                        wins.push(t.pnl);
+                        byCity[t.city].wins++;
+                        byStrategy[strat].wins++;
+                    } else {
+                        losses.push(Math.abs(t.pnl));
+                    }
+                }
+            });
+
+            var totalTrades = wins.length + losses.length;
+            var winRate = totalTrades > 0 ? (wins.length / totalTrades) * 100 : 0;
+            var avgWin = wins.length > 0 ? wins.reduce(function(a, b) { return a + b; }, 0) / wins.length : 0;
+            var avgLoss = losses.length > 0 ? losses.reduce(function(a, b) { return a + b; }, 0) / losses.length : 0;
+            var profitFactor = avgLoss > 0 && losses.length > 0
+                ? (wins.reduce(function(a, b) { return a + b; }, 0) / losses.reduce(function(a, b) { return a + b; }, 0))
+                : wins.length > 0 ? 999 : 0;
+
+            /* Sharpe approximation */
+            var pnls = allTrades.filter(function(t) { return t.pnl != null; }).map(function(t) { return t.pnl; });
+            var meanPnl = pnls.length > 0 ? pnls.reduce(function(a, b) { return a + b; }, 0) / pnls.length : 0;
+            var variance = pnls.length > 1
+                ? pnls.reduce(function(sum, p) { return sum + Math.pow(p - meanPnl, 2); }, 0) / (pnls.length - 1)
+                : 0;
+            var stdDev = Math.sqrt(variance);
+            var sharpe = stdDev > 0 ? (meanPnl / stdDev) : 0;
+
+            /* Max drawdown from P&L history */
+            var maxDD = 0;
+            var peak = 0;
+            pnlHistory.forEach(function(h) {
+                if (h.pnl > peak) peak = h.pnl;
+                var dd = peak - h.pnl;
+                if (dd > maxDD) maxDD = dd;
+            });
+
+            var expectancy = totalTrades > 0 ? (winRate / 100 * avgWin - (1 - winRate / 100) * avgLoss) : 0;
+
+            return {
+                sharpe: sharpe.toFixed(2),
+                maxDrawdown: '-$' + maxDD.toFixed(0),
+                avgWin: '+$' + avgWin.toFixed(0),
+                avgLoss: '-$' + avgLoss.toFixed(0),
+                profitFactor: profitFactor >= 999 ? '\u221E' : profitFactor.toFixed(2),
+                winRate: winRate.toFixed(0) + '%',
+                winRateNum: winRate,
+                totalTrades: totalTrades,
+                expectancy: (expectancy >= 0 ? '+' : '') + '$' + expectancy.toFixed(1),
+                byCity: byCity,
+                byStrategy: byStrategy
+            };
+        }
+
+        /* ================================================================
+         *  P&L CANVAS CHART (#1, #13)
+         * ================================================================ */
+        function drawPnlChart(canvas) {
+            var ctx = canvas.getContext('2d');
+            var w = canvas.width;
+            var h = canvas.height;
+            ctx.clearRect(0, 0, w, h);
+
+            /* Filter by timeframe */
+            var now = Date.now();
+            var cutoff = 0;
+            if (pnlTimeframe === '1H') cutoff = now - 3600000;
+            else if (pnlTimeframe === '6H') cutoff = now - 21600000;
+            else if (pnlTimeframe === '1D') cutoff = now - 86400000;
+            else if (pnlTimeframe === '1W') cutoff = now - 604800000;
+
+            var data = pnlHistory.filter(function(p) { return p.time.getTime() >= cutoff; });
+            if (data.length < 2) {
+                ctx.font = '12px "JetBrains Mono", monospace';
+                ctx.fillStyle = '#374357';
+                ctx.textAlign = 'center';
+                ctx.fillText('Collecting data...', w / 2, h / 2);
+                return;
+            }
+
+            var pnls = data.map(function(d) { return d.pnl; });
+            var minP = Math.min.apply(null, pnls);
+            var maxP = Math.max.apply(null, pnls);
+            if (minP === maxP) { minP -= 1; maxP += 1; }
+            var padY = (maxP - minP) * 0.1;
+            minP -= padY;
+            maxP += padY;
+
+            var marginL = 50;
+            var marginB = 20;
+            var plotW = w - marginL - 10;
+            var plotH = h - marginB - 10;
+
+            /* Grid lines */
+            ctx.strokeStyle = '#1b2438';
+            ctx.lineWidth = 1;
+            for (var g = 0; g < 5; g++) {
+                var gy = 10 + (plotH / 4) * g;
+                ctx.beginPath();
+                ctx.moveTo(marginL, gy);
+                ctx.lineTo(w - 10, gy);
+                ctx.stroke();
+            }
+
+            /* Zero line */
+            if (minP < 0 && maxP > 0) {
+                var zeroY = 10 + plotH - ((0 - minP) / (maxP - minP)) * plotH;
+                ctx.strokeStyle = '#374357';
+                ctx.setLineDash([4, 4]);
+                ctx.beginPath();
+                ctx.moveTo(marginL, zeroY);
+                ctx.lineTo(w - 10, zeroY);
+                ctx.stroke();
+                ctx.setLineDash([]);
+            }
+
+            /* Y-axis labels */
+            ctx.font = '10px "JetBrains Mono", monospace';
+            ctx.fillStyle = '#4a5b78';
+            ctx.textAlign = 'right';
+            for (var yl = 0; yl < 5; yl++) {
+                var val = maxP - ((maxP - minP) / 4) * yl;
+                var yPos = 10 + (plotH / 4) * yl;
+                ctx.fillText('$' + val.toFixed(0), marginL - 6, yPos + 3);
+            }
+
+            /* Draw the line */
+            ctx.beginPath();
+            ctx.lineWidth = 2;
+            ctx.lineJoin = 'round';
+            ctx.lineCap = 'round';
+
+            var lastPnl = data[data.length - 1].pnl;
+            ctx.strokeStyle = lastPnl >= 0 ? '#22c55e' : '#ef4444';
+
+            for (var i = 0; i < data.length; i++) {
+                var x = marginL + (i / (data.length - 1)) * plotW;
+                var y = 10 + plotH - ((data[i].pnl - minP) / (maxP - minP)) * plotH;
+                if (i === 0) ctx.moveTo(x, y);
+                else ctx.lineTo(x, y);
+            }
+            ctx.stroke();
+
+            /* Fill area under line */
+            var gradColor = lastPnl >= 0 ? 'rgba(34, 197, 94, 0.08)' : 'rgba(239, 68, 68, 0.08)';
+            ctx.lineTo(marginL + plotW, 10 + plotH);
+            ctx.lineTo(marginL, 10 + plotH);
+            ctx.closePath();
+            ctx.fillStyle = gradColor;
+            ctx.fill();
+
+            /* Current value label */
+            ctx.font = 'bold 12px "JetBrains Mono", monospace';
+            ctx.fillStyle = lastPnl >= 0 ? '#22c55e' : '#ef4444';
+            ctx.textAlign = 'left';
+            var lastX = marginL + plotW;
+            var lastY = 10 + plotH - ((lastPnl - minP) / (maxP - minP)) * plotH;
+            ctx.fillText(fmtPnl(lastPnl), lastX - 50, lastY - 8);
+        }
+
+        /* ================================================================
+         *  HEAT MAP + CALENDAR TAB (#6, #4)
+         * ================================================================ */
+        function renderHeatCalTab() {
+            var pane = document.getElementById('tabHeatCal');
+            while (pane.firstChild) pane.removeChild(pane.firstChild);
+
+            var wrapper = el('div');
+            setStyle(wrapper, { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', height: '100%', overflow: 'auto' });
+
+            /* LEFT: Heat Map */
+            var hmCol = el('div');
+            var hmTitle = el('div', 'panel-title', 'Edge Heat Map');
+            hmTitle.style.marginBottom = '8px';
+            hmCol.appendChild(hmTitle);
+
+            var hmGrid = el('div', 'heatmap-grid');
+            var signals = (prevState.signals || []);
+            var cities = prevState.cities || {};
+
+            /* Build city edge map */
+            var cityEdges = {};
+            signals.forEach(function(s) {
+                var cid = (s.city_id || '').toUpperCase();
+                if (!cityEdges[cid] || Math.abs(s.edge) > Math.abs(cityEdges[cid])) {
+                    cityEdges[cid] = s.edge;
+                }
+            });
+            /* Add cities with no signals */
+            Object.keys(cities).forEach(function(id) {
+                var upper = id.toUpperCase();
+                if (cityEdges[upper] === undefined) cityEdges[upper] = 0;
+            });
+
+            Object.keys(cityEdges).forEach(function(cid) {
+                var edgeVal = cityEdges[cid] || 0;
+                var cell = el('div', 'heatmap-cell');
+                var intensity = Math.min(Math.abs(edgeVal) * 3, 1);
+
+                if (edgeVal > 0.01) {
+                    cell.style.background = 'rgba(34, 197, 94, ' + (0.08 + intensity * 0.3) + ')';
+                    cell.style.border = '1px solid rgba(34, 197, 94, ' + (0.1 + intensity * 0.3) + ')';
+                } else if (edgeVal < -0.01) {
+                    cell.style.background = 'rgba(239, 68, 68, ' + (0.08 + intensity * 0.3) + ')';
+                    cell.style.border = '1px solid rgba(239, 68, 68, ' + (0.1 + intensity * 0.3) + ')';
+                } else {
+                    cell.style.background = 'var(--bg-card)';
+                    cell.style.border = '1px solid var(--border-subtle)';
+                }
+
+                var cityLabel = el('div', 'heatmap-city', cid);
+                var edgeLabel = el('div', 'heatmap-edge');
+                if (Math.abs(edgeVal) > 0.001) {
+                    edgeLabel.textContent = (edgeVal >= 0 ? '+' : '') + (edgeVal * 100).toFixed(1) + '%';
+                    edgeLabel.style.color = edgeVal >= 0 ? 'var(--green)' : 'var(--red)';
+                } else {
+                    edgeLabel.textContent = 'FLAT';
+                    edgeLabel.style.color = 'var(--text-muted)';
+                }
+
+                cell.appendChild(cityLabel);
+                cell.appendChild(edgeLabel);
+                hmGrid.appendChild(cell);
+            });
+
+            if (Object.keys(cityEdges).length === 0) {
+                var noData = el('div', null, 'No signal data yet');
+                setStyle(noData, { color: 'var(--text-muted)', padding: '20px', textAlign: 'center' });
+                hmGrid.appendChild(noData);
+            }
+
+            hmCol.appendChild(hmGrid);
+
+            /* RIGHT: Market Calendar */
+            var calCol = el('div');
+            var calTitle = el('div', 'panel-title', 'Market Calendar');
+            calTitle.style.marginBottom = '8px';
+            calCol.appendChild(calTitle);
+
+            /* Group trades by date (today vs tomorrow) */
+            var today = new Date().toISOString().slice(0, 10);
+            var tom = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
+            var dateGroups = {};
+            dateGroups[today] = { label: 'Today', count: 0, risk: 0 };
+            dateGroups[tom] = { label: 'Tomorrow', count: 0, risk: 0 };
+
+            allTrades.forEach(function(t) {
+                if (t.status === 'open') {
+                    /* Approximate: distribute evenly */
+                    dateGroups[today].count++;
+                    dateGroups[today].risk += t.size;
+                }
+            });
+
+            /* If more open than today can hold, spill to tomorrow */
+            var openCount = allTrades.filter(function(t) { return t.status === 'open'; }).length;
+            if (openCount > 0) {
+                var half = Math.ceil(openCount / 2);
+                var openTrades = allTrades.filter(function(t) { return t.status === 'open'; });
+                dateGroups[today] = { label: 'Today', count: 0, risk: 0 };
+                dateGroups[tom] = { label: 'Tomorrow', count: 0, risk: 0 };
+                openTrades.forEach(function(t, i) {
+                    var bucket = i < half ? today : tom;
+                    dateGroups[bucket].count++;
+                    dateGroups[bucket].risk += t.size;
+                });
+            }
+
+            var totalRisk = prevState.capital_at_risk || 0;
+            var maxRisk = Math.max(totalRisk, 1);
+
+            Object.keys(dateGroups).forEach(function(d) {
+                var g = dateGroups[d];
+                var row = el('div', 'calendar-row');
+                var dateEl = el('div', 'calendar-date', g.label);
+
+                var barWrap = el('div', 'calendar-bar-wrap');
+                var barFill = el('div', 'calendar-bar-fill');
+                var pct = maxRisk > 0 ? (g.risk / maxRisk) * 100 : 0;
+                barFill.style.width = pct + '%';
+                barFill.style.background = g.risk > 0 ? 'var(--cyan)' : 'var(--border)';
+                barWrap.appendChild(barFill);
+
+                var statEl = el('div', 'calendar-stat', g.count + ' positions ($' + g.risk.toFixed(0) + ' at risk)');
+
+                row.appendChild(dateEl);
+                row.appendChild(barWrap);
+                row.appendChild(statEl);
+                calCol.appendChild(row);
+            });
+
+            if (openCount === 0) {
+                var noPos = el('div', null, 'No open positions');
+                setStyle(noPos, { color: 'var(--text-muted)', padding: '20px', textAlign: 'center', fontSize: '12px' });
+                calCol.appendChild(noPos);
+            }
+
+            wrapper.appendChild(hmCol);
+            wrapper.appendChild(calCol);
+            pane.appendChild(wrapper);
+        }
+
+        /* ================================================================
+         *  ALERTS FEED (#8)
+         * ================================================================ */
+        function generateAlerts(state) {
+            var now = new Date().toLocaleTimeString('en', { hour12: false });
+
+            /* Sniper alerts */
+            var snipeEvents = state.sniper_events || [];
+            var prevSnipe = (prevState.sniper_events || []);
+            if (snipeEvents.length > prevSnipe.length) {
+                for (var i = prevSnipe.length; i < snipeEvents.length; i++) {
+                    var se = snipeEvents[i];
+                    addAlert('sniper', 'SNIPER: ' + se.model.split('_')[0].toUpperCase() + ' ' + (se.shift > 0 ? '+' : '') + se.shift + '\u00B0C shift in ' + (se.city || '').toUpperCase(), se.time || now);
+                }
+            }
+
+            /* New trades */
+            var newLog = state.trade_log || [];
+            var prevLog = prevState.trade_log || [];
+            if (newLog.length > prevLog.length) {
+                for (var j = 0; j < newLog.length - prevLog.length; j++) {
+                    var t = newLog[j];
+                    addAlert('trade', 'TRADE: ' + t.side + ' ' + t.city + ' $' + (t.size || 0).toFixed(0), t.time || now);
+                }
+            }
+
+            /* Cycle complete */
+            var newCycle = state.cycle_count || 0;
+            var prevCycle = prevState.cycle_count || 0;
+            if (newCycle > prevCycle && prevCycle > 0) {
+                var sigCount = (state.signals || []).length;
+                var tradeable = (state.signals || []).filter(function(s) { return s.tier !== 'low'; }).length;
+                addAlert('cycle', 'CYCLE #' + newCycle + ': ' + sigCount + ' signals, ' + tradeable + ' tradeable', now);
+            }
+        }
+
+        function addAlert(type, msg, time) {
+            alertsFeed.unshift({ type: type, msg: msg, time: time || '' });
+            if (alertsFeed.length > 50) alertsFeed = alertsFeed.slice(0, 50);
+            /* Update tab badge */
+            var badge = document.getElementById('tabBadge_tabAlerts');
+            if (badge) badge.textContent = String(alertsFeed.length);
+        }
+
+        function renderAlerts() {
+            var pane = document.getElementById('tabAlerts');
+            while (pane.firstChild) pane.removeChild(pane.firstChild);
+
+            var title = el('div', 'panel-title', 'Activity Feed');
+            title.style.marginBottom = '8px';
+            pane.appendChild(title);
+
+            var scrollWrap = el('div');
+            setStyle(scrollWrap, { overflowY: 'auto', flex: '1' });
+
+            if (alertsFeed.length === 0) {
+                var empty = el('div', null, 'No events yet. Alerts will appear as trading progresses.');
+                setStyle(empty, { color: 'var(--text-muted)', padding: '20px', textAlign: 'center', fontSize: '12px' });
+                scrollWrap.appendChild(empty);
+            } else {
+                alertsFeed.forEach(function(a) {
+                    var entry = el('div', 'alert-entry');
+                    var badge = el('span', 'alert-type-badge ' + a.type, a.type.toUpperCase());
+                    var msg = el('span', 'alert-msg', a.msg);
+                    var time = el('span', 'alert-time', a.time);
+                    entry.appendChild(badge);
+                    entry.appendChild(msg);
+                    entry.appendChild(time);
+                    scrollWrap.appendChild(entry);
+                });
+            }
+
+            pane.appendChild(scrollWrap);
+        }
+
+        /* ================================================================
+         *  STUBS TAB (#11, #12, #14, #15)
+         * ================================================================ */
+        function renderStubs() {
+            var pane = document.getElementById('tabStubs');
+            while (pane.firstChild) pane.removeChild(pane.firstChild);
+
+            var scrollWrap = el('div');
+            setStyle(scrollWrap, { overflowY: 'auto', flex: '1' });
+
+            var stubs = [
+                {
+                    title: 'Backtesting',
+                    desc: 'Replay historical weather data against model predictions and Polymarket prices. Test strategy performance across different seasons, city combinations, and position sizing rules. Simulate P&L with configurable bankroll, slippage, and market impact assumptions.'
+                },
+                {
+                    title: 'City Correlation Matrix',
+                    desc: 'Compute pairwise correlation between city forecast errors and edge signals. Identify diversification opportunities and concentration risk. Visualize as an interactive matrix with drill-down into specific city pairs.'
+                },
+                {
+                    title: 'NWS Weather Alerts',
+                    desc: 'Real-time National Weather Service alerts for tracked cities. Severe weather warnings, advisories, and watches that may impact market resolution. Automatic signal boost when extreme weather events overlap with open positions.'
+                },
+                {
+                    title: 'Execution Analytics',
+                    desc: 'Track fill rates, slippage, time-to-fill, and market impact of trades. Compare theoretical edge vs realized P&L to measure execution quality. Identify optimal execution timing and order sizing for different market conditions.'
+                }
+            ];
+
+            stubs.forEach(function(s) {
+                var card = el('div', 'stub-card');
+                var title = el('div', 'stub-title', s.title);
+                var desc = el('div', 'stub-desc', s.desc);
+                var badge = el('div');
+                var badgeSpan = el('span', 'stub-badge', 'COMING SOON');
+                badge.appendChild(badgeSpan);
+                card.appendChild(title);
+                card.appendChild(desc);
+                card.appendChild(badge);
+                scrollWrap.appendChild(card);
+            });
+
+            pane.appendChild(scrollWrap);
+        }
+
+        /* ================================================================
+         *  KEYBOARD SHORTCUTS (#10)
+         * ================================================================ */
+        var SHORTCUTS = [
+            { key: 'S', desc: 'Start trading' },
+            { key: 'X', desc: 'Stop trading' },
+            { key: 'C', desc: 'Close all positions (with confirm)' },
+            { key: 'N', desc: 'New session (with confirm)' },
+            { key: 'R', desc: 'Refresh data' },
+            { key: 'Esc', desc: 'Close modal/overlay' },
+            { key: '?', desc: 'Toggle this help' },
+            { key: '1-6', desc: 'Switch to tab 1-6' },
+            { key: '\u2191 / \u2193', desc: 'Navigate city list' }
+        ];
+
+        function buildKbdHelp() {
+            var box = document.getElementById('kbdBox');
+            while (box.firstChild) box.removeChild(box.firstChild);
+
+            var title = el('div', 'kbd-title', 'Keyboard Shortcuts');
+            box.appendChild(title);
+
+            SHORTCUTS.forEach(function(s) {
+                var row = el('div', 'kbd-row');
+                var key = el('span', 'kbd-key', s.key);
+                var desc = el('span', 'kbd-desc', s.desc);
+                row.appendChild(key);
+                row.appendChild(desc);
+                box.appendChild(row);
+            });
+
+            var hint = el('div');
+            setStyle(hint, { marginTop: '12px', textAlign: 'center', color: 'var(--text-muted)', fontSize: '11px' });
+            hint.textContent = 'Press ? or Esc to close';
+            box.appendChild(hint);
+        }
+        buildKbdHelp();
+
+        function toggleKbdHelp() {
+            var overlay = document.getElementById('kbdOverlay');
+            overlay.classList.toggle('visible');
+        }
+
+        document.getElementById('kbdOverlay').addEventListener('click', function(e) {
+            if (e.target === this) this.classList.remove('visible');
+        });
+
+        document.addEventListener('keydown', function(e) {
+            /* Don't capture when typing in an input */
+            if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
+
+            var key = e.key;
+
+            /* Escape: close any overlay */
+            if (key === 'Escape') {
+                document.getElementById('tradeModal').classList.remove('visible');
+                document.getElementById('kbdOverlay').classList.remove('visible');
+                return;
+            }
+
+            /* ? = keyboard help */
+            if (key === '?') {
+                e.preventDefault();
+                toggleKbdHelp();
+                return;
+            }
+
+            /* Tab switching with number keys */
+            if (key >= '1' && key <= '6') {
+                var idx = parseInt(key) - 1;
+                if (idx < TAB_CONFIG.length) {
+                    e.preventDefault();
+                    switchTab(TAB_CONFIG[idx].id);
+                }
+                return;
+            }
+
+            /* Trading shortcuts (case-insensitive) */
+            var lk = key.toLowerCase();
+            if (lk === 's') {
+                e.preventDefault();
+                document.getElementById('startBtn').click();
+            } else if (lk === 'x') {
+                e.preventDefault();
+                document.getElementById('stopBtn').click();
+            } else if (lk === 'c') {
+                e.preventDefault();
+                document.getElementById('closeAllBtn').click();
+            } else if (lk === 'n') {
+                e.preventDefault();
+                document.getElementById('newSessionBtn').click();
+            } else if (lk === 'r') {
+                e.preventDefault();
+                document.getElementById('refreshBtn').click();
+            }
+
+            /* Arrow keys for city navigation */
+            if (key === 'ArrowUp' || key === 'ArrowDown') {
+                e.preventDefault();
+                navigateCity(key === 'ArrowDown' ? 1 : -1);
+            }
+        });
+
+        function navigateCity(direction) {
+            var cities = prevState.cities;
+            if (!cities) return;
+            var keys = Object.keys(cities);
+            if (keys.length === 0) return;
+            var idx = keys.indexOf(selectedCity);
+            if (idx === -1) idx = 0;
+            else idx = idx + direction;
+            if (idx < 0) idx = keys.length - 1;
+            if (idx >= keys.length) idx = 0;
+            selectedCity = keys[idx];
+            fetch('/api/state').then(function(r) { return r.json(); }).then(updateDashboard);
+        }
+
+        /* ================================================================
+         *  CONTROLS (button click handlers)
+         * ================================================================ */
         document.getElementById('refreshBtn').addEventListener('click', function() {
             fetch('/api/refresh', {method: 'POST'}).then(function(r) { return r.json(); });
         });
@@ -1728,12 +3327,14 @@
         document.getElementById('startBtn').addEventListener('click', function() {
             fetch('/api/start', {method: 'POST'}).then(function(r) { return r.json(); }).then(function(d) {
                 console.log('Started:', d);
+                addAlert('system', 'Trading STARTED', new Date().toLocaleTimeString('en', { hour12: false }));
             });
         });
 
         document.getElementById('stopBtn').addEventListener('click', function() {
             fetch('/api/stop', {method: 'POST'}).then(function(r) { return r.json(); }).then(function(d) {
                 console.log('Stopped:', d);
+                addAlert('system', 'Trading STOPPED', new Date().toLocaleTimeString('en', { hour12: false }));
             });
         });
 
@@ -1741,6 +3342,7 @@
             if (!confirm('Close all open positions at current market prices?')) return;
             fetch('/api/close-all', {method: 'POST'}).then(function(r) { return r.json(); }).then(function(d) {
                 console.log('Closed all:', d);
+                addAlert('system', 'All positions CLOSED', new Date().toLocaleTimeString('en', { hour12: false }));
             });
         });
 
@@ -1748,21 +3350,32 @@
             if (!confirm('Reset everything and start a new $1,000 session?')) return;
             fetch('/api/new-session', {method: 'POST'}).then(function(r) { return r.json(); }).then(function(d) {
                 console.log('New session:', d);
+                allTrades = [];
+                pnlHistory = [];
+                alertsFeed = [];
+                addAlert('system', 'New session STARTED', new Date().toLocaleTimeString('en', { hour12: false }));
             });
         });
 
-        /* ---- UTC Clock ---- */
+        /* ================================================================
+         *  UTC CLOCK
+         * ================================================================ */
         function updateClock() {
             document.getElementById('clock').textContent = new Date().toISOString().slice(11, 19);
         }
         setInterval(updateClock, 1000);
         updateClock();
 
-        /* ---- Init ---- */
+        /* ================================================================
+         *  INIT
+         * ================================================================ */
         connectWS();
         fetch('/api/state').then(function(r) { return r.json(); }).then(function(s) {
             if (s && s.cities && Object.keys(s.cities).length > 0) updateDashboard(s);
         });
+
+        /* Render stubs on load so they're ready if user clicks that tab */
+        renderStubs();
     </script>
 </body>
 </html>
