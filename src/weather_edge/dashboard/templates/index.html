@@ -1,0 +1,727 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Weather Edge</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&display=swap');
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        :root {
+            --bg: #0a0e17;
+            --bg-panel: #0f1420;
+            --bg-card: #141926;
+            --bg-hover: #1a2035;
+            --border: #1e2940;
+            --text: #c8d3e6;
+            --text-dim: #5a6b8a;
+            --text-bright: #e8edf5;
+            --green: #00e676;
+            --green-dim: #004d25;
+            --red: #ff3d71;
+            --red-dim: #4d0016;
+            --yellow: #ffab00;
+            --cyan: #00b8d4;
+            --purple: #b388ff;
+            --orange: #ff6e40;
+            --blue: #448aff;
+        }
+
+        body {
+            background: var(--bg);
+            color: var(--text);
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 13px;
+            line-height: 1.5;
+            overflow-x: hidden;
+        }
+
+        .header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 12px 20px;
+            border-bottom: 1px solid var(--border);
+            background: var(--bg-panel);
+        }
+        .header-left {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        .status-dot {
+            width: 8px; height: 8px;
+            border-radius: 50%;
+            background: var(--green);
+            animation: pulse 2s infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.4; }
+        }
+        .title {
+            font-size: 16px;
+            font-weight: 700;
+            letter-spacing: 4px;
+            color: var(--text-bright);
+        }
+        .subtitle {
+            color: var(--text-dim);
+            font-size: 12px;
+        }
+        .header-stats {
+            display: flex;
+            gap: 32px;
+            align-items: center;
+        }
+        .stat { text-align: center; }
+        .stat-value {
+            font-size: 16px;
+            font-weight: 600;
+        }
+        .stat-value.green { color: var(--green); }
+        .stat-value.red { color: var(--red); }
+        .stat-value.yellow { color: var(--yellow); }
+        .stat-value.cyan { color: var(--cyan); }
+        .stat-label {
+            font-size: 10px;
+            color: var(--text-dim);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .main {
+            display: grid;
+            grid-template-columns: 320px 1fr 300px;
+            grid-template-rows: 1fr 280px;
+            height: calc(100vh - 52px);
+            gap: 1px;
+            background: var(--border);
+        }
+
+        .panel {
+            background: var(--bg-panel);
+            padding: 16px;
+            overflow-y: auto;
+        }
+        .panel-title {
+            font-size: 11px;
+            font-weight: 600;
+            letter-spacing: 2px;
+            color: var(--text-dim);
+            text-transform: uppercase;
+            margin-bottom: 12px;
+        }
+
+        .city-card {
+            padding: 10px 12px;
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            margin-bottom: 8px;
+            cursor: pointer;
+            transition: all 0.15s;
+        }
+        .city-card:hover { background: var(--bg-hover); border-color: var(--cyan); }
+        .city-card.active { border-color: var(--cyan); background: var(--bg-hover); }
+        .city-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .city-name { font-weight: 600; color: var(--text-bright); }
+        .city-icao { color: var(--text-dim); font-size: 11px; }
+        .city-temp { font-weight: 600; font-size: 15px; }
+        .city-temp.up { color: var(--green); }
+        .city-temp.down { color: var(--red); }
+        .city-meta { font-size: 11px; color: var(--text-dim); margin-top: 4px; }
+        .confidence-bar {
+            height: 3px;
+            background: var(--border);
+            border-radius: 2px;
+            margin-top: 6px;
+            overflow: hidden;
+        }
+        .confidence-fill {
+            height: 100%;
+            border-radius: 2px;
+            transition: width 0.5s;
+        }
+
+        .chart-area {
+            position: relative;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .model-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 6px 0;
+            border-bottom: 1px solid var(--border);
+        }
+        .model-name { display: flex; align-items: center; gap: 8px; }
+        .model-dot { width: 6px; height: 6px; border-radius: 50%; }
+        .model-bar {
+            flex: 1;
+            height: 2px;
+            background: var(--border);
+            margin: 0 12px;
+            border-radius: 1px;
+            overflow: hidden;
+        }
+        .model-bar-fill { height: 100%; border-radius: 1px; }
+        .model-pct { font-size: 12px; min-width: 30px; text-align: right; }
+
+        .active-position {
+            margin-top: 16px;
+            padding: 12px;
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            background: var(--bg-card);
+        }
+        .position-city { font-weight: 600; color: var(--cyan); }
+        .position-desc { font-size: 11px; color: var(--text-dim); margin: 4px 0 8px; }
+        .position-stats { display: flex; gap: 16px; }
+        .position-stat-label { font-size: 10px; color: var(--text-dim); text-transform: uppercase; }
+
+        .windy-panel iframe { width: 100%; height: 100%; border: none; }
+
+        .trade-log-area { grid-column: 2 / 4; }
+        .trade-log-grid {
+            display: grid;
+            grid-template-columns: 1fr 240px;
+            height: 100%;
+            gap: 16px;
+        }
+        .trade-entry {
+            display: flex;
+            align-items: center;
+            padding: 4px 0;
+            font-size: 12px;
+            border-bottom: 1px solid var(--border);
+            gap: 8px;
+        }
+        .trade-side {
+            width: 16px; height: 16px;
+            border-radius: 2px;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 10px; font-weight: 700; flex-shrink: 0;
+        }
+        .trade-side.buy { background: var(--green-dim); color: var(--green); }
+        .trade-side.sell { background: var(--red-dim); color: var(--red); }
+        .trade-desc { flex: 1; color: var(--text); }
+        .trade-pnl { min-width: 60px; text-align: right; font-weight: 500; }
+        .trade-pnl.positive { color: var(--green); }
+        .trade-pnl.negative { color: var(--red); }
+        .trade-time { color: var(--text-dim); font-size: 11px; min-width: 60px; text-align: right; }
+
+        .session-stats { text-align: right; }
+        .session-pnl { font-size: 28px; font-weight: 700; letter-spacing: 1px; }
+        .session-pnl.positive { color: var(--green); }
+        .session-pnl.negative { color: var(--red); }
+        .session-meta { margin-top: 8px; }
+        .session-meta-row { display: flex; justify-content: space-between; padding: 2px 0; }
+        .session-meta-label { color: var(--text-dim); font-size: 11px; }
+        .session-meta-value { font-weight: 500; font-size: 12px; }
+        .streak { color: var(--orange); }
+
+        .refresh-btn {
+            margin-top: 16px;
+            padding: 8px 16px;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            color: var(--cyan);
+            font-family: inherit;
+            font-size: 11px;
+            cursor: pointer;
+            border-radius: 4px;
+            letter-spacing: 1px;
+        }
+        .refresh-btn:hover { border-color: var(--cyan); }
+
+        ::-webkit-scrollbar { width: 4px; }
+        ::-webkit-scrollbar-track { background: var(--bg); }
+        ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div class="header-left">
+            <div class="status-dot" id="statusDot"></div>
+            <span class="title">WEATHER EDGE</span>
+            <span class="subtitle" id="tradingStatus">stopped, press START</span>
+        </div>
+        <div class="header-stats">
+            <div class="stat">
+                <div class="stat-value cyan" id="bankroll">$1,000</div>
+                <div class="stat-label">bankroll</div>
+            </div>
+            <div class="stat">
+                <div class="stat-value green" id="totalPnl">$0</div>
+                <div class="stat-label">total P&amp;L</div>
+            </div>
+            <div class="stat">
+                <div class="stat-value yellow" id="atRisk">$0</div>
+                <div class="stat-label">at risk</div>
+            </div>
+            <div class="stat">
+                <div class="stat-value" id="winRate">0%</div>
+                <div class="stat-label">win rate</div>
+            </div>
+            <div class="stat">
+                <div class="stat-value" id="openPositions">0</div>
+                <div class="stat-label">open pos.</div>
+            </div>
+            <div class="stat">
+                <div class="stat-value cyan" id="cycleCount">0</div>
+                <div class="stat-label">cycles</div>
+            </div>
+            <div class="stat">
+                <div class="stat-value yellow" id="clock">--:--:--</div>
+                <div class="stat-label">UTC</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="main">
+        <div class="panel" id="weatherMarkets">
+            <div class="panel-title">Weather Markets</div>
+            <div id="cityList"></div>
+        </div>
+
+        <div class="panel chart-area" id="chartArea">
+            <div style="color: var(--text-dim); text-align: center;">
+                <div style="font-size: 14px;">Edge distribution updates after first cycle</div>
+            </div>
+        </div>
+
+        <div class="panel">
+            <div class="panel-title">Model Consensus</div>
+            <div id="modelConsensus"></div>
+            <div class="panel-title" style="margin-top: 20px;">Active Position</div>
+            <div id="activePosition">
+                <div class="active-position">
+                    <div style="color: var(--text-dim); font-size: 12px;">No active signals yet</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="panel windy-panel" style="padding: 0; overflow: hidden;">
+            <iframe
+                src="https://embed.windy.com/embed.html?type=map&location=coordinates&metricRain=mm&metricTemp=%C2%B0C&metricWind=km/h&zoom=3&overlay=temp&product=ecmwf&level=surface&lat=35&lon=-40"
+                loading="lazy"
+            ></iframe>
+        </div>
+
+        <div class="panel trade-log-area">
+            <div class="trade-log-grid">
+                <div>
+                    <div class="panel-title">Trade Log</div>
+                    <div id="tradeLog"></div>
+                </div>
+                <div class="session-stats">
+                    <div class="panel-title" style="text-align: right;">session P&amp;L</div>
+                    <div class="session-pnl positive" id="sessionPnl">$0</div>
+                    <div class="session-meta">
+                        <div class="session-meta-row">
+                            <span class="session-meta-label">best trade</span>
+                            <span class="session-meta-value green" id="bestTrade">$0</span>
+                        </div>
+                        <div class="session-meta-row">
+                            <span class="session-meta-label">streak</span>
+                            <span class="session-meta-value streak" id="streak">0</span>
+                        </div>
+                        <div class="session-meta-row">
+                            <span class="session-meta-label">last update</span>
+                            <span class="session-meta-value" id="lastUpdate" style="color: var(--text-dim);">--</span>
+                        </div>
+                        <div class="session-meta-row">
+                            <span class="session-meta-label">sniper</span>
+                            <span class="session-meta-value" id="sniperStatus" style="color: var(--cyan);">armed</span>
+                        </div>
+                    </div>
+                    <div style="display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end;">
+                        <button class="refresh-btn" id="startBtn" style="color: var(--green); border-color: var(--green);">START</button>
+                        <button class="refresh-btn" id="stopBtn" style="color: var(--yellow); border-color: var(--yellow);">STOP</button>
+                        <button class="refresh-btn" id="closeAllBtn" style="color: var(--red); border-color: var(--red);">CLOSE ALL</button>
+                        <button class="refresh-btn" id="newSessionBtn" style="color: var(--purple); border-color: var(--purple);">NEW SESSION</button>
+                    </div>
+                    <button class="refresh-btn" id="refreshBtn" style="margin-top: 8px;">REFRESH NOW</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const MODEL_COLORS = {
+            'ecmwf_ifs025': '#448aff',
+            'gfs_seamless': '#78909c',
+            'icon_seamless': '#b388ff',
+            'gem_seamless': '#80cbc4',
+            'jma_seamless': '#ffab91',
+            'meteofrance_seamless': '#a5d6a7',
+            'hrrr_conus18': '#00e676',
+            'nam_conus12': '#ff6e40',
+            'ukmo_uk_deterministic_2km': '#40c4ff',
+            'gem_hrdps_continental': '#ea80fc',
+            'kma_seamless': '#ffd740',
+        };
+        const MODEL_SHORT = {
+            'ecmwf_ifs025': 'ECMWF',
+            'gfs_seamless': 'GFS',
+            'icon_seamless': 'ICON',
+            'gem_seamless': 'GEM',
+            'jma_seamless': 'JMA',
+            'meteofrance_seamless': 'MF',
+            'hrrr_conus18': 'HRRR',
+            'nam_conus12': 'NAM',
+            'ukmo_uk_deterministic_2km': 'UKV',
+            'gem_hrdps_continental': 'HRDPS',
+            'kma_seamless': 'KMA',
+        };
+
+        let ws;
+        let selectedCity = null;
+
+        function esc(str) {
+            const d = document.createElement('div');
+            d.textContent = str;
+            return d.textContent;
+        }
+
+        function connectWS() {
+            const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+            ws = new WebSocket(proto + '//' + location.host + '/ws');
+            ws.onmessage = function(event) {
+                updateDashboard(JSON.parse(event.data));
+            };
+            ws.onclose = function() {
+                document.getElementById('statusDot').style.background = 'var(--red)';
+                setTimeout(connectWS, 3000);
+            };
+            ws.onerror = function() { ws.close(); };
+        }
+
+        function fmtPnl(n) {
+            var sign = n >= 0 ? '+' : '-';
+            return sign + '$' + Math.abs(n).toLocaleString('en', {minimumFractionDigits: 0, maximumFractionDigits: 0});
+        }
+
+        function updateDashboard(state) {
+            document.getElementById('statusDot').style.background = 'var(--green)';
+
+            var pnl = state.total_pnl || 0;
+            var pnlEl = document.getElementById('totalPnl');
+            pnlEl.textContent = fmtPnl(pnl);
+            pnlEl.className = 'stat-value ' + (pnl >= 0 ? 'green' : 'red');
+
+            document.getElementById('winRate').textContent = (state.win_rate || 0).toFixed(0) + '%';
+            document.getElementById('openPositions').textContent = String(state.open_positions || 0);
+            document.getElementById('cycleCount').textContent = String(state.cycle_count || 0);
+
+            var bankroll = state.bankroll || 1000;
+            document.getElementById('bankroll').textContent = '$' + bankroll.toLocaleString('en');
+            var atRisk = state.capital_at_risk || 0;
+            document.getElementById('atRisk').textContent = '$' + atRisk.toLocaleString('en');
+
+            var active = state.trading_active;
+            var statusEl = document.getElementById('tradingStatus');
+            if (active) {
+                statusEl.textContent = 'LIVE, paper trading';
+                statusEl.style.color = 'var(--green)';
+                document.getElementById('statusDot').style.background = 'var(--green)';
+            } else {
+                statusEl.textContent = 'STOPPED';
+                statusEl.style.color = 'var(--yellow)';
+            }
+
+            if (state.cities && Object.keys(state.cities).length > 0) {
+                updateCityList(state.cities);
+            }
+
+            if (selectedCity && state.cities && state.cities[selectedCity]) {
+                updateModelConsensus(state.cities[selectedCity]);
+            } else if (state.cities) {
+                var first = Object.keys(state.cities)[0];
+                if (first) { selectedCity = first; updateModelConsensus(state.cities[first]); }
+            }
+
+            if (state.signals && state.signals.length > 0) {
+                updateActivePosition(state.signals[0]);
+            }
+
+            if (state.trade_log) { updateTradeLog(state.trade_log); }
+
+            var sp = state.session_pnl || 0;
+            var spEl = document.getElementById('sessionPnl');
+            spEl.textContent = fmtPnl(sp);
+            spEl.className = 'session-pnl ' + (sp >= 0 ? 'positive' : 'negative');
+            document.getElementById('bestTrade').textContent = '+$' + (state.best_trade || 0).toFixed(0);
+            document.getElementById('streak').textContent = String(state.streak || 0);
+            document.getElementById('lastUpdate').textContent = state.last_update
+                ? new Date(state.last_update).toLocaleTimeString('en', {hour12: false}) : '--';
+
+            var snipeEvents = state.sniper_events || [];
+            var sniperEl = document.getElementById('sniperStatus');
+            if (snipeEvents.length > 0) {
+                var last = snipeEvents[snipeEvents.length - 1];
+                sniperEl.textContent = last.model.split('_')[0].toUpperCase() + ' ' + (last.shift > 0 ? '+' : '') + last.shift + '\u00B0C @ ' + last.time;
+                sniperEl.style.color = 'var(--orange)';
+            } else {
+                sniperEl.textContent = 'armed';
+                sniperEl.style.color = 'var(--cyan)';
+            }
+        }
+
+        function updateCityList(cities) {
+            var el = document.getElementById('cityList');
+            while (el.firstChild) el.removeChild(el.firstChild);
+
+            Object.keys(cities).forEach(function(id) {
+                var city = cities[id];
+                var td = city.forecasts ? city.forecasts.temp_max_c : null;
+                var temp = td ? td.mean : null;
+                var conf = td ? td.confidence : null;
+                var isUp = temp !== null && temp > 0;
+
+                var card = document.createElement('div');
+                card.className = 'city-card' + (id === selectedCity ? ' active' : '');
+                card.setAttribute('data-city', id);
+
+                var header = document.createElement('div');
+                header.className = 'city-header';
+
+                var nameDiv = document.createElement('div');
+                var nameSpan = document.createElement('span');
+                nameSpan.className = 'city-name';
+                nameSpan.textContent = city.name;
+                var icaoSpan = document.createElement('span');
+                icaoSpan.className = 'city-icao';
+                icaoSpan.textContent = ' (' + esc(city.icao) + ')';
+                nameDiv.appendChild(nameSpan);
+                nameDiv.appendChild(icaoSpan);
+
+                var tempDiv = document.createElement('div');
+                tempDiv.className = 'city-temp ' + (isUp ? 'up' : 'down');
+                tempDiv.textContent = temp !== null
+                    ? (temp > 0 ? '+' : '') + temp.toFixed(0) + '\u00B0C ' + (isUp ? '\u25B2' : '\u25BC')
+                    : '--';
+
+                header.appendChild(nameDiv);
+                header.appendChild(tempDiv);
+
+                var meta = document.createElement('div');
+                meta.className = 'city-meta';
+                var nModels = city.models ? Object.keys(city.models).length : 0;
+                meta.textContent = nModels + ' models \u00B7 conf: ' + (conf !== null ? (conf * 100).toFixed(0) + '%' : '--');
+
+                var bar = document.createElement('div');
+                bar.className = 'confidence-bar';
+                var fill = document.createElement('div');
+                fill.className = 'confidence-fill';
+                fill.style.width = ((conf || 0) * 100) + '%';
+                fill.style.background = conf >= 0.8 ? 'var(--green)' : conf >= 0.6 ? 'var(--cyan)' : conf >= 0.4 ? 'var(--yellow)' : 'var(--orange)';
+                bar.appendChild(fill);
+
+                card.appendChild(header);
+                card.appendChild(meta);
+                card.appendChild(bar);
+                el.appendChild(card);
+
+                card.addEventListener('click', function() {
+                    selectedCity = id;
+                    fetch('/api/state').then(function(r) { return r.json(); }).then(updateDashboard);
+                });
+            });
+        }
+
+        function updateModelConsensus(city) {
+            var el = document.getElementById('modelConsensus');
+            while (el.firstChild) el.removeChild(el.firstChild);
+            var models = city.models || {};
+            var keys = Object.keys(models);
+            if (keys.length === 0) {
+                el.textContent = 'No model data';
+                return;
+            }
+
+            var temps = keys.map(function(k) { return models[k].temp_max_c; }).filter(function(t) { return t != null; });
+            var avg = temps.length > 0 ? temps.reduce(function(a, b) { return a + b; }, 0) / temps.length : 0;
+
+            keys.forEach(function(mn) {
+                var color = MODEL_COLORS[mn] || '#888';
+                var short = MODEL_SHORT[mn] || mn.split('_')[0].toUpperCase();
+                var t = models[mn].temp_max_c;
+
+                var agreement = 0;
+                if (t != null && temps.length > 1) {
+                    var maxDev = Math.max.apply(null, temps.map(function(x) { return Math.abs(x - avg); }));
+                    agreement = maxDev > 0 ? Math.max(0, 1 - Math.abs(t - avg) / (maxDev * 2)) : 1;
+                }
+
+                var row = document.createElement('div');
+                row.className = 'model-row';
+
+                var nameDiv = document.createElement('div');
+                nameDiv.className = 'model-name';
+                var dot = document.createElement('div');
+                dot.className = 'model-dot';
+                dot.style.background = color;
+                var label = document.createElement('span');
+                label.textContent = short;
+                nameDiv.appendChild(dot);
+                nameDiv.appendChild(label);
+
+                var barOuter = document.createElement('div');
+                barOuter.className = 'model-bar';
+                var barFill = document.createElement('div');
+                barFill.className = 'model-bar-fill';
+                barFill.style.width = (agreement * 100) + '%';
+                barFill.style.background = color;
+                barOuter.appendChild(barFill);
+
+                var pct = document.createElement('div');
+                pct.className = 'model-pct';
+                pct.textContent = (agreement * 100).toFixed(0) + '%';
+
+                row.appendChild(nameDiv);
+                row.appendChild(barOuter);
+                row.appendChild(pct);
+                el.appendChild(row);
+            });
+        }
+
+        function updateActivePosition(signal) {
+            var el = document.getElementById('activePosition');
+            while (el.firstChild) el.removeChild(el.firstChild);
+
+            var box = document.createElement('div');
+            box.className = 'active-position';
+
+            var cityEl = document.createElement('div');
+            cityEl.className = 'position-city';
+            cityEl.textContent = (signal.city_id || '').toUpperCase();
+
+            var descEl = document.createElement('div');
+            descEl.className = 'position-desc';
+            descEl.textContent = signal.description || 'Weather market';
+
+            var edge = signal.edge || 0;
+            var ev = edge * (signal.size || 0);
+
+            var statsEl = document.createElement('div');
+            statsEl.className = 'position-stats';
+
+            function makeStat(lbl, val, clr) {
+                var d = document.createElement('div');
+                var l = document.createElement('div');
+                l.className = 'position-stat-label';
+                l.textContent = lbl;
+                var v = document.createElement('div');
+                v.style.color = clr;
+                v.style.fontWeight = '600';
+                v.textContent = val;
+                d.appendChild(l);
+                d.appendChild(v);
+                return d;
+            }
+
+            var sideColor = signal.side === 'YES' ? 'var(--green)' : 'var(--red)';
+            statsEl.appendChild(makeStat('pos', signal.side + ' x$' + (signal.size || 0).toFixed(0), sideColor));
+            statsEl.appendChild(makeStat('edge', '+' + (edge * 100).toFixed(1) + '%', 'var(--green)'));
+            statsEl.appendChild(makeStat('ev', '+$' + ev.toFixed(0), 'var(--green)'));
+
+            box.appendChild(cityEl);
+            box.appendChild(descEl);
+            box.appendChild(statsEl);
+            el.appendChild(box);
+        }
+
+        function updateTradeLog(trades) {
+            var el = document.getElementById('tradeLog');
+            while (el.firstChild) el.removeChild(el.firstChild);
+
+            if (!trades || trades.length === 0) {
+                el.textContent = 'No trades yet';
+                return;
+            }
+
+            trades.forEach(function(t) {
+                var row = document.createElement('div');
+                row.className = 'trade-entry';
+
+                var side = document.createElement('div');
+                side.className = 'trade-side ' + (t.side === 'YES' ? 'buy' : 'sell');
+                side.textContent = t.side === 'YES' ? 'B' : 'S';
+
+                var desc = document.createElement('div');
+                desc.className = 'trade-desc';
+                var strong = document.createElement('strong');
+                strong.textContent = t.city;
+                desc.appendChild(strong);
+                desc.appendChild(document.createTextNode(' \u00B7 ' + esc(t.description)));
+
+                var pnlDiv = document.createElement('div');
+                var pnlVal = t.pnl != null ? t.pnl : t.size;
+                pnlDiv.className = 'trade-pnl ' + ((pnlVal || 0) >= 0 ? 'positive' : 'negative');
+                pnlDiv.textContent = t.pnl != null ? fmtPnl(t.pnl) : '$' + (t.size || 0).toFixed(0);
+
+                var time = document.createElement('div');
+                time.className = 'trade-time';
+                time.textContent = t.time;
+
+                row.appendChild(side);
+                row.appendChild(desc);
+                row.appendChild(pnlDiv);
+                row.appendChild(time);
+                el.appendChild(row);
+            });
+        }
+
+        document.getElementById('refreshBtn').addEventListener('click', function() {
+            fetch('/api/refresh', {method: 'POST'}).then(function(r) { return r.json(); });
+        });
+
+        document.getElementById('startBtn').addEventListener('click', function() {
+            fetch('/api/start', {method: 'POST'}).then(function(r) { return r.json(); }).then(function(d) {
+                console.log('Started:', d);
+            });
+        });
+
+        document.getElementById('stopBtn').addEventListener('click', function() {
+            fetch('/api/stop', {method: 'POST'}).then(function(r) { return r.json(); }).then(function(d) {
+                console.log('Stopped:', d);
+            });
+        });
+
+        document.getElementById('closeAllBtn').addEventListener('click', function() {
+            if (!confirm('Close all open positions at current market prices?')) return;
+            fetch('/api/close-all', {method: 'POST'}).then(function(r) { return r.json(); }).then(function(d) {
+                console.log('Closed all:', d);
+            });
+        });
+
+        document.getElementById('newSessionBtn').addEventListener('click', function() {
+            if (!confirm('Reset everything and start a new $1,000 session?')) return;
+            fetch('/api/new-session', {method: 'POST'}).then(function(r) { return r.json(); }).then(function(d) {
+                console.log('New session:', d);
+            });
+        });
+
+        function updateClock() {
+            document.getElementById('clock').textContent = new Date().toISOString().slice(11, 19);
+        }
+        setInterval(updateClock, 1000);
+        updateClock();
+
+        connectWS();
+        fetch('/api/state').then(function(r) { return r.json(); }).then(function(s) {
+            if (s && s.cities && Object.keys(s.cities).length > 0) updateDashboard(s);
+        });
+    </script>
+</body>
+</html>
