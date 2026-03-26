@@ -14,6 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from weather_edge.analysis.competitor_tracker import CompetitorTracker
 from weather_edge.analysis.correlation_matrix import compute_correlation_matrix
 from weather_edge.analysis.execution_analytics import compute_execution_analytics
+from weather_edge.analysis.resolver import _extract_target_date_from_trade
 from weather_edge.analysis.sniper import ModelSniper
 from weather_edge.analysis.weather_alerts import fetch_all_alerts
 from weather_edge.config import CITIES, settings
@@ -57,6 +58,74 @@ latest_state: dict = {
     "execution_analytics": {},
 }
 connected_websockets: list[WebSocket] = []
+
+
+try:
+    import zoneinfo
+    _HAS_ZONEINFO = True
+except ImportError:
+    _HAS_ZONEINFO = False
+
+
+def _compute_resolution_time(trade) -> tuple[str | None, str]:
+    """Compute resolution timestamp and human-readable countdown for a trade.
+
+    Resolution = midnight in the target city's timezone + 2 hours buffer for
+    NWS/observation posting.
+
+    Returns:
+        (resolves_at ISO string or None, resolves_in human-readable string)
+    """
+    from weather_edge.trading.paper import TradeStatus
+
+    if trade.status != TradeStatus.OPEN:
+        return None, ""
+
+    target_date = _extract_target_date_from_trade(trade)
+    if target_date is None:
+        return None, ""
+
+    # Look up city timezone
+    city_id_str = trade.city_id if isinstance(trade.city_id, str) else trade.city_id.value
+    tz_name = None
+    for city_enum, city_config in CITIES.items():
+        if city_enum.value == city_id_str.lower():
+            tz_name = city_config.timezone
+            break
+
+    if tz_name is None or not _HAS_ZONEINFO:
+        # Fallback: assume UTC + 2h buffer
+        resolution_dt = datetime(
+            target_date.year, target_date.month, target_date.day,
+            2, 0, 0, tzinfo=timezone.utc,
+        ) + timedelta(days=1)
+    else:
+        tz = zoneinfo.ZoneInfo(tz_name)
+        # Midnight local time on the day AFTER target_date + 2h buffer
+        local_midnight = datetime(
+            target_date.year, target_date.month, target_date.day,
+            0, 0, 0, tzinfo=tz,
+        ) + timedelta(days=1, hours=2)
+        resolution_dt = local_midnight.astimezone(timezone.utc)
+
+    now = datetime.now(timezone.utc)
+    delta = resolution_dt - now
+
+    resolves_at = resolution_dt.isoformat()
+
+    if delta.total_seconds() <= 0:
+        resolves_in = "OVERDUE"
+    elif delta.days > 0:
+        resolves_in = f"{delta.days}d {delta.seconds // 3600}h"
+    else:
+        hours = delta.seconds // 3600
+        minutes = (delta.seconds % 3600) // 60
+        if hours > 0:
+            resolves_in = f"{hours}h {minutes:02d}m"
+        else:
+            resolves_in = f"{minutes}m"
+
+    return resolves_at, resolves_in
 
 
 async def broadcast(data: dict) -> None:
@@ -120,17 +189,20 @@ async def run_dashboard_cycle() -> None:
 
         city_data[city_id.value] = city_info
 
-    # Build trade log entries
+    # Build trade log entries (with resolution countdown for open trades)
     trade_log = []
     for t in sorted(paper_trader.trades, key=lambda x: x.placed_at, reverse=True)[:20]:
+        resolves_at, resolves_in = _compute_resolution_time(t)
         trade_log.append({
             "side": t.side,
-            "city": t.city_id.upper(),
+            "city": t.city_id.upper() if isinstance(t.city_id, str) else t.city_id,
             "description": t.description[:50] if t.description else "",
             "size": t.size_usd,
             "pnl": t.pnl,
             "time": t.placed_at.strftime("%H:%M:%S"),
             "status": t.status.value,
+            "resolves_at": resolves_at,
+            "resolves_in": resolves_in,
         })
 
     # Calculate streak

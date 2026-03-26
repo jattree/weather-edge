@@ -12,6 +12,7 @@ from weather_edge.analysis.consensus import compute_consensus, get_probability_f
 from weather_edge.analysis.edge import Signal, calculate_edge
 from weather_edge.analysis.market_mapper import get_required_variable
 from weather_edge.analysis.model_timing import is_golden_window
+from weather_edge.analysis.resolver import resolve_open_trades
 from weather_edge.config import CITIES, settings
 from weather_edge.fetchers.openmeteo import fetch_city_forecasts
 from weather_edge.fetchers.polymarket import MarketInfo, discover_weather_markets, get_price_snapshot
@@ -60,6 +61,15 @@ async def run_cycle(
     if target_dates is None:
         today = date.today()
         target_dates = [today, today + timedelta(days=1), today + timedelta(days=2)]
+
+    # Resolve any open trades before placing new ones
+    # This frees up capital and updates P&L before new signals are computed
+    try:
+        resolved_count = await resolve_open_trades(paper_trader)
+        if resolved_count > 0:
+            logger.info("Resolved %d trades at cycle start", resolved_count)
+    except Exception:
+        logger.exception("Trade resolution failed, continuing with cycle")
 
     all_signals: list[Signal] = []
     _forecast_cache: dict[tuple, list] = {}  # (city_id, date) -> forecasts for Claude
