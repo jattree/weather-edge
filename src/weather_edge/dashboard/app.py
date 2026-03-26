@@ -355,8 +355,8 @@ async def api_start():
     global trading_active
     trading_active = True
     logger.info("Trading STARTED")
-    # Run first cycle immediately
-    await run_dashboard_cycle()
+    # Run first cycle in background, don't block the response
+    asyncio.create_task(run_dashboard_cycle())
     return {"status": "started", "trading_active": True}
 
 
