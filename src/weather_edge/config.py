@@ -265,7 +265,7 @@ def get_model_weights(city_id: City) -> dict[WeatherModel, float]:
 
 
 class Settings(BaseSettings):
-    model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
+    model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
 
     database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/weather_edge"
     bankroll: float = 1000.0
