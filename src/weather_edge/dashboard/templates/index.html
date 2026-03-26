@@ -1123,28 +1123,39 @@
         /* ---- HEAT MAP ---- */
         .heatmap-grid {
             display: grid;
-            gap: 3px;
-            grid-template-columns: repeat(auto-fill, minmax(70px, 1fr));
+            gap: 4px;
+            grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
         }
         .heatmap-cell {
             border-radius: var(--radius-sm);
-            padding: 8px 6px;
-            text-align: center;
+            padding: 8px 8px;
             transition: all var(--transition);
             cursor: default;
         }
         .heatmap-city {
             font-family: 'JetBrains Mono', monospace;
-            font-size: 10px;
+            font-size: 11px;
             font-weight: 700;
             color: var(--text-white);
             letter-spacing: 0.5px;
+            margin-bottom: 4px;
+        }
+        .heatmap-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 9px;
+            line-height: 1.5;
+        }
+        .heatmap-label {
+            color: var(--text-muted);
         }
         .heatmap-edge {
             font-family: 'JetBrains Mono', monospace;
-            font-size: 10px;
-            font-weight: 600;
-            margin-top: 2px;
+            font-size: 11px;
+            font-weight: 700;
+            margin-top: 3px;
         }
 
         /* ---- CALENDAR ---- */
@@ -3221,22 +3232,34 @@
             var signals = (prevState.signals || []);
             var cities = prevState.cities || {};
 
-            /* Build city edge map */
-            var cityEdges = {};
+            /* Build city data: best edge, market top bucket, our top bucket */
+            var cityData = {};
             signals.forEach(function(s) {
                 var cid = (s.city_id || '').toUpperCase();
-                if (!cityEdges[cid] || Math.abs(s.edge) > Math.abs(cityEdges[cid])) {
-                    cityEdges[cid] = s.edge;
+                if (!cityData[cid] || Math.abs(s.edge) > Math.abs(cityData[cid].edge)) {
+                    cityData[cid] = {
+                        edge: s.edge,
+                        side: s.side,
+                        model_prob: s.model_prob,
+                        market_prob: s.market_prob,
+                        description: s.description || '',
+                    };
                 }
             });
             /* Add cities with no signals */
             Object.keys(cities).forEach(function(id) {
                 var upper = id.toUpperCase();
-                if (cityEdges[upper] === undefined) cityEdges[upper] = 0;
+                if (cityData[upper] === undefined) cityData[upper] = { edge: 0 };
             });
 
-            Object.keys(cityEdges).forEach(function(cid) {
-                var edgeVal = cityEdges[cid] || 0;
+            /* Sort: highest edge first */
+            var sortedCities = Object.keys(cityData).sort(function(a, b) {
+                return Math.abs(cityData[b].edge) - Math.abs(cityData[a].edge);
+            });
+
+            sortedCities.forEach(function(cid) {
+                var d = cityData[cid];
+                var edgeVal = d.edge || 0;
                 var cell = el('div', 'heatmap-cell');
                 var intensity = Math.min(Math.abs(edgeVal) * 3, 1);
 
@@ -3251,18 +3274,54 @@
                     cell.style.border = '1px solid var(--border-subtle)';
                 }
 
-                var cityLabel = el('div', 'heatmap-city', cid);
+                /* City name + side badge */
+                var header = el('div', 'heatmap-city');
+                header.textContent = cid;
+                if (d.side) {
+                    var badge = el('span');
+                    badge.textContent = ' ' + d.side;
+                    badge.style.fontSize = '8px';
+                    badge.style.fontWeight = '600';
+                    badge.style.color = d.side === 'YES' ? 'var(--green)' : 'var(--red)';
+                    header.appendChild(badge);
+                }
+
+                cell.appendChild(header);
+
+                if (d.market_prob !== undefined) {
+                    /* Market thinks row */
+                    var mktRow = el('div', 'heatmap-row');
+                    var mktLabel = el('span', 'heatmap-label', 'Market:');
+                    var mktVal = el('span');
+                    mktVal.textContent = (d.market_prob * 100).toFixed(1) + '%';
+                    mktVal.style.color = 'var(--text-dim)';
+                    mktRow.appendChild(mktLabel);
+                    mktRow.appendChild(mktVal);
+                    cell.appendChild(mktRow);
+
+                    /* We think row */
+                    var ourRow = el('div', 'heatmap-row');
+                    var ourLabel = el('span', 'heatmap-label', 'Us:');
+                    var ourVal = el('span');
+                    ourVal.textContent = (d.model_prob * 100).toFixed(1) + '%';
+                    ourVal.style.color = 'var(--cyan-bright)';
+                    ourVal.style.fontWeight = '600';
+                    ourRow.appendChild(ourLabel);
+                    ourRow.appendChild(ourVal);
+                    cell.appendChild(ourRow);
+                }
+
+                /* Edge */
                 var edgeLabel = el('div', 'heatmap-edge');
                 if (Math.abs(edgeVal) > 0.001) {
-                    edgeLabel.textContent = (edgeVal >= 0 ? '+' : '') + (edgeVal * 100).toFixed(1) + '%';
+                    edgeLabel.textContent = (edgeVal >= 0 ? '+' : '') + (edgeVal * 100).toFixed(1) + '% edge';
                     edgeLabel.style.color = edgeVal >= 0 ? 'var(--green)' : 'var(--red)';
                 } else {
                     edgeLabel.textContent = 'FLAT';
                     edgeLabel.style.color = 'var(--text-muted)';
                 }
-
-                cell.appendChild(cityLabel);
                 cell.appendChild(edgeLabel);
+
                 hmGrid.appendChild(cell);
             });
 
