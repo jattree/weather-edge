@@ -939,17 +939,16 @@
             <div id="cityList"></div>
         </div>
 
-        <!-- CENTER: Windy map / chart -->
-        <div class="panel chart-area" id="chartArea">
-            <div class="chart-placeholder" id="chartPlaceholder">
-                <span>Edge distribution updates after first cycle</span>
+        <!-- CENTER: Signals Overview -->
+        <div class="panel" id="signalsArea" style="overflow-y: auto;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                <div class="panel-label">Active Signals</div>
+                <div id="signalCount" style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--text-dim);">0 signals</div>
             </div>
-            <iframe
-                id="windyFrame"
-                src="https://embed.windy.com/embed.html?type=map&location=coordinates&metricRain=mm&metricTemp=%C2%B0C&metricWind=km/h&zoom=3&overlay=temp&product=ecmwf&level=surface&lat=35&lon=-40"
-                loading="lazy"
-                style="width: 100%; height: 100%; border: none; display: none;"
-            ></iframe>
+            <div id="signalsTable" style="font-size: 12px;"></div>
+            <div id="signalsEmpty" style="color: var(--text-dim); text-align: center; padding: 40px 0; font-size: 13px;">
+                Waiting for first cycle...
+            </div>
         </div>
 
         <!-- RIGHT: Model Consensus + Active Position -->
@@ -973,13 +972,7 @@
             </div>
         </div>
 
-        <!-- BOTTOM LEFT: Windy panel -->
-        <div class="panel windy-panel" id="windyPanel">
-            <iframe
-                src="https://embed.windy.com/embed.html?type=map&location=coordinates&metricRain=mm&metricTemp=%C2%B0C&metricWind=km/h&zoom=3&overlay=temp&product=ecmwf&level=surface&lat=35&lon=-40"
-                loading="lazy"
-            ></iframe>
-        </div>
+        <!-- BOTTOM LEFT: reserved for future use -->
 
         <!-- BOTTOM: Trade Log + Session -->
         <div class="panel trade-log-area">
@@ -1262,14 +1255,99 @@
             updateCompetitors(state.competitors);
 
             /* Show windy if we have data */
-            if (state.cities && Object.keys(state.cities).length > 0) {
-                var placeholder = document.getElementById('chartPlaceholder');
-                var windyFrame = document.getElementById('windyFrame');
-                if (placeholder) placeholder.style.display = 'none';
-                windyFrame.style.display = 'block';
-            }
+            // Update signals table
+            updateSignalsTable(state.signals || []);
 
             prevState = state;
+        }
+
+        function updateSignalsTable(signals) {
+            var container = document.getElementById('signalsTable');
+            var empty = document.getElementById('signalsEmpty');
+            var countEl = document.getElementById('signalCount');
+
+            var tradeable = signals.filter(function(s) { return s.tier !== 'low'; });
+            countEl.textContent = tradeable.length + ' tradeable / ' + signals.length + ' total';
+
+            while (container.firstChild) container.removeChild(container.firstChild);
+
+            if (tradeable.length === 0) {
+                empty.style.display = 'block';
+                return;
+            }
+            empty.style.display = 'none';
+
+            // Header
+            var header = document.createElement('div');
+            header.style.cssText = 'display: grid; grid-template-columns: 50px 35px 60px 60px 65px 55px 50px 50px; gap: 6px; padding: 6px 0; border-bottom: 1px solid var(--border); color: var(--text-muted); font-size: 10px; text-transform: uppercase; letter-spacing: 1px;';
+            ['City', 'Side', 'Model', 'Market', 'Edge', 'Conf', 'Size', 'Tier'].forEach(function(h) {
+                var cell = document.createElement('span');
+                cell.textContent = h;
+                header.appendChild(cell);
+            });
+            container.appendChild(header);
+
+            tradeable.forEach(function(s) {
+                var row = document.createElement('div');
+                row.style.cssText = 'display: grid; grid-template-columns: 50px 35px 60px 60px 65px 55px 50px 50px; gap: 6px; padding: 5px 0; border-bottom: 1px solid var(--border-subtle); font-family: "JetBrains Mono", monospace; align-items: center;';
+
+                var city = document.createElement('span');
+                city.textContent = (s.city_id || '').toUpperCase();
+                city.style.fontWeight = '600';
+                city.style.color = 'var(--text-bright)';
+
+                var side = document.createElement('span');
+                side.textContent = s.side;
+                side.style.color = s.side === 'YES' ? 'var(--green)' : 'var(--red)';
+                side.style.fontWeight = '600';
+                side.style.fontSize = '11px';
+
+                var model = document.createElement('span');
+                model.textContent = s.model_prob.toFixed(3);
+                model.style.color = 'var(--text)';
+
+                var market = document.createElement('span');
+                market.textContent = s.market_prob.toFixed(3);
+                market.style.color = 'var(--text-dim)';
+
+                var edge = document.createElement('span');
+                edge.textContent = (s.edge >= 0 ? '+' : '') + (s.edge * 100).toFixed(1) + '%';
+                edge.style.color = s.edge >= 0.1 ? 'var(--green-bright)' : s.edge >= 0.05 ? 'var(--green)' : 'var(--yellow)';
+                edge.style.fontWeight = '600';
+
+                var conf = document.createElement('span');
+                conf.textContent = (s.confidence * 100).toFixed(0) + '%';
+                conf.style.color = s.confidence >= 0.8 ? 'var(--green)' : s.confidence >= 0.6 ? 'var(--text)' : 'var(--yellow)';
+
+                var size = document.createElement('span');
+                size.textContent = '$' + (s.size || 0).toFixed(0);
+                size.style.color = 'var(--text)';
+
+                var tier = document.createElement('span');
+                tier.textContent = s.tier === 'high' ? 'HIGH' : 'MED';
+                tier.style.fontSize = '9px';
+                tier.style.fontWeight = '700';
+                tier.style.letterSpacing = '0.5px';
+                tier.style.padding = '1px 5px';
+                tier.style.borderRadius = '3px';
+                if (s.tier === 'high') {
+                    tier.style.background = 'var(--green-dim)';
+                    tier.style.color = 'var(--green)';
+                } else {
+                    tier.style.background = 'var(--yellow-dim)';
+                    tier.style.color = 'var(--yellow)';
+                }
+
+                row.appendChild(city);
+                row.appendChild(side);
+                row.appendChild(model);
+                row.appendChild(market);
+                row.appendChild(edge);
+                row.appendChild(conf);
+                row.appendChild(size);
+                row.appendChild(tier);
+                container.appendChild(row);
+            });
         }
 
         /* ---- City List ---- */
