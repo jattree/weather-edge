@@ -12,7 +12,10 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 from weather_edge.analysis.competitor_tracker import CompetitorTracker
+from weather_edge.analysis.correlation_matrix import compute_correlation_matrix
+from weather_edge.analysis.execution_analytics import compute_execution_analytics
 from weather_edge.analysis.sniper import ModelSniper
+from weather_edge.analysis.weather_alerts import fetch_all_alerts
 from weather_edge.config import CITIES, settings
 from weather_edge.fetchers.openmeteo import fetch_city_forecasts
 from weather_edge.models.enums import City
@@ -49,6 +52,9 @@ latest_state: dict = {
     "streak": 0,
     "cycle_count": 0,
     "last_update": None,
+    "weather_alerts": [],
+    "correlation_matrix": {"cities": [], "matrix": [], "pairs": []},
+    "execution_analytics": {},
 }
 connected_websockets: list[WebSocket] = []
 
@@ -143,24 +149,54 @@ async def run_dashboard_cycle() -> None:
     # Capital at risk = sum of all open position sizes
     capital_at_risk = sum(t.size_usd for t in paper_trader.open_trades)
 
+    # Fetch weather alerts (non-blocking; log errors but don't fail cycle)
+    try:
+        weather_alerts = await fetch_all_alerts()
+    except Exception:
+        logger.warning("Weather alerts fetch failed", exc_info=True)
+        weather_alerts = []
+
+    # Compute correlation matrix from city model data
+    try:
+        correlation_data = compute_correlation_matrix(city_data)
+    except Exception:
+        logger.warning("Correlation matrix computation failed", exc_info=True)
+        correlation_data = {"cities": [], "matrix": [], "pairs": []}
+
+    # Build signal dicts for analytics
+    signal_dicts = [
+        {
+            "market_id": s.market_id,
+            "city_id": s.city_id,
+            "side": s.recommended_side.value,
+            "model_prob": s.model_prob,
+            "market_prob": s.market_prob,
+            "edge": s.edge,
+            "edge_pct": s.edge_pct,
+            "size": s.recommended_size,
+            "tier": s.confidence_tier.value,
+            "confidence": s.model_confidence,
+            "description": s.description[:60],
+        }
+        for s in sorted(all_signals, key=lambda x: abs(x.edge), reverse=True)
+    ]
+
+    # Compute execution analytics
+    try:
+        exec_analytics = compute_execution_analytics(
+            trades=paper_trader.trades,
+            signals=signal_dicts,
+            cycle_count=paper_trader.store.cycle_count if hasattr(paper_trader.store, 'cycle_count') else 0,
+            bankroll=settings.bankroll,
+            capital_at_risk=capital_at_risk,
+        )
+    except Exception:
+        logger.warning("Execution analytics computation failed", exc_info=True)
+        exec_analytics = {}
+
     latest_state = {
         "cities": city_data,
-        "signals": [
-            {
-                "market_id": s.market_id,
-                "city_id": s.city_id,
-                "side": s.recommended_side.value,
-                "model_prob": s.model_prob,
-                "market_prob": s.market_prob,
-                "edge": s.edge,
-                "edge_pct": s.edge_pct,
-                "size": s.recommended_size,
-                "tier": s.confidence_tier.value,
-                "confidence": s.model_confidence,
-                "description": s.description[:60],
-            }
-            for s in sorted(all_signals, key=lambda x: abs(x.edge), reverse=True)
-        ],
+        "signals": signal_dicts,
         "consensus": {},
         "trade_log": trade_log,
         "bankroll": settings.bankroll,
@@ -186,6 +222,9 @@ async def run_dashboard_cycle() -> None:
         ),
         "cycle_count": paper_trader.store.increment_cycle(),
         "last_update": datetime.now(timezone.utc).isoformat(),
+        "weather_alerts": weather_alerts,
+        "correlation_matrix": correlation_data,
+        "execution_analytics": exec_analytics,
     }
 
     await broadcast(latest_state)
@@ -313,10 +352,41 @@ async def api_new_session():
         "trading_active": False,
         "cycle_count": 0,
         "last_update": None,
+        "weather_alerts": [],
+        "correlation_matrix": {"cities": [], "matrix": [], "pairs": []},
+        "execution_analytics": {},
     })
     await broadcast(latest_state)
 
     return {"status": "reset", "bankroll": settings.bankroll, "previous_session": final_stats}
+
+
+@app.get("/api/weather-alerts")
+async def api_weather_alerts():
+    """Return current weather alerts for all monitored cities."""
+    return latest_state.get("weather_alerts", [])
+
+
+@app.post("/api/backtest")
+async def api_backtest(days: int = 7, cities: str | None = None):
+    """Run a historical backtest. Optional query params: days (default 7), cities (comma-separated)."""
+    from weather_edge.analysis.backtester import run_backtest
+
+    city_list = [c.strip() for c in cities.split(",")] if cities else None
+    result = await run_backtest(days=days, cities=city_list)
+    return result
+
+
+@app.get("/api/correlation-matrix")
+async def api_correlation_matrix():
+    """Return the current city correlation matrix."""
+    return latest_state.get("correlation_matrix", {"cities": [], "matrix": [], "pairs": []})
+
+
+@app.get("/api/execution-analytics")
+async def api_execution_analytics():
+    """Return execution analytics from paper trading data."""
+    return latest_state.get("execution_analytics", {})
 
 
 @app.websocket("/ws")

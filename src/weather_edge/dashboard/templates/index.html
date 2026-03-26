@@ -1218,42 +1218,258 @@
             flex-shrink: 0;
         }
 
-        /* ---- STUB PANELS ---- */
-        .stub-card {
+        /* ---- WEATHER ALERTS ---- */
+        .wx-alert-card {
             background: var(--bg-card);
-            border: 1px dashed var(--border);
+            border: 1px solid var(--border);
             border-radius: var(--radius);
-            padding: 20px;
-            text-align: center;
-            margin-bottom: 12px;
+            padding: 12px 16px;
+            margin-bottom: 8px;
+            display: flex;
+            align-items: flex-start;
+            gap: 12px;
         }
-        .stub-title {
-            font-family: 'JetBrains Mono', monospace;
-            font-size: 12px;
-            font-weight: 700;
-            color: var(--text-dim);
-            letter-spacing: 1.5px;
-            text-transform: uppercase;
-            margin-bottom: 6px;
-        }
-        .stub-desc {
-            font-size: 11px;
-            color: var(--text-muted);
-            line-height: 1.5;
-            max-width: 400px;
-            margin: 0 auto;
-        }
-        .stub-badge {
+        .wx-alert-card:hover { background: var(--bg-card-hover); }
+        .wx-severity-badge {
             display: inline-block;
             font-family: 'JetBrains Mono', monospace;
             font-size: 9px;
-            font-weight: 600;
+            font-weight: 700;
             padding: 2px 8px;
             border-radius: 3px;
-            background: var(--yellow-dim);
-            color: var(--yellow);
-            margin-top: 10px;
             letter-spacing: 1px;
+            text-transform: uppercase;
+            flex-shrink: 0;
+            margin-top: 2px;
+        }
+        .wx-severity-badge.warning { background: var(--red-dim); color: var(--red); border: 1px solid rgba(239,68,68,0.3); }
+        .wx-severity-badge.watch { background: var(--orange-dim); color: var(--orange); border: 1px solid rgba(249,115,22,0.3); }
+        .wx-severity-badge.advisory { background: var(--yellow-dim); color: var(--yellow); border: 1px solid rgba(234,179,8,0.3); }
+        .wx-severity-badge.info { background: var(--cyan-dim); color: var(--cyan); border: 1px solid rgba(6,182,212,0.3); }
+        .wx-alert-body { flex: 1; min-width: 0; }
+        .wx-alert-city {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 10px;
+            font-weight: 600;
+            color: var(--text-dim);
+            letter-spacing: 1px;
+            text-transform: uppercase;
+        }
+        .wx-alert-headline {
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--text-bright);
+            margin-top: 2px;
+            line-height: 1.4;
+        }
+        .wx-alert-desc {
+            font-size: 11px;
+            color: var(--text);
+            margin-top: 4px;
+            line-height: 1.4;
+        }
+        .wx-alert-expires {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 10px;
+            color: var(--text-muted);
+            margin-top: 4px;
+        }
+        .wx-alert-source {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 9px;
+            color: var(--text-muted);
+            flex-shrink: 0;
+            margin-top: 2px;
+        }
+
+        /* ---- BACKTEST ---- */
+        .bt-controls {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            margin-bottom: 12px;
+            flex-wrap: wrap;
+        }
+        .bt-btn {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11px;
+            font-weight: 600;
+            padding: 6px 14px;
+            border-radius: var(--radius-sm);
+            border: 1px solid var(--cyan);
+            background: var(--cyan-dim);
+            color: var(--cyan);
+            cursor: pointer;
+            letter-spacing: 0.5px;
+        }
+        .bt-btn:hover { background: rgba(6,182,212,0.2); }
+        .bt-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+        .bt-summary {
+            display: flex;
+            gap: 20px;
+            margin-bottom: 12px;
+            flex-wrap: wrap;
+        }
+        .bt-stat {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 10px 16px;
+            text-align: center;
+            min-width: 100px;
+        }
+        .bt-stat-value {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 16px;
+            font-weight: 700;
+        }
+        .bt-stat-label {
+            font-size: 9px;
+            font-weight: 600;
+            color: var(--text-dim);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-top: 2px;
+        }
+        .bt-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11px;
+        }
+        .bt-table th {
+            text-align: left;
+            padding: 6px 8px;
+            border-bottom: 1px solid var(--border);
+            color: var(--text-dim);
+            font-size: 9px;
+            font-weight: 600;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+        }
+        .bt-table td {
+            padding: 5px 8px;
+            border-bottom: 1px solid var(--border-subtle);
+            color: var(--text);
+        }
+        .bt-table tr:hover td { background: var(--bg-card-hover); }
+
+        /* ---- CORRELATION MATRIX ---- */
+        .corr-grid {
+            display: inline-grid;
+            gap: 1px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 9px;
+            margin-bottom: 16px;
+        }
+        .corr-cell {
+            width: 38px;
+            height: 28px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 2px;
+            font-weight: 600;
+        }
+        .corr-header {
+            font-size: 8px;
+            color: var(--text-dim);
+            letter-spacing: 0.5px;
+            text-transform: uppercase;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .corr-pair {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 8px 12px;
+            margin-bottom: 6px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 11px;
+        }
+
+        /* ---- EXECUTION ANALYTICS ---- */
+        .exec-metrics {
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+            margin-bottom: 16px;
+        }
+        .exec-metric {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 12px 16px;
+            text-align: center;
+            min-width: 120px;
+            flex: 1;
+        }
+        .exec-metric-value {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 18px;
+            font-weight: 700;
+            color: var(--cyan);
+        }
+        .exec-metric-label {
+            font-size: 9px;
+            font-weight: 600;
+            color: var(--text-dim);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-top: 2px;
+        }
+        .exec-chart {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 12px 16px;
+            margin-bottom: 12px;
+        }
+        .exec-chart-title {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 10px;
+            font-weight: 600;
+            color: var(--text-dim);
+            letter-spacing: 1px;
+            text-transform: uppercase;
+            margin-bottom: 10px;
+        }
+        .exec-bar-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 6px;
+        }
+        .exec-bar-label {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 10px;
+            color: var(--text);
+            width: 60px;
+            text-align: right;
+            flex-shrink: 0;
+        }
+        .exec-bar-track {
+            flex: 1;
+            height: 16px;
+            background: var(--bg-elevated);
+            border-radius: 3px;
+            overflow: hidden;
+        }
+        .exec-bar-fill {
+            height: 100%;
+            border-radius: 3px;
+            transition: width var(--transition-slow);
+        }
+        .exec-bar-count {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 10px;
+            color: var(--text-dim);
+            width: 30px;
+            flex-shrink: 0;
         }
 
         /* ---- KEYBOARD HELP OVERLAY ---- */
@@ -1587,8 +1803,17 @@
         <!-- Tab 5: Alerts Feed -->
         <div class="tab-content" id="tabAlerts" style="padding: 16px; flex-direction: column;"></div>
 
-        <!-- Tab 6: Stubs -->
-        <div class="tab-content" id="tabStubs" style="padding: 16px; flex-direction: column; overflow-y: auto;"></div>
+        <!-- Tab 6: Weather Alerts -->
+        <div class="tab-content" id="tabWeather" style="padding: 16px; flex-direction: column; overflow-y: auto;"></div>
+
+        <!-- Tab 7: Backtest -->
+        <div class="tab-content" id="tabBacktest" style="padding: 16px; flex-direction: column; overflow-y: auto;"></div>
+
+        <!-- Tab 8: Correlation Matrix -->
+        <div class="tab-content" id="tabCorrelation" style="padding: 16px; flex-direction: column; overflow-y: auto;"></div>
+
+        <!-- Tab 9: Execution Analytics -->
+        <div class="tab-content" id="tabExecution" style="padding: 16px; flex-direction: column; overflow-y: auto;"></div>
     </div>
 
     <!-- ======== TRADE DRILL-DOWN MODAL ======== -->
@@ -1709,7 +1934,10 @@
             { id: 'tabRisk', label: 'Risk / P&L', badge: null },
             { id: 'tabHeatCal', label: 'Heat Map', badge: null },
             { id: 'tabAlerts', label: 'Alerts', badge: '0' },
-            { id: 'tabStubs', label: 'More', badge: null }
+            { id: 'tabWeather', label: 'Weather', badge: '0' },
+            { id: 'tabBacktest', label: 'Backtest', badge: null },
+            { id: 'tabCorrelation', label: 'Correlation', badge: null },
+            { id: 'tabExecution', label: 'Execution', badge: null }
         ];
         var activeTab = 'tabTradeLog';
 
@@ -1753,7 +1981,10 @@
             if (tabId === 'tabHeatCal') renderHeatCalTab();
             if (tabId === 'tabBlotter') renderBlotter();
             if (tabId === 'tabAlerts') renderAlerts();
-            if (tabId === 'tabStubs') renderStubs();
+            if (tabId === 'tabWeather') renderWeatherAlerts();
+            if (tabId === 'tabBacktest') renderBacktest();
+            if (tabId === 'tabCorrelation') renderCorrelation();
+            if (tabId === 'tabExecution') renderExecution();
         }
 
         buildTabBar();
@@ -1920,6 +2151,16 @@
             if (activeTab === 'tabHeatCal') renderHeatCalTab();
             if (activeTab === 'tabBlotter') renderBlotter();
             if (activeTab === 'tabAlerts') renderAlerts();
+            if (activeTab === 'tabWeather') renderWeatherAlerts();
+            if (activeTab === 'tabCorrelation') renderCorrelation();
+            if (activeTab === 'tabExecution') renderExecution();
+
+            /* Update weather alerts badge */
+            var wxBadge = document.getElementById('tabBadge_tabWeather');
+            if (wxBadge) {
+                var wxCount = (state.weather_alerts || []).length;
+                wxBadge.textContent = String(wxCount);
+            }
 
             prevState = state;
         }
@@ -3156,46 +3397,510 @@
         }
 
         /* ================================================================
-         *  STUBS TAB (#11, #12, #14, #15)
+         *  WEATHER ALERTS TAB
          * ================================================================ */
-        function renderStubs() {
-            var pane = document.getElementById('tabStubs');
+        function renderWeatherAlerts() {
+            var pane = document.getElementById('tabWeather');
             while (pane.firstChild) pane.removeChild(pane.firstChild);
+
+            var title = el('div', 'panel-title', 'NWS & Global Weather Alerts');
+            title.style.marginBottom = '8px';
+            pane.appendChild(title);
 
             var scrollWrap = el('div');
             setStyle(scrollWrap, { overflowY: 'auto', flex: '1' });
 
-            var stubs = [
-                {
-                    title: 'Backtesting',
-                    desc: 'Replay historical weather data against model predictions and Polymarket prices. Test strategy performance across different seasons, city combinations, and position sizing rules. Simulate P&L with configurable bankroll, slippage, and market impact assumptions.'
-                },
-                {
-                    title: 'City Correlation Matrix',
-                    desc: 'Compute pairwise correlation between city forecast errors and edge signals. Identify diversification opportunities and concentration risk. Visualize as an interactive matrix with drill-down into specific city pairs.'
-                },
-                {
-                    title: 'NWS Weather Alerts',
-                    desc: 'Real-time National Weather Service alerts for tracked cities. Severe weather warnings, advisories, and watches that may impact market resolution. Automatic signal boost when extreme weather events overlap with open positions.'
-                },
-                {
-                    title: 'Execution Analytics',
-                    desc: 'Track fill rates, slippage, time-to-fill, and market impact of trades. Compare theoretical edge vs realized P&L to measure execution quality. Identify optimal execution timing and order sizing for different market conditions.'
-                }
-            ];
+            var alerts = (prevState.weather_alerts || []);
 
-            stubs.forEach(function(s) {
-                var card = el('div', 'stub-card');
-                var title = el('div', 'stub-title', s.title);
-                var desc = el('div', 'stub-desc', s.desc);
-                var badge = el('div');
-                var badgeSpan = el('span', 'stub-badge', 'COMING SOON');
-                badge.appendChild(badgeSpan);
-                card.appendChild(title);
-                card.appendChild(desc);
-                card.appendChild(badge);
-                scrollWrap.appendChild(card);
+            if (alerts.length === 0) {
+                var empty = el('div');
+                empty.textContent = 'No active weather alerts. Alerts from NWS (US) and Open-Meteo forecasts (international) will appear here.';
+                setStyle(empty, { color: 'var(--text-muted)', padding: '20px', textAlign: 'center', fontSize: '12px' });
+                scrollWrap.appendChild(empty);
+            } else {
+                alerts.forEach(function(a) {
+                    var card = el('div', 'wx-alert-card');
+
+                    var badge = el('span', 'wx-severity-badge ' + a.severity, a.severity);
+                    card.appendChild(badge);
+
+                    var body = el('div', 'wx-alert-body');
+
+                    var cityLabel = el('div', 'wx-alert-city', a.city_name || a.city_id.toUpperCase());
+                    body.appendChild(cityLabel);
+
+                    var headline = el('div', 'wx-alert-headline', a.headline);
+                    body.appendChild(headline);
+
+                    if (a.description) {
+                        var desc = el('div', 'wx-alert-desc', a.description);
+                        body.appendChild(desc);
+                    }
+
+                    if (a.expires) {
+                        var expires = el('div', 'wx-alert-expires');
+                        var expDate = new Date(a.expires);
+                        expires.textContent = 'Expires: ' + expDate.toLocaleString();
+                        body.appendChild(expires);
+                    }
+
+                    card.appendChild(body);
+
+                    var source = el('div', 'wx-alert-source', a.source || '');
+                    card.appendChild(source);
+
+                    scrollWrap.appendChild(card);
+                });
+            }
+
+            pane.appendChild(scrollWrap);
+        }
+
+        /* ================================================================
+         *  BACKTEST TAB
+         * ================================================================ */
+        var backtestData = null;
+        var backtestLoading = false;
+
+        function renderBacktest() {
+            var pane = document.getElementById('tabBacktest');
+            while (pane.firstChild) pane.removeChild(pane.firstChild);
+
+            var title = el('div', 'panel-title', 'Historical Backtest');
+            title.style.marginBottom = '8px';
+            pane.appendChild(title);
+
+            /* Controls */
+            var controls = el('div', 'bt-controls');
+
+            var daysLabel = el('span');
+            daysLabel.textContent = 'Days:';
+            setStyle(daysLabel, { color: 'var(--text-dim)', fontSize: '11px', fontFamily: '"JetBrains Mono", monospace' });
+            controls.appendChild(daysLabel);
+
+            var daysSelect = document.createElement('select');
+            daysSelect.id = 'btDaysSelect';
+            setStyle(daysSelect, {
+                background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)',
+                color: 'var(--text)', padding: '4px 8px', fontFamily: '"JetBrains Mono", monospace', fontSize: '11px'
             });
+            [3, 7, 14, 30].forEach(function(d) {
+                var opt = document.createElement('option');
+                opt.value = String(d);
+                opt.textContent = String(d);
+                if (d === 7) opt.selected = true;
+                daysSelect.appendChild(opt);
+            });
+            controls.appendChild(daysSelect);
+
+            var runBtn = el('button', 'bt-btn', backtestLoading ? 'Running...' : 'Run Backtest');
+            runBtn.disabled = backtestLoading;
+            runBtn.addEventListener('click', function() {
+                var days = parseInt(daysSelect.value) || 7;
+                runBacktest(days);
+            });
+            controls.appendChild(runBtn);
+
+            pane.appendChild(controls);
+
+            /* Results */
+            var scrollWrap = el('div');
+            setStyle(scrollWrap, { overflowY: 'auto', flex: '1' });
+
+            if (backtestLoading) {
+                var loading = el('div');
+                loading.textContent = 'Running backtest... Fetching historical forecasts and observations from Open-Meteo.';
+                setStyle(loading, { color: 'var(--cyan)', padding: '20px', textAlign: 'center', fontSize: '12px' });
+                scrollWrap.appendChild(loading);
+            } else if (backtestData) {
+                /* Summary stats */
+                var summary = el('div', 'bt-summary');
+
+                var stats = [
+                    { label: 'Period', value: backtestData.start_date + ' to ' + backtestData.end_date, color: 'var(--text-bright)' },
+                    { label: 'Total Trades', value: String(backtestData.total_trades), color: 'var(--cyan)' },
+                    { label: 'Win Rate', value: backtestData.win_rate + '%', color: backtestData.win_rate >= 50 ? 'var(--green)' : 'var(--red)' },
+                    { label: 'Total P&L', value: '$' + backtestData.total_pnl.toFixed(2), color: backtestData.total_pnl >= 0 ? 'var(--green)' : 'var(--red)' },
+                    { label: 'Wins', value: String(backtestData.wins), color: 'var(--green)' },
+                    { label: 'Losses', value: String(backtestData.losses), color: 'var(--red)' },
+                ];
+                stats.forEach(function(st) {
+                    var card = el('div', 'bt-stat');
+                    var val = el('div', 'bt-stat-value', st.value);
+                    val.style.color = st.color;
+                    var lbl = el('div', 'bt-stat-label', st.label);
+                    card.appendChild(val);
+                    card.appendChild(lbl);
+                    summary.appendChild(card);
+                });
+                scrollWrap.appendChild(summary);
+
+                /* City breakdown */
+                if (backtestData.city_stats && backtestData.city_stats.length > 0) {
+                    var cityTitle = el('div', 'panel-title', 'Per-City Performance');
+                    setStyle(cityTitle, { marginBottom: '8px', marginTop: '12px' });
+                    scrollWrap.appendChild(cityTitle);
+
+                    var cityTable = document.createElement('table');
+                    cityTable.className = 'bt-table';
+                    var thead = document.createElement('thead');
+                    var headRow = document.createElement('tr');
+                    ['City', 'Trades', 'Wins', 'Win Rate', 'P&L'].forEach(function(h) {
+                        var th = document.createElement('th');
+                        th.textContent = h;
+                        headRow.appendChild(th);
+                    });
+                    thead.appendChild(headRow);
+                    cityTable.appendChild(thead);
+
+                    var tbody = document.createElement('tbody');
+                    backtestData.city_stats.sort(function(a, b) { return b.pnl - a.pnl; });
+                    backtestData.city_stats.forEach(function(cs) {
+                        var row = document.createElement('tr');
+                        var cells = [
+                            cs.city_name,
+                            String(cs.trades),
+                            String(cs.wins),
+                            cs.win_rate + '%',
+                            '$' + cs.pnl.toFixed(2)
+                        ];
+                        cells.forEach(function(val, idx) {
+                            var td = document.createElement('td');
+                            td.textContent = val;
+                            if (idx === 3) td.style.color = cs.win_rate >= 50 ? 'var(--green)' : 'var(--red)';
+                            if (idx === 4) td.style.color = cs.pnl >= 0 ? 'var(--green)' : 'var(--red)';
+                            row.appendChild(td);
+                        });
+                        tbody.appendChild(row);
+                    });
+                    cityTable.appendChild(tbody);
+                    scrollWrap.appendChild(cityTable);
+                }
+
+                /* Individual trades table */
+                if (backtestData.rows && backtestData.rows.length > 0) {
+                    var rowTitle = el('div', 'panel-title', 'Trade-by-Trade Results');
+                    setStyle(rowTitle, { marginBottom: '8px', marginTop: '16px' });
+                    scrollWrap.appendChild(rowTitle);
+
+                    var table = document.createElement('table');
+                    table.className = 'bt-table';
+                    var th2 = document.createElement('thead');
+                    var hr2 = document.createElement('tr');
+                    ['Date', 'City', 'Predicted', 'Actual', 'Result', 'P&L'].forEach(function(h) {
+                        var thEl = document.createElement('th');
+                        thEl.textContent = h;
+                        hr2.appendChild(thEl);
+                    });
+                    th2.appendChild(hr2);
+                    table.appendChild(th2);
+
+                    var tb2 = document.createElement('tbody');
+                    backtestData.rows.forEach(function(r) {
+                        var row = document.createElement('tr');
+                        var won = r.would_have_won;
+                        var cells = [
+                            r.date,
+                            r.city_name,
+                            r.predicted_bucket,
+                            r.actual_bucket,
+                            won ? 'WIN' : 'LOSS',
+                            '$' + r.theoretical_pnl.toFixed(2)
+                        ];
+                        cells.forEach(function(val, idx) {
+                            var td = document.createElement('td');
+                            td.textContent = val;
+                            if (idx === 4) td.style.color = won ? 'var(--green)' : 'var(--red)';
+                            if (idx === 5) td.style.color = r.theoretical_pnl >= 0 ? 'var(--green)' : 'var(--red)';
+                            row.appendChild(td);
+                        });
+                        tb2.appendChild(row);
+                    });
+                    table.appendChild(tb2);
+                    scrollWrap.appendChild(table);
+                }
+            } else {
+                var hint = el('div');
+                hint.textContent = 'Click "Run Backtest" to test model consensus predictions against historical observations. Uses Open-Meteo archive data.';
+                setStyle(hint, { color: 'var(--text-muted)', padding: '20px', textAlign: 'center', fontSize: '12px' });
+                scrollWrap.appendChild(hint);
+            }
+
+            pane.appendChild(scrollWrap);
+        }
+
+        function runBacktest(days) {
+            backtestLoading = true;
+            backtestData = null;
+            renderBacktest();
+
+            fetch('/api/backtest?days=' + days, { method: 'POST' })
+                .then(function(r) { return r.json(); })
+                .then(function(data) {
+                    backtestData = data;
+                    backtestLoading = false;
+                    renderBacktest();
+                })
+                .catch(function(err) {
+                    backtestLoading = false;
+                    backtestData = { total_trades: 0, wins: 0, losses: 0, win_rate: 0, total_pnl: 0, rows: [], city_stats: [], start_date: '?', end_date: '?', error: String(err) };
+                    renderBacktest();
+                });
+        }
+
+        /* ================================================================
+         *  CORRELATION MATRIX TAB
+         * ================================================================ */
+        function renderCorrelation() {
+            var pane = document.getElementById('tabCorrelation');
+            while (pane.firstChild) pane.removeChild(pane.firstChild);
+
+            var title = el('div', 'panel-title', 'City Forecast Correlation Matrix');
+            title.style.marginBottom = '8px';
+            pane.appendChild(title);
+
+            var scrollWrap = el('div');
+            setStyle(scrollWrap, { overflowY: 'auto', flex: '1' });
+
+            var corrData = prevState.correlation_matrix;
+            if (!corrData || !corrData.cities || corrData.cities.length < 2) {
+                var empty = el('div');
+                empty.textContent = 'Correlation matrix requires forecast data from at least 2 cities. Start trading to populate.';
+                setStyle(empty, { color: 'var(--text-muted)', padding: '20px', textAlign: 'center', fontSize: '12px' });
+                scrollWrap.appendChild(empty);
+                pane.appendChild(scrollWrap);
+                return;
+            }
+
+            var cities = corrData.cities;
+            var matrix = corrData.matrix;
+            var n = cities.length;
+
+            /* Build the grid */
+            var gridSize = n + 1; /* +1 for header row/col */
+            var grid = el('div', 'corr-grid');
+            grid.style.gridTemplateColumns = 'repeat(' + gridSize + ', 38px)';
+            setStyle(grid, { overflowX: 'auto' });
+
+            /* Top-left empty corner */
+            var corner = el('div', 'corr-header');
+            grid.appendChild(corner);
+
+            /* Column headers */
+            for (var c = 0; c < n; c++) {
+                var ch = el('div', 'corr-header', cities[c].id.toUpperCase());
+                grid.appendChild(ch);
+            }
+
+            /* Rows */
+            for (var i = 0; i < n; i++) {
+                /* Row header */
+                var rh = el('div', 'corr-header', cities[i].id.toUpperCase());
+                grid.appendChild(rh);
+
+                for (var j = 0; j < n; j++) {
+                    var cell = el('div', 'corr-cell');
+                    var val = matrix[i] && matrix[i][j];
+
+                    if (val === null || val === undefined) {
+                        cell.textContent = '-';
+                        cell.style.color = 'var(--text-muted)';
+                        cell.style.background = 'var(--bg-card)';
+                    } else {
+                        cell.textContent = val.toFixed(1);
+                        /* Color code: green=positive, red=negative, neutral=grey */
+                        if (i === j) {
+                            cell.style.background = 'var(--cyan-dim)';
+                            cell.style.color = 'var(--cyan)';
+                        } else if (val > 0.5) {
+                            cell.style.background = 'rgba(34, 197, 94, 0.2)';
+                            cell.style.color = 'var(--green)';
+                        } else if (val > 0.2) {
+                            cell.style.background = 'rgba(34, 197, 94, 0.1)';
+                            cell.style.color = 'var(--green)';
+                        } else if (val < -0.5) {
+                            cell.style.background = 'rgba(239, 68, 68, 0.2)';
+                            cell.style.color = 'var(--red)';
+                        } else if (val < -0.2) {
+                            cell.style.background = 'rgba(239, 68, 68, 0.1)';
+                            cell.style.color = 'var(--red)';
+                        } else {
+                            cell.style.background = 'var(--bg-card)';
+                            cell.style.color = 'var(--text-dim)';
+                        }
+                    }
+
+                    grid.appendChild(cell);
+                }
+            }
+
+            scrollWrap.appendChild(grid);
+
+            /* Notable pairs */
+            var pairs = corrData.pairs || [];
+            if (pairs.length > 0) {
+                var pairsTitle = el('div', 'panel-title', 'Notable Correlations');
+                setStyle(pairsTitle, { marginTop: '16px', marginBottom: '8px' });
+                scrollWrap.appendChild(pairsTitle);
+
+                pairs.forEach(function(p) {
+                    var row = el('div', 'corr-pair');
+
+                    var label = el('span');
+                    label.textContent = p.city_a_name + ' / ' + p.city_b_name;
+                    setStyle(label, { color: 'var(--text-bright)', fontWeight: '600' });
+                    row.appendChild(label);
+
+                    var typeLabel = el('span');
+                    typeLabel.textContent = p.type;
+                    setStyle(typeLabel, { fontSize: '10px', color: 'var(--text-dim)', fontFamily: '"JetBrains Mono", monospace', textTransform: 'uppercase', letterSpacing: '0.5px' });
+                    row.appendChild(typeLabel);
+
+                    var corrVal = el('span');
+                    corrVal.textContent = p.correlation.toFixed(3);
+                    setStyle(corrVal, {
+                        fontFamily: '"JetBrains Mono", monospace',
+                        fontWeight: '700',
+                        color: p.correlation > 0 ? 'var(--green)' : 'var(--red)'
+                    });
+                    row.appendChild(corrVal);
+
+                    scrollWrap.appendChild(row);
+                });
+            }
+
+            pane.appendChild(scrollWrap);
+        }
+
+        /* ================================================================
+         *  EXECUTION ANALYTICS TAB
+         * ================================================================ */
+        function renderExecution() {
+            var pane = document.getElementById('tabExecution');
+            while (pane.firstChild) pane.removeChild(pane.firstChild);
+
+            var title = el('div', 'panel-title', 'Execution Analytics');
+            title.style.marginBottom = '8px';
+            pane.appendChild(title);
+
+            var scrollWrap = el('div');
+            setStyle(scrollWrap, { overflowY: 'auto', flex: '1' });
+
+            var ea = prevState.execution_analytics;
+            if (!ea || !ea.total_trades) {
+                var empty = el('div');
+                empty.textContent = 'No trades yet. Execution analytics will appear once paper trading begins.';
+                setStyle(empty, { color: 'var(--text-muted)', padding: '20px', textAlign: 'center', fontSize: '12px' });
+                scrollWrap.appendChild(empty);
+                pane.appendChild(scrollWrap);
+                return;
+            }
+
+            /* Metric cards */
+            var metrics = el('div', 'exec-metrics');
+            var metricDefs = [
+                { label: 'Total Trades', value: String(ea.total_trades), color: 'var(--cyan)' },
+                { label: 'Avg Position', value: '$' + ea.avg_position_size.toFixed(2), color: 'var(--text-bright)' },
+                { label: 'Avg Core', value: '$' + ea.avg_position_core.toFixed(2), color: 'var(--green)' },
+                { label: 'Avg Tail', value: '$' + ea.avg_position_tail.toFixed(2), color: 'var(--text-dim)' },
+                { label: 'Capital Util', value: ea.capital_utilization_pct.toFixed(1) + '%', color: 'var(--yellow)' },
+                { label: 'Trades/Cycle', value: ea.trades_per_cycle.toFixed(1), color: 'var(--purple)' },
+            ];
+            metricDefs.forEach(function(m) {
+                var card = el('div', 'exec-metric');
+                var val = el('div', 'exec-metric-value', m.value);
+                val.style.color = m.color;
+                var lbl = el('div', 'exec-metric-label', m.label);
+                card.appendChild(val);
+                card.appendChild(lbl);
+                metrics.appendChild(card);
+            });
+            scrollWrap.appendChild(metrics);
+
+            /* Edge Distribution Chart */
+            var edgeDist = ea.edge_distribution || [];
+            if (edgeDist.length > 0) {
+                var edgeChart = el('div', 'exec-chart');
+                var edgeTitle = el('div', 'exec-chart-title', 'Edge Distribution (Current Signals)');
+                edgeChart.appendChild(edgeTitle);
+
+                var maxEdge = Math.max.apply(null, edgeDist.map(function(e) { return e.count; }));
+                if (maxEdge === 0) maxEdge = 1;
+
+                edgeDist.forEach(function(bucket) {
+                    var row = el('div', 'exec-bar-row');
+                    var label = el('div', 'exec-bar-label', bucket.bucket);
+                    var track = el('div', 'exec-bar-track');
+                    var fill = el('div', 'exec-bar-fill');
+                    var pct = (bucket.count / maxEdge) * 100;
+                    fill.style.width = pct + '%';
+                    fill.style.background = 'var(--cyan)';
+                    track.appendChild(fill);
+                    var count = el('div', 'exec-bar-count', String(bucket.count));
+                    row.appendChild(label);
+                    row.appendChild(track);
+                    row.appendChild(count);
+                    edgeChart.appendChild(row);
+                });
+
+                scrollWrap.appendChild(edgeChart);
+            }
+
+            /* Size Distribution Chart */
+            var sizeDist = ea.size_distribution || [];
+            if (sizeDist.length > 0) {
+                var sizeChart = el('div', 'exec-chart');
+                var sizeTitle = el('div', 'exec-chart-title', 'Position Size Distribution');
+                sizeChart.appendChild(sizeTitle);
+
+                var maxSize = Math.max.apply(null, sizeDist.map(function(s) { return s.count; }));
+                if (maxSize === 0) maxSize = 1;
+
+                sizeDist.forEach(function(bucket) {
+                    var row = el('div', 'exec-bar-row');
+                    var label = el('div', 'exec-bar-label', bucket.bucket);
+                    var track = el('div', 'exec-bar-track');
+                    var fill = el('div', 'exec-bar-fill');
+                    var pct = (bucket.count / maxSize) * 100;
+                    fill.style.width = pct + '%';
+                    fill.style.background = 'var(--purple)';
+                    track.appendChild(fill);
+                    var count = el('div', 'exec-bar-count', String(bucket.count));
+                    row.appendChild(label);
+                    row.appendChild(track);
+                    row.appendChild(count);
+                    sizeChart.appendChild(row);
+                });
+
+                scrollWrap.appendChild(sizeChart);
+            }
+
+            /* Win Rate by Edge */
+            var wrByEdge = ea.win_rate_by_edge || [];
+            var hasWrData = wrByEdge.some(function(w) { return w.trades > 0; });
+            if (hasWrData) {
+                var wrChart = el('div', 'exec-chart');
+                var wrTitle = el('div', 'exec-chart-title', 'Win Rate by Edge Bucket');
+                wrChart.appendChild(wrTitle);
+
+                wrByEdge.forEach(function(bucket) {
+                    if (bucket.trades === 0) return;
+                    var row = el('div', 'exec-bar-row');
+                    var label = el('div', 'exec-bar-label', bucket.bucket);
+                    var track = el('div', 'exec-bar-track');
+                    var fill = el('div', 'exec-bar-fill');
+                    fill.style.width = bucket.win_rate + '%';
+                    fill.style.background = bucket.win_rate >= 50 ? 'var(--green)' : 'var(--red)';
+                    track.appendChild(fill);
+                    var count = el('div', 'exec-bar-count', bucket.win_rate + '%');
+                    row.appendChild(label);
+                    row.appendChild(track);
+                    row.appendChild(count);
+                    wrChart.appendChild(row);
+                });
+
+                scrollWrap.appendChild(wrChart);
+            }
 
             pane.appendChild(scrollWrap);
         }
@@ -3211,7 +3916,7 @@
             { key: 'R', desc: 'Refresh data' },
             { key: 'Esc', desc: 'Close modal/overlay' },
             { key: '?', desc: 'Toggle this help' },
-            { key: '1-6', desc: 'Switch to tab 1-6' },
+            { key: '1-9', desc: 'Switch to tab 1-9' },
             { key: '\u2191 / \u2193', desc: 'Navigate city list' }
         ];
 
@@ -3268,7 +3973,7 @@
             }
 
             /* Tab switching with number keys */
-            if (key >= '1' && key <= '6') {
+            if (key >= '1' && key <= '9') {
                 var idx = parseInt(key) - 1;
                 if (idx < TAB_CONFIG.length) {
                     e.preventDefault();
@@ -3374,8 +4079,11 @@
             if (s && s.cities && Object.keys(s.cities).length > 0) updateDashboard(s);
         });
 
-        /* Render stubs on load so they're ready if user clicks that tab */
-        renderStubs();
+        /* Render new tabs on load so they're ready if user clicks them */
+        renderWeatherAlerts();
+        renderBacktest();
+        renderCorrelation();
+        renderExecution();
     </script>
 </body>
 </html>
