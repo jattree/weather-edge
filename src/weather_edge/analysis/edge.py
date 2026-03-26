@@ -127,21 +127,18 @@ def calculate_edge(
 
     edge_pct = edge / market_prob if market_prob > 0 else 0.0
 
-    # Detect if this is a tail bet opportunity (ColdMath-style penny sniping)
-    # Tail bet: market prices YES at <$0.05 but our model says 3x+ higher probability
-    is_tail = (
+    # Detect if this is a penny sweep opportunity
+    # Penny bet: market prices YES at <$0.05 but our model says 3x+ higher probability
+    is_penny = (
         side == TradeSide.YES
         and market_prob <= 0.05
-        and model_prob >= market_prob * 3
+        and model_prob >= market_prob * settings.penny_min_edge_multiplier
         and adjusted_confidence >= 0.5
     )
 
-    if is_tail:
-        # Tail bet sizing: fixed small amount from the tail bankroll (30% of total)
-        # Risk is capped at the bet size, but payoff is 20-100x
-        tail_bankroll = bankroll * 0.30
-        # Flat size per tail bet, spread across many small lotto tickets
-        bet_size = min(tail_bankroll * 0.10, bankroll * 0.02)  # Max 2% of total bankroll per tail
+    if is_penny:
+        # Penny sizing: fixed $10-20 per bet (gas-efficient at $2K bankroll)
+        bet_size = settings.penny_max_position
         bet_size = max(0.0, bet_size)
         tier = SignalTier.HIGH  # Tail bets are always high priority when they qualify
         strategy = "tail"

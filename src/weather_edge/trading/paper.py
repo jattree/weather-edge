@@ -32,25 +32,46 @@ class PaperTrade:
 class PaperTrader:
     """Manages paper trades in-memory (persisted to DB via scheduler)."""
 
-    def __init__(self, bankroll: float = 1000.0):
+    def __init__(self, bankroll: float = 2000.0):
         self.trades: list[PaperTrade] = []
         self._next_id = 1
         self.bankroll = bankroll
+
+        # Pool allocation (Gemini-validated 60/30/10)
+        from weather_edge.config import settings
+        self._pool_today_pct = settings.pool_today_pct
+        self._pool_tomorrow_pct = settings.pool_tomorrow_pct
+        self._pool_penny_pct = settings.pool_penny_pct
 
     @property
     def capital_at_risk(self) -> float:
         """Total capital deployed in open positions."""
         return sum(t.size_usd for t in self.open_trades)
 
+    def _pool_at_risk(self, tag: str) -> float:
+        """Capital at risk in a specific pool."""
+        return sum(t.size_usd for t in self.open_trades if tag in (t.description or ""))
+
+    @property
+    def today_at_risk(self) -> float:
+        return self._pool_at_risk("[TODAY]")
+
+    @property
+    def tomorrow_at_risk(self) -> float:
+        return self._pool_at_risk("[TOMORROW]")
+
+    @property
+    def penny_at_risk(self) -> float:
+        return self._pool_at_risk("[PENNY]")
+
+    # Legacy aliases for dashboard compatibility
     @property
     def core_at_risk(self) -> float:
-        """Capital in core strategy positions."""
-        return sum(t.size_usd for t in self.open_trades if not t.description.startswith("[TAIL]"))
+        return self.today_at_risk + self.tomorrow_at_risk
 
     @property
     def tail_at_risk(self) -> float:
-        """Capital in tail bet positions."""
-        return sum(t.size_usd for t in self.open_trades if t.description.startswith("[TAIL]"))
+        return self.penny_at_risk
 
     @property
     def available_capital(self) -> float:
@@ -58,14 +79,28 @@ class PaperTrader:
         return self.bankroll - self.capital_at_risk + self.total_pnl
 
     @property
+    def today_budget(self) -> float:
+        """60%, same-day markets, recycles nightly."""
+        return self.bankroll * self._pool_today_pct
+
+    @property
+    def tomorrow_budget(self) -> float:
+        """30%, tomorrow conviction bets."""
+        return self.bankroll * self._pool_tomorrow_pct
+
+    @property
+    def penny_budget(self) -> float:
+        """10%, penny sweep tail bets."""
+        return self.bankroll * self._pool_penny_pct
+
+    # Legacy aliases
+    @property
     def core_budget(self) -> float:
-        """70% of bankroll for core bets."""
-        return self.bankroll * 0.70
+        return self.today_budget + self.tomorrow_budget
 
     @property
     def tail_budget(self) -> float:
-        """30% of bankroll for tail bets."""
-        return self.bankroll * 0.30
+        return self.penny_budget
 
     def should_trade(self, signal: Signal) -> bool:
         """Determine if a signal warrants a paper trade."""
@@ -74,11 +109,12 @@ class PaperTrader:
         if signal.recommended_size <= 0:
             return False
 
-        # Enforce separate budgets for core vs tail
-        is_tail = getattr(signal, "strategy", "core") == "tail"
-        if is_tail:
-            remaining = self.tail_budget - self.tail_at_risk
+        # Enforce three-pool budgets
+        strategy = getattr(signal, "strategy", "core")
+        if strategy == "tail":
+            remaining = self.penny_budget - self.penny_at_risk
         else:
+            # Core bets: check today + tomorrow combined budget
             remaining = self.core_budget - self.core_at_risk
         # Also check overall capital
         remaining = min(remaining, self.available_capital)
@@ -91,20 +127,33 @@ class PaperTrader:
         if not self.should_trade(signal):
             return None
 
-        is_tail = getattr(signal, "strategy", "core") == "tail"
-        if is_tail:
-            remaining = min(self.tail_budget - self.tail_at_risk, self.available_capital)
+        strategy = getattr(signal, "strategy", "core")
+        if strategy == "tail":
+            remaining = min(self.penny_budget - self.penny_at_risk, self.available_capital)
+            pool_tag = "[PENNY]"
         else:
             remaining = min(self.core_budget - self.core_at_risk, self.available_capital)
+            # Tag as TODAY or TOMORROW based on hours to resolution
+            hours = getattr(signal, "hours_to_resolution", None)
+            if hours is not None and hours <= 18:
+                pool_tag = "[TODAY]"
+            else:
+                pool_tag = "[TOMORROW]"
 
         size = min(signal.recommended_size, remaining)
         if size < 1.0:
             return None
 
-        # Tag tail bets in description for tracking
-        desc = signal.description
-        if is_tail:
-            desc = f"[TAIL] {desc}"
+        # Enforce penny sweep min/max from config
+        if strategy == "tail":
+            from weather_edge.config import settings
+            size = max(size, settings.penny_min_position)
+            size = min(size, settings.penny_max_position)
+            size = min(size, remaining)  # Re-check after clamping
+            if size < settings.penny_min_position:
+                return None
+
+        desc = f"{pool_tag} {signal.description}"
 
         trade = PaperTrade(
             trade_id=self._next_id,
@@ -250,12 +299,14 @@ class PaperTrader:
         return wins / len(closed)
 
     def summary(self) -> dict:
-        """Return summary statistics."""
+        """Return summary statistics with three-pool breakdown."""
         closed = self.closed_trades
-        tail_trades = [t for t in self.trades if t.description and t.description.startswith("[TAIL]")]
-        core_trades = [t for t in self.trades if not t.description or not t.description.startswith("[TAIL]")]
-        tail_pnl = sum(t.pnl for t in tail_trades if t.pnl is not None)
-        core_pnl = sum(t.pnl for t in core_trades if t.pnl is not None)
+        today_trades = [t for t in self.trades if "[TODAY]" in (t.description or "")]
+        tomorrow_trades = [t for t in self.trades if "[TOMORROW]" in (t.description or "")]
+        penny_trades = [t for t in self.trades if "[PENNY]" in (t.description or "")]
+        today_pnl = sum(t.pnl for t in today_trades if t.pnl is not None)
+        tomorrow_pnl = sum(t.pnl for t in tomorrow_trades if t.pnl is not None)
+        penny_pnl = sum(t.pnl for t in penny_trades if t.pnl is not None)
         return {
             "total_trades": len(self.trades),
             "open": len(self.open_trades),
@@ -264,10 +315,24 @@ class PaperTrader:
             "losses": sum(1 for t in closed if t.status == TradeStatus.LOST),
             "total_pnl": round(self.total_pnl, 2),
             "win_rate": round(self.win_rate * 100, 1),
-            "core_trades": len(core_trades),
-            "core_pnl": round(core_pnl, 2),
+            # Three-pool breakdown
+            "today_trades": len(today_trades),
+            "today_pnl": round(today_pnl, 2),
+            "today_at_risk": round(self.today_at_risk, 2),
+            "today_budget": round(self.today_budget, 2),
+            "tomorrow_trades": len(tomorrow_trades),
+            "tomorrow_pnl": round(tomorrow_pnl, 2),
+            "tomorrow_at_risk": round(self.tomorrow_at_risk, 2),
+            "tomorrow_budget": round(self.tomorrow_budget, 2),
+            "penny_trades": len(penny_trades),
+            "penny_pnl": round(penny_pnl, 2),
+            "penny_at_risk": round(self.penny_at_risk, 2),
+            "penny_budget": round(self.penny_budget, 2),
+            # Legacy aliases for dashboard
+            "core_trades": len(today_trades) + len(tomorrow_trades),
+            "core_pnl": round(today_pnl + tomorrow_pnl, 2),
             "core_at_risk": round(self.core_at_risk, 2),
-            "tail_trades": len(tail_trades),
-            "tail_pnl": round(tail_pnl, 2),
-            "tail_at_risk": round(self.tail_at_risk, 2),
+            "tail_trades": len(penny_trades),
+            "tail_pnl": round(penny_pnl, 2),
+            "tail_at_risk": round(self.penny_at_risk, 2),
         }

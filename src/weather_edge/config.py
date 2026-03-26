@@ -268,12 +268,22 @@ class Settings(BaseSettings):
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
 
     database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/weather_edge"
-    bankroll: float = 1000.0
+    bankroll: float = 2000.0
     min_edge: float = 0.05
     min_confidence: float = 0.6
-    kelly_fraction: float = 0.5
-    max_position_pct: float = 0.05
+    kelly_fraction: float = 0.25
+    max_position_pct: float = 0.03
     fetch_interval_minutes: int = 30
+
+    # Pool allocation (Gemini-validated 60/30/10 split)
+    pool_today_pct: float = 0.60    # Same-day markets, recycles nightly
+    pool_tomorrow_pct: float = 0.30  # Tomorrow conviction bets
+    pool_penny_pct: float = 0.10     # Penny sweep tail bets
+
+    # Penny sweep constraints
+    penny_min_edge_multiplier: float = 3.0  # Model must say 3x market price
+    penny_min_position: float = 10.0        # Min $10 per penny bet (gas efficiency)
+    penny_max_position: float = 20.0        # Max $20 per penny bet
 
     # API base URLs
     openmeteo_base_url: str = "https://api.open-meteo.com/v1/forecast"
