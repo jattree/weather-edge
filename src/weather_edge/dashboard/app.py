@@ -223,20 +223,6 @@ async def run_dashboard_cycle() -> None:
     # Capital at risk = sum of all open position sizes
     capital_at_risk = sum(t.size_usd for t in paper_trader.open_trades)
 
-    # Fetch weather alerts (non-blocking; log errors but don't fail cycle)
-    try:
-        weather_alerts = await fetch_all_alerts()
-    except Exception:
-        logger.warning("Weather alerts fetch failed", exc_info=True)
-        weather_alerts = []
-
-    # Compute correlation matrix from city model data
-    try:
-        correlation_data = compute_correlation_matrix(city_data)
-    except Exception:
-        logger.warning("Correlation matrix computation failed", exc_info=True)
-        correlation_data = {"cities": [], "matrix": [], "pairs": []}
-
     # Build signal dicts for analytics
     signal_dicts = [
         {
@@ -255,7 +241,7 @@ async def run_dashboard_cycle() -> None:
         for s in sorted(all_signals, key=lambda x: abs(x.edge), reverse=True)
     ]
 
-    # Compute execution analytics
+    # Compute execution analytics (local computation, no API calls)
     try:
         exec_analytics = compute_execution_analytics(
             trades=paper_trader.trades,
@@ -268,6 +254,15 @@ async def run_dashboard_cycle() -> None:
         logger.warning("Execution analytics computation failed", exc_info=True)
         exec_analytics = {}
 
+    # Compute correlation matrix (local computation, no API calls)
+    try:
+        correlation_data = compute_correlation_matrix(city_data)
+    except Exception:
+        logger.warning("Correlation matrix computation failed", exc_info=True)
+        correlation_data = {"cities": [], "matrix": [], "pairs": []}
+
+    # === BROADCAST TRADING DATA IMMEDIATELY ===
+    # Don't wait for weather alerts, get the trading dashboard up fast
     latest_state = {
         "cities": city_data,
         "signals": signal_dicts,
@@ -296,12 +291,21 @@ async def run_dashboard_cycle() -> None:
         ),
         "cycle_count": paper_trader.store.increment_cycle(),
         "last_update": datetime.now(timezone.utc).isoformat(),
-        "weather_alerts": weather_alerts,
+        "weather_alerts": latest_state.get("weather_alerts", []),
         "correlation_matrix": correlation_data,
         "execution_analytics": exec_analytics,
     }
 
     await broadcast(latest_state)
+    logger.info("Dashboard cycle complete, next in %dm", settings.fetch_interval_minutes)
+
+    # === DEFERRED: Fetch weather alerts in background (doesn't block trading) ===
+    try:
+        weather_alerts = await fetch_all_alerts(forecast_cache)
+        latest_state["weather_alerts"] = weather_alerts
+        await broadcast(latest_state)
+    except Exception:
+        logger.warning("Weather alerts fetch failed", exc_info=True)
 
 
 async def background_loop() -> None:
