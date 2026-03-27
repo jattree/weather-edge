@@ -2380,13 +2380,14 @@
 
             var bankroll = state.bankroll || 2000;
             var atRisk = state.capital_at_risk || 0;
-            var freeCash = Math.max(0, bankroll - atRisk);
-            var portfolioValue = freeCash + atRisk;
+            var portfolioValue = bankroll + pnl;  // What you're worth = starting capital + P&L
+            var freeCash = Math.max(0, portfolioValue - atRisk);
             var returnPct = bankroll > 0 ? ((pnl / bankroll) * 100) : 0;
 
             /* Portfolio Value = Free Cash + Invested (always adds up) */
             var pvEl = document.getElementById('portfolioValue');
             pvEl.textContent = '$' + portfolioValue.toLocaleString('en', {maximumFractionDigits: 0});
+            pvEl.className = 'stat-value mono glow-cyan ' + (pnl >= 0 ? 'cyan' : 'red');
 
             var fcEl = document.getElementById('freeCash');
             fcEl.textContent = '$' + freeCash.toLocaleString('en', {maximumFractionDigits: 0});
