@@ -221,6 +221,15 @@ CITIES: dict[City, CityConfig] = {
         regional_models=[],
         temp_unit="celsius",
     ),
+    City.AUS: CityConfig(
+        city_id=City.AUS,
+        name="Austin",
+        icao="KAUS",
+        latitude=30.1945,
+        longitude=-97.6699,
+        timezone="America/Chicago",
+        regional_models=[WeatherModel.HRRR, WeatherModel.NAM],
+    ),
 }
 
 # Global models applied to every city

@@ -24,6 +24,7 @@ class City(str, Enum):
     MUC = "muc"
     WAR = "war"
     SZN = "szn"
+    AUS = "aus"  # Austin, ColdMath trades this actively
 
 
 class WeatherModel(str, Enum):

@@ -46,6 +46,7 @@ CITY_NAME_MAP: dict[str, City] = {
     "munich": City.MUC,
     "warsaw": City.WAR,
     "shenzhen": City.SZN,
+    "austin": City.AUS,
 }
 
 # Parse date from event titles: "... on March 27?"
@@ -508,7 +509,7 @@ async def fetch_book_prices(market: "MarketInfo") -> dict | None:
     if result["yes_ask"] and result["no_ask"]:
         result["spread_cost"] = result["yes_ask"] + result["no_ask"]
         result["spread_profit"] = 1.0 - result["spread_cost"]
-        result["profitable"] = result["spread_cost"] < 0.985  # 1.5% safety buffer per Gemini
+        result["profitable"] = result["spread_cost"] < 0.97  # 3% buffer to absorb round-trip taker fees
     else:
         result["spread_cost"] = None
         result["spread_profit"] = None
