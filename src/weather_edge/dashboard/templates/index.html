@@ -1872,17 +1872,26 @@
         </div>
         <div class="header-stats">
             <div class="stat">
-                <div class="stat-value cyan glow-cyan mono" id="bankroll">$1,000</div>
-                <div class="stat-label">Bankroll</div>
+                <div class="stat-value cyan glow-cyan mono" id="portfolioValue">$2,000</div>
+                <div class="stat-label">Portfolio Value</div>
+            </div>
+            <div class="stat-divider"></div>
+            <div class="stat">
+                <div class="stat-value green mono" id="freeCash">$0</div>
+                <div class="stat-label">Free Cash</div>
+            </div>
+            <div class="stat">
+                <div class="stat-value yellow mono" id="atRisk">$0</div>
+                <div class="stat-label">Invested</div>
             </div>
             <div class="stat-divider"></div>
             <div class="stat">
                 <div class="stat-value green glow-green mono num-transition" id="totalPnl">$0</div>
-                <div class="stat-label">Total P&amp;L</div>
+                <div class="stat-label">P&amp;L</div>
             </div>
             <div class="stat">
-                <div class="stat-value yellow mono" id="atRisk">$0</div>
-                <div class="stat-label">At Risk</div>
+                <div class="stat-value mono" id="returnPct">0%</div>
+                <div class="stat-label">Return</div>
             </div>
             <div class="stat-divider"></div>
             <div class="stat">
@@ -1891,7 +1900,7 @@
             </div>
             <div class="stat">
                 <div class="stat-value mono" id="openPositions">0</div>
-                <div class="stat-label">Open Pos</div>
+                <div class="stat-label">Positions</div>
             </div>
             <div class="stat">
                 <div class="stat-value cyan mono" id="cycleCount">0</div>
@@ -2369,10 +2378,25 @@
             document.getElementById('openPositions').textContent = String(state.open_positions || 0);
             document.getElementById('cycleCount').textContent = String(state.cycle_count || 0);
 
-            var bankroll = state.bankroll || 1000;
-            document.getElementById('bankroll').textContent = '$' + bankroll.toLocaleString('en');
+            var bankroll = state.bankroll || 2000;
             var atRisk = state.capital_at_risk || 0;
-            document.getElementById('atRisk').textContent = '$' + atRisk.toLocaleString('en');
+            var freeCash = Math.max(0, bankroll - atRisk);
+            var portfolioValue = freeCash + atRisk;
+            var returnPct = bankroll > 0 ? ((pnl / bankroll) * 100) : 0;
+
+            /* Portfolio Value = Free Cash + Invested (always adds up) */
+            var pvEl = document.getElementById('portfolioValue');
+            pvEl.textContent = '$' + portfolioValue.toLocaleString('en', {maximumFractionDigits: 0});
+
+            var fcEl = document.getElementById('freeCash');
+            fcEl.textContent = '$' + freeCash.toLocaleString('en', {maximumFractionDigits: 0});
+            fcEl.className = 'stat-value mono ' + (freeCash > 100 ? 'green' : freeCash > 0 ? 'yellow' : 'red');
+
+            document.getElementById('atRisk').textContent = '$' + atRisk.toLocaleString('en', {maximumFractionDigits: 0});
+
+            var retEl = document.getElementById('returnPct');
+            retEl.textContent = (returnPct >= 0 ? '+' : '') + returnPct.toFixed(1) + '%';
+            retEl.className = 'stat-value mono ' + (returnPct >= 0 ? 'green' : 'red');
 
             /* Bankroll utilization */
             var utilPct = bankroll > 0 ? ((atRisk / bankroll) * 100) : 0;
