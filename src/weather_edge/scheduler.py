@@ -59,8 +59,12 @@ def compute_model_prob_for_market(market: MarketInfo, consensus) -> float | None
 async def run_cycle(
     paper_trader: PaperTrader,
     target_dates: list[date] | None = None,
-) -> list[Signal]:
-    """Run one full fetch → analyze → signal cycle."""
+) -> tuple[list[Signal], dict[tuple, list]]:
+    """Run one full fetch → analyze → signal cycle.
+
+    Returns:
+        (signals, forecast_cache) where forecast_cache maps (city_id, date) -> forecasts
+    """
     if target_dates is None:
         today = date.today()
         target_dates = [today, today + timedelta(days=1), today + timedelta(days=2)]
@@ -242,19 +246,21 @@ async def run_cycle(
         paper_trader.place_trade(signal)
 
     # Also fetch forecasts for cities without active markets (monitoring)
+    # But only for tomorrow (not all dates) to save API calls
+    tomorrow = target_dates[1] if len(target_dates) > 1 else target_dates[0]
     for city_id in City:
-        for td in target_dates:
-            if (city_id, td) not in cities_processed:
-                forecasts = await fetch_city_forecasts(city_id, td)
-                if forecasts:
-                    consensus = compute_consensus(city_id, str(td), "temp_max_c", forecasts)
-                    if consensus:
-                        logger.info(
-                            "  %s (no markets): mean=%.1f°C conf=%.0f%%",
-                            city_id.value, consensus.weighted_mean, consensus.confidence * 100,
-                        )
+        if (city_id, tomorrow) not in _forecast_cache:
+            forecasts = await fetch_city_forecasts(city_id, tomorrow)
+            if forecasts:
+                _forecast_cache[(city_id, tomorrow)] = forecasts
+                consensus = compute_consensus(city_id, str(tomorrow), "temp_max_c", forecasts)
+                if consensus:
+                    logger.info(
+                        "  %s (no markets): mean=%.1f°C conf=%.0f%%",
+                        city_id.value, consensus.weighted_mean, consensus.confidence * 100,
+                    )
 
-    return all_signals
+    return all_signals, _forecast_cache
 
 
 async def run_loop(paper_trader: PaperTrader) -> None:
@@ -266,7 +272,7 @@ async def run_loop(paper_trader: PaperTrader) -> None:
         cycle_num += 1
         logger.info("===== CYCLE %d START =====", cycle_num)
         try:
-            signals = await run_cycle(paper_trader)
+            signals, _ = await run_cycle(paper_trader)
             tradeable = [s for s in signals if s.confidence_tier.value != "low"]
             logger.info(
                 "Cycle %d complete: %d signals, %d tradeable, P&L=$%.2f",
