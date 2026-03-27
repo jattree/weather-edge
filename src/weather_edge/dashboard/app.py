@@ -21,6 +21,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 from weather_edge.analysis.claude_reasoning import get_decisions, clear_decisions
+from weather_edge.analysis.regret_tracker import compute_adherence
 from weather_edge.analysis.competitor_tracker import CompetitorTracker
 from weather_edge.analysis.correlation_matrix import compute_correlation_matrix
 from weather_edge.analysis.execution_analytics import compute_execution_analytics
@@ -327,6 +328,7 @@ async def _run_dashboard_cycle_inner(run_ai: bool = True) -> None:
         "correlation_matrix": correlation_data,
         "execution_analytics": exec_analytics,
         "claude_decisions": get_decisions(),
+        "ai_adherence": compute_adherence(paper_trader.closed_trades, get_decisions()).to_dict(),
     }
 
     await broadcast(latest_state)
