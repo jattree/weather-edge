@@ -20,6 +20,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
+from weather_edge.analysis.claude_reasoning import get_decisions, clear_decisions
 from weather_edge.analysis.competitor_tracker import CompetitorTracker
 from weather_edge.analysis.correlation_matrix import compute_correlation_matrix
 from weather_edge.analysis.execution_analytics import compute_execution_analytics
@@ -65,6 +66,7 @@ latest_state: dict = {
     "weather_alerts": [],
     "correlation_matrix": {"cities": [], "matrix": [], "pairs": []},
     "execution_analytics": {},
+    "claude_decisions": [],
 }
 connected_websockets: list[WebSocket] = []
 
@@ -303,6 +305,7 @@ async def run_dashboard_cycle() -> None:
         "weather_alerts": [],
         "correlation_matrix": correlation_data,
         "execution_analytics": exec_analytics,
+        "claude_decisions": get_decisions(),
     }
 
     await broadcast(latest_state)
@@ -433,6 +436,7 @@ async def api_new_session():
     global trading_active
     trading_active = False
     final_stats = paper_trader.reset_session(settings.bankroll)
+    clear_decisions()
     logger.info("New session started. Previous session stats: %s", final_stats)
 
     latest_state.update({
@@ -453,6 +457,7 @@ async def api_new_session():
         "weather_alerts": [],
         "correlation_matrix": {"cities": [], "matrix": [], "pairs": []},
         "execution_analytics": {},
+        "claude_decisions": [],
     })
     await broadcast(latest_state)
 

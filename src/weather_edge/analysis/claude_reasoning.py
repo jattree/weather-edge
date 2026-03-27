@@ -23,6 +23,40 @@ from weather_edge.analysis.edge import Signal
 
 logger = logging.getLogger(__name__)
 
+# ---- Decision history for dashboard AI Decisions tab ----
+_decision_history: list[dict] = []
+MAX_DECISION_HISTORY = 200
+
+
+def record_decision(reasoning: "TradeReasoning") -> None:
+    """Record a Claude trade decision for the dashboard."""
+    from datetime import datetime, timezone
+
+    entry = {
+        "time": datetime.now(timezone.utc).strftime("%H:%M:%S"),
+        "city": reasoning.signal.city_id.upper() if isinstance(reasoning.signal.city_id, str) else reasoning.signal.city_id,
+        "decision": "TRADE" if reasoning.should_trade else "SKIP",
+        "signal": reasoning.signal.description[:60] if reasoning.signal.description else "",
+        "adjustment": reasoning.confidence_adjustment,
+        "rationale": reasoning.rationale,
+        "risk_factors": reasoning.risk_factors,
+    }
+    _decision_history.insert(0, entry)
+    # Trim to max size
+    while len(_decision_history) > MAX_DECISION_HISTORY:
+        _decision_history.pop()
+
+
+def get_decisions() -> list[dict]:
+    """Return a copy of the decision history (most recent first)."""
+    return list(_decision_history)
+
+
+def clear_decisions() -> None:
+    """Clear the decision history (e.g. on new session)."""
+    _decision_history.clear()
+
+
 def _get_api_key() -> str:
     """Get API key from env or .env file via pydantic-settings."""
     key = os.environ.get("ANTHROPIC_API_KEY", "")

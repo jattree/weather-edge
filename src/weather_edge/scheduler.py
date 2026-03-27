@@ -6,7 +6,7 @@ import logging
 from datetime import date, datetime, timedelta, timezone
 
 from weather_edge.analysis.arbitrage import check_bucket_parity, find_parity_opportunities
-from weather_edge.analysis.claude_reasoning import analyze_trade, ANTHROPIC_API_KEY
+from weather_edge.analysis.claude_reasoning import analyze_trade, record_decision, ANTHROPIC_API_KEY
 from weather_edge.analysis.pattern_detector import detect_patterns, get_pattern_adjustment
 from weather_edge.analysis.consensus import compute_consensus, get_probability_for_threshold
 from weather_edge.analysis.edge import Signal, calculate_edge
@@ -234,6 +234,9 @@ async def run_cycle(
                 signal, model_vals, consensus_mean, consensus_std,
             )
             if reasoning:
+                # Record every decision for the AI Decisions dashboard tab
+                record_decision(reasoning)
+
                 if not reasoning.should_trade:
                     logger.info("CLAUDE SKIP: %s %s, %s", signal.city_id, signal.description[:40], reasoning.rationale)
                     signal.confidence_tier = signal.confidence_tier  # Keep as-is but don't trade

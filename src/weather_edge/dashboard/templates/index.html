@@ -1520,6 +1520,99 @@
             flex-shrink: 0;
         }
 
+        /* ---- AI DECISIONS TABLE ---- */
+        .ai-decisions-table-wrap {
+            overflow-y: auto;
+            flex: 1;
+        }
+        .ai-decisions-header, .ai-decisions-row {
+            display: grid;
+            grid-template-columns: 65px 42px 68px minmax(100px, 1fr) 68px minmax(120px, 2fr) minmax(100px, 1.5fr);
+            gap: 6px;
+            padding: 5px 8px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 10px;
+            align-items: start;
+        }
+        .ai-decisions-header {
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.8px;
+            border-bottom: 1px solid var(--border);
+            position: sticky;
+            top: 0;
+            background: var(--bg-panel);
+            z-index: 2;
+            user-select: none;
+        }
+        .ai-decisions-row {
+            border-bottom: 1px solid var(--border-subtle);
+            color: var(--text);
+            transition: background var(--transition-fast);
+        }
+        .ai-decisions-row:hover {
+            background: var(--bg-card);
+        }
+        .ai-badge {
+            display: inline-block;
+            padding: 1px 6px;
+            border-radius: 3px;
+            font-size: 9px;
+            font-weight: 700;
+            letter-spacing: 0.5px;
+        }
+        .ai-badge-trade {
+            background: var(--green-dim);
+            color: var(--green);
+            border: 1px solid rgba(34, 197, 94, 0.3);
+        }
+        .ai-badge-skip {
+            background: var(--red-dim);
+            color: var(--red);
+            border: 1px solid rgba(239, 68, 68, 0.3);
+        }
+        .ai-adjustment {
+            font-weight: 600;
+        }
+        .ai-risk-tag {
+            display: inline-block;
+            padding: 1px 5px;
+            margin: 1px 2px;
+            border-radius: 3px;
+            font-size: 9px;
+            background: var(--yellow-dim);
+            color: var(--yellow);
+            border: 1px solid rgba(234, 179, 8, 0.2);
+        }
+        .ai-decisions-stats {
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+            margin-bottom: 12px;
+        }
+        .ai-stat-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 10px 14px;
+            text-align: center;
+            min-width: 100px;
+            flex: 1;
+        }
+        .ai-stat-value {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 18px;
+            font-weight: 700;
+        }
+        .ai-stat-label {
+            font-size: 9px;
+            font-weight: 600;
+            color: var(--text-dim);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-top: 2px;
+        }
+
         /* ---- KEYBOARD HELP OVERLAY ---- */
         .kbd-overlay {
             display: none;
@@ -1866,6 +1959,9 @@
 
         <!-- Tab 9: Execution Analytics -->
         <div class="tab-content" id="tabExecution" style="padding: 16px; flex-direction: column; overflow-y: auto;"></div>
+
+        <!-- Tab 10: AI Decisions -->
+        <div class="tab-content" id="tabAIDecisions" style="padding: 16px; flex-direction: column; overflow-y: auto;"></div>
     </div>
 
     <!-- ======== TRADE DRILL-DOWN MODAL ======== -->
@@ -2067,7 +2163,8 @@
             { id: 'tabWeather', label: 'Weather', badge: '0' },
             { id: 'tabBacktest', label: 'Backtest', badge: null },
             { id: 'tabCorrelation', label: 'Correlation', badge: null },
-            { id: 'tabExecution', label: 'Execution', badge: null }
+            { id: 'tabExecution', label: 'Execution', badge: null },
+            { id: 'tabAIDecisions', label: 'AI Decisions', badge: '0' }
         ];
         var activeTab = 'tabTradeLog';
 
@@ -2115,6 +2212,7 @@
             if (tabId === 'tabBacktest') renderBacktest();
             if (tabId === 'tabCorrelation') renderCorrelation();
             if (tabId === 'tabExecution') renderExecution();
+            if (tabId === 'tabAIDecisions') renderAIDecisions();
         }
 
         buildTabBar();
@@ -2284,12 +2382,20 @@
             if (activeTab === 'tabWeather') renderWeatherAlerts();
             if (activeTab === 'tabCorrelation') renderCorrelation();
             if (activeTab === 'tabExecution') renderExecution();
+            if (activeTab === 'tabAIDecisions') renderAIDecisions();
 
             /* Update weather alerts badge */
             var wxBadge = document.getElementById('tabBadge_tabWeather');
             if (wxBadge) {
                 var wxCount = (state.weather_alerts || []).length;
                 wxBadge.textContent = String(wxCount);
+            }
+
+            /* Update AI decisions badge */
+            var aiBadge = document.getElementById('tabBadge_tabAIDecisions');
+            if (aiBadge) {
+                var aiCount = (state.claude_decisions || []).length;
+                aiBadge.textContent = String(aiCount);
             }
 
             prevState = state;
@@ -4156,7 +4262,164 @@
         }
 
         /* ================================================================
-         *  KEYBOARD SHORTCUTS (#10)
+         *  AI DECISIONS TAB (#10)
+         * ================================================================ */
+        function renderAIDecisions() {
+            var pane = document.getElementById('tabAIDecisions');
+            while (pane.firstChild) pane.removeChild(pane.firstChild);
+
+            var title = el('div', 'panel-title', 'AI Decisions');
+            title.style.marginBottom = '8px';
+            pane.appendChild(title);
+
+            var decisions = (prevState.claude_decisions || []);
+
+            if (decisions.length === 0) {
+                var empty = el('div');
+                empty.textContent = 'No AI decisions yet. Claude analyses the top signals each cycle when an API key is configured.';
+                setStyle(empty, { color: 'var(--text-muted)', padding: '20px', textAlign: 'center', fontSize: '12px' });
+                pane.appendChild(empty);
+                return;
+            }
+
+            /* Summary stats */
+            var tradeCount = 0;
+            var skipCount = 0;
+            var totalAdj = 0;
+            var adjCount = 0;
+            var riskSet = {};
+            for (var si = 0; si < decisions.length; si++) {
+                var d = decisions[si];
+                if (d.decision === 'TRADE') tradeCount++;
+                else skipCount++;
+                if (d.adjustment != null) {
+                    totalAdj += d.adjustment;
+                    adjCount++;
+                }
+                var rfs = d.risk_factors || [];
+                for (var ri = 0; ri < rfs.length; ri++) {
+                    riskSet[rfs[ri]] = (riskSet[rfs[ri]] || 0) + 1;
+                }
+            }
+            var avgAdj = adjCount > 0 ? (totalAdj / adjCount) : 1.0;
+            var tradeRate = decisions.length > 0 ? ((tradeCount / decisions.length) * 100) : 0;
+
+            /* Top risk factors */
+            var riskEntries = [];
+            for (var rk in riskSet) {
+                if (riskSet.hasOwnProperty(rk)) {
+                    riskEntries.push({ name: rk, count: riskSet[rk] });
+                }
+            }
+            riskEntries.sort(function(a, b) { return b.count - a.count; });
+
+            var stats = el('div', 'ai-decisions-stats');
+
+            var statDefs = [
+                { label: 'Decisions', value: String(decisions.length), color: 'var(--cyan)' },
+                { label: 'Trade', value: String(tradeCount), color: 'var(--green)' },
+                { label: 'Skip', value: String(skipCount), color: 'var(--red)' },
+                { label: 'Trade Rate', value: tradeRate.toFixed(0) + '%', color: tradeRate >= 50 ? 'var(--green)' : 'var(--yellow)' },
+                { label: 'Avg Adjust', value: avgAdj.toFixed(2) + 'x', color: avgAdj >= 1.0 ? 'var(--green)' : 'var(--red)' }
+            ];
+
+            statDefs.forEach(function(s) {
+                var card = el('div', 'ai-stat-card');
+                var val = el('div', 'ai-stat-value', s.value);
+                val.style.color = s.color;
+                var lbl = el('div', 'ai-stat-label', s.label);
+                card.appendChild(val);
+                card.appendChild(lbl);
+                stats.appendChild(card);
+            });
+
+            /* Top risks card */
+            if (riskEntries.length > 0) {
+                var riskCard = el('div', 'ai-stat-card');
+                riskCard.style.minWidth = '180px';
+                var riskTitle = el('div', 'ai-stat-label', 'Top Risks');
+                riskTitle.style.marginBottom = '4px';
+                riskCard.appendChild(riskTitle);
+                var topRisks = riskEntries.slice(0, 3);
+                topRisks.forEach(function(r) {
+                    var tag = el('span', 'ai-risk-tag', r.name + ' (' + r.count + ')');
+                    riskCard.appendChild(tag);
+                });
+                stats.appendChild(riskCard);
+            }
+
+            pane.appendChild(stats);
+
+            /* Table */
+            var tableWrap = el('div', 'ai-decisions-table-wrap');
+
+            var header = el('div', 'ai-decisions-header');
+            var cols = ['Time', 'City', 'Decision', 'Signal', 'Adjust', 'Rationale', 'Risk Factors'];
+            cols.forEach(function(c) {
+                var hCell = el('span', null, c);
+                header.appendChild(hCell);
+            });
+            tableWrap.appendChild(header);
+
+            decisions.forEach(function(d) {
+                var row = el('div', 'ai-decisions-row');
+
+                var timeCell = el('span', null, d.time || '--');
+
+                var cityCell = el('span', null, d.city || '--');
+                cityCell.style.fontWeight = '600';
+                cityCell.style.color = 'var(--text-bright)';
+
+                var decisionCell = el('span');
+                var badge = el('span', 'ai-badge ' + (d.decision === 'TRADE' ? 'ai-badge-trade' : 'ai-badge-skip'), d.decision);
+                decisionCell.appendChild(badge);
+
+                var signalCell = el('span', null, d.signal || '--');
+                signalCell.style.color = 'var(--text-dim)';
+
+                var adjCell = el('span', 'ai-adjustment');
+                var adjVal = d.adjustment != null ? d.adjustment : 1.0;
+                adjCell.textContent = adjVal.toFixed(2) + 'x';
+                if (adjVal > 1.0) {
+                    adjCell.style.color = 'var(--green)';
+                } else if (adjVal < 1.0) {
+                    adjCell.style.color = 'var(--red)';
+                } else {
+                    adjCell.style.color = 'var(--text-dim)';
+                }
+
+                var rationaleCell = el('span', null, d.rationale || '--');
+                rationaleCell.style.color = 'var(--text)';
+                rationaleCell.style.lineHeight = '1.4';
+
+                var riskCell = el('span');
+                var risks = d.risk_factors || [];
+                if (risks.length === 0) {
+                    riskCell.textContent = '--';
+                    riskCell.style.color = 'var(--text-muted)';
+                } else {
+                    risks.forEach(function(r) {
+                        var tag = el('span', 'ai-risk-tag', r);
+                        riskCell.appendChild(tag);
+                    });
+                }
+
+                row.appendChild(timeCell);
+                row.appendChild(cityCell);
+                row.appendChild(decisionCell);
+                row.appendChild(signalCell);
+                row.appendChild(adjCell);
+                row.appendChild(rationaleCell);
+                row.appendChild(riskCell);
+
+                tableWrap.appendChild(row);
+            });
+
+            pane.appendChild(tableWrap);
+        }
+
+        /* ================================================================
+         *  KEYBOARD SHORTCUTS (#11)
          * ================================================================ */
         var SHORTCUTS = [
             { key: 'S', desc: 'Start trading' },
@@ -4166,7 +4429,7 @@
             { key: 'R', desc: 'Refresh data' },
             { key: 'Esc', desc: 'Close modal/overlay' },
             { key: '?', desc: 'Toggle this help' },
-            { key: '1-9', desc: 'Switch to tab 1-9' },
+            { key: '1-0', desc: 'Switch to tab 1-10' },
             { key: '\u2191 / \u2193', desc: 'Navigate city list' }
         ];
 
@@ -4222,13 +4485,18 @@
                 return;
             }
 
-            /* Tab switching with number keys */
+            /* Tab switching with number keys (1-9 and 0 for tab 10) */
             if (key >= '1' && key <= '9') {
                 var idx = parseInt(key) - 1;
                 if (idx < TAB_CONFIG.length) {
                     e.preventDefault();
                     switchTab(TAB_CONFIG[idx].id);
                 }
+                return;
+            }
+            if (key === '0' && TAB_CONFIG.length >= 10) {
+                e.preventDefault();
+                switchTab(TAB_CONFIG[9].id);
                 return;
             }
 
