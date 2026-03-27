@@ -142,8 +142,14 @@ def _compute_resolution_time(trade) -> tuple[str | None, str]:
 
 
 async def broadcast(data: dict) -> None:
-    """Send state update to all connected WebSocket clients."""
+    """Send state update to all connected WebSocket clients + cache in Redis."""
     msg = json.dumps(data, default=str)
+    # Cache in Redis for instant /api/state responses
+    try:
+        from weather_edge.live_state import cache_dashboard_state
+        cache_dashboard_state(data)
+    except Exception:
+        pass
     disconnected = []
     for ws in connected_websockets:
         try:
@@ -383,6 +389,14 @@ async def index():
 
 @app.get("/api/state")
 async def api_state():
+    # Try Redis cache first (faster, avoids Python dict serialization)
+    try:
+        from weather_edge.live_state import get_cached_dashboard_state
+        cached = get_cached_dashboard_state()
+        if cached:
+            return cached
+    except Exception:
+        pass
     return latest_state
 
 

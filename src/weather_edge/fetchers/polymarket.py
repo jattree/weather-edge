@@ -515,4 +515,11 @@ async def fetch_book_prices(market: "MarketInfo") -> dict | None:
         result["spread_profit"] = None
         result["profitable"] = False
 
+    # Cache book data in Redis for dashboard and heartbeat tracking
+    try:
+        from weather_edge.live_state import update_book
+        update_book(market.market_id, result)
+    except Exception:
+        pass
+
     return result
