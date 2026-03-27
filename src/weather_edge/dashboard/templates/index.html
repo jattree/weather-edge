@@ -4565,7 +4565,7 @@
         });
 
         document.getElementById('newSessionBtn').addEventListener('click', function() {
-            if (!confirm('Reset everything and start a new $1,000 session?')) return;
+            if (!confirm('Reset everything and start a new session? All trade history will be archived.')) return;
             fetch('/api/new-session', {method: 'POST'}).then(function(r) { return r.json(); }).then(function(d) {
                 console.log('New session:', d);
                 allTrades = [];
