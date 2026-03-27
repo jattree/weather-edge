@@ -18,9 +18,11 @@ Inspired by [@ColdMath's Claude Trader](https://polymarket.com/profile/@ColdMath
 10. Calculates edge (model probability vs market price) with quarter-Kelly sizing
 11. Runs three-pool strategy: 60% today / 30% tomorrow / 10% penny (Gemini-validated allocation)
 12. Generates spread capture hedge orders (buy opposite side for merge profit)
-13. Snipes model drops, 30-second probes detect ECMWF/GFS/HRRR updates, trades before market adjusts
-14. Auto-resolves trades against Polymarket outcomes and NWS observations with countdown timers
-15. Persists all trades to SQLite (survives restarts)
+13. **Early exit monitor**, scans open positions each cycle for edge inversion (>7%), profit cap (88%+), pattern bust. Claude + Gemini review before closing. Penny bets never exit.
+14. Snipes model drops, 3-minute hash-based probes detect ECMWF/GFS/HRRR updates, trades before market adjusts
+15. Auto-resolves trades against Polymarket outcomes and Open-Meteo archive observations (free tier)
+16. Persists all trades to SQLite (survives restarts)
+17. **Contract-first runtime validation**, 7 pure validation functions catch silent failures before capital deploys
 
 ## Production Deployment
 
@@ -37,8 +39,8 @@ The system runs on **hf-toybox-001** (Rocky Linux 9.7):
 From your dev machine, push to GitLab then deploy:
 
 ```bash
-git push origin feature/ui-redesign
-ssh root@10.30.20.200 "su - weather -c '/home/weather/deploy.sh'"
+git push origin main
+ssh root@10.30.20.200 "cd /home/weather/weather-edge && sudo -u weather git pull && systemctl restart weather-edge"
 ```
 
 Or SSH directly:
@@ -71,7 +73,7 @@ journalctl -u weather-edge --since '1 hour ago'  # Recent logs
 | Timezone | UTC |
 | App user | `weather` (restricted) |
 | Repo | `/home/weather/weather-edge` |
-| Branch | `feature/ui-redesign` |
+| Branch | `main` |
 | DB | `/home/weather/weather-edge/weather_edge.db` (SQLite) |
 | Config | `/home/weather/weather-edge/.env` |
 | Service | `/etc/systemd/system/weather-edge.service` |
@@ -83,7 +85,6 @@ journalctl -u weather-edge --since '1 hour ago'  # Recent logs
 ```bash
 git clone git@gitlab.hulofuse.com:trading/weather-edge.git
 cd weather-edge
-git checkout feature/ui-redesign
 python3.11 -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev,dashboard]"
@@ -103,8 +104,7 @@ API keys needed for full functionality (set in `.env`):
 
 - **URL**: https://gitlab.hulofuse.com:9443/trading/weather-edge
 - **Group**: trading
-- **Branch**: `feature/ui-redesign` (active development)
-- **Main**: protected (merge via MR)
+- **Branch**: `main` (production)
 
 ## Architecture
 
@@ -143,7 +143,11 @@ Open-Meteo (6-8 models/city)
         v
   Web Dashboard (FastAPI + WebSocket + 10 Bloomberg tabs)
         |
-  Model-Drop Sniper (probes every 30s)
+  Model-Drop Sniper (probes every 3min, hash-based dedup)
+        |
+  Early Exit Monitor (edge inversion, profit cap, AI-reviewed)
+        |
+  Contract Validation (7 runtime checks, EMOS, budgets, model count)
 ```
 
 ## Cities (21)
@@ -237,11 +241,26 @@ Two AI models argue about every trade before capital is deployed:
 - Cost: ~$0.10/day
 
 ### Decision Flow
-1. Model math finds edge → 2. Claude approves/skips → 3. Gemini red-teams approved trades → 4. Size adjusted by both AI confidence levels → 5. Trade placed
+1. Model math finds edge → 2. Claude approves/skips → 3. Gemini red-teams approved trades → 4. Size adjusted by both AI confidence levels → 5. Contract validation → 6. Trade placed
+
+AI reasoning only runs on main 30-min cycles (not sniper-triggered) to save API costs (~$0.80/day total).
 
 All decisions logged to the **AI Decisions** dashboard tab with source (Claude/Gemini), rationale, and risk factors.
 
 Set `ANTHROPIC_API_KEY` and `GEMINI_API_KEY` in `.env` to enable. System works without them but loses the AI reasoning layers.
+
+## Early Exit Monitor
+
+Scans open positions each cycle for AI-reviewed early exits:
+
+| Trigger | Condition | Action |
+|---------|-----------|--------|
+| Edge inversion | Model prob flipped >7% against us | Claude confirms → Gemini argues hold → EXIT if both agree |
+| Profit cap | Market price >88% and model <94% | Lock in ~80% of max payout |
+| Pattern bust | Detected pattern invalidated | Aggressive exit |
+| Penny bets | Entry <= $0.06 | **NEVER exit**, hold to 0 or 1 |
+
+10% reserve pot ($200 on $2K bankroll) is kept uncommitted for HIGH-tier signals only.
 
 ## Auto-Resolution
 
@@ -269,7 +288,7 @@ Resolution timing (after target date midnight local time + 2h NWS buffer):
 | Trade Log | Live trades with pool tags, resolution countdown, session P&L sidebar, market calendar |
 | Blotter | Full trade history, sortable columns, filters (All/Open/Won/Lost/Core/Tail), CSV export |
 | Risk / P&L | Canvas equity curve (1H/6H/1D/1W/ALL), Sharpe ratio, max drawdown, win rate by city |
-| Heat Map | 21-city edge color grid + market calendar with per-pool resolution countdown |
+| Heat Map | 21-city edge color grid + market volume by city + calendar with per-pool resolution countdown |
 | Alerts | System activity feed (trades, sniper events, pattern detections, cycle completions) |
 | Weather | Live NWS alerts (US) + synthetic alerts from forecast cache (international, zero API calls) |
 | Backtest | 7-day historical backtest via Open-Meteo archive, on-demand |
@@ -279,7 +298,7 @@ Resolution timing (after target date midnight local time + 2h NWS buffer):
 
 ### Dashboard Controls
 
-- **START**, Begin automated trading (15-min cycles + 30-sec sniper probes)
+- **START**, Begin automated trading (30-min cycles + 3-min sniper probes)
 - **STOP**, Pause trading, keep positions open
 - **CLOSE ALL**, Sell profitable positions, hold losers to resolution (confirmation required)
 - **NEW SESSION**, Archive and reset (confirmation required)
@@ -324,6 +343,47 @@ Tracks public Polymarket profiles of known weather traders each cycle:
 - **Execution analytics**, Position sizing, edge distribution, capital utilization metrics
 - **Bloomberg-grade dashboard**, 10 functional tabs, draggable splitter, keyboard shortcuts, CSV export
 - **Draggable splitter**, Resize top/bottom panes, position persists in localStorage
+- **Early exit monitor**, AI-reviewed exits on edge inversion, profit cap, pattern bust
+- **Contract validation**, 7 runtime checks prevent silent failures (EMOS disabled, budget exceeded, etc.)
+- **Market volume**, 24h volume per city on Heat Map tab for liquidity assessment
+- **Race condition protection**, asyncio.Lock prevents concurrent cycles from corrupting state
+
+## Testing
+
+Contract-first methodology: "If this broke silently in production, would we know, and would we care?"
+
+```bash
+# Run all tests (57 tests)
+.venv/bin/python -m pytest tests/ -v
+
+# Contract tests only (fast, run by pre-commit hook)
+.venv/bin/python -m pytest tests/test_contracts.py -v
+
+# Property-based tests (requires hypothesis)
+.venv/bin/pip install hypothesis
+.venv/bin/python -m pytest tests/test_edge_math.py -v
+
+# Lint
+.venv/bin/ruff check src/weather_edge/
+```
+
+### Runtime Contracts (7)
+
+| Contract | What it catches | Wired into |
+|----------|----------------|------------|
+| `validate_emos_active` | EMOS calibration disabled (fake 86% edges) | Scheduler cycle start |
+| `validate_pool_budget` | Capital at risk exceeds bankroll | PaperTrader.should_trade() |
+| `validate_reserve_pot` | Reserve pot (10%) depleted for non-HIGH signals | PaperTrader.should_trade() |
+| `validate_penny_no_exit` | Penny bets flagged for early exit | ExitMonitor.scan_for_exits() |
+| `validate_ai_keys_present` | AI keys empty (silent reasoning skip) | Module load (warning) |
+| `validate_model_count` | Consensus from <4 models (unreliable) | Scheduler after forecast fetch |
+| `validate_spread_uses_asks` | Spread profit from midpoints not asks | Spread capture detection |
+
+### Pre-commit Hook
+
+Runs automatically on every `git commit`:
+1. `ruff check`, catches syntax errors and undefined names
+2. `pytest tests/test_contracts.py`, validates all 7 business rule contracts
 
 ## Configuration
 
@@ -338,7 +398,7 @@ POOL_TOMORROW_PCT=0.30       # 30% tomorrow pool
 POOL_PENNY_PCT=0.10          # 10% penny pool
 PENNY_MIN_POSITION=10.0      # Min $10 per penny bet
 PENNY_MAX_POSITION=20.0      # Max $20 per penny bet
-FETCH_INTERVAL_MINUTES=15    # Main cycle interval
+FETCH_INTERVAL_MINUTES=30    # Main cycle interval (sniper probes every 3min)
 ANTHROPIC_API_KEY=sk-ant-... # Claude reasoning (optional)
 GEMINI_API_KEY=AIza...       # Gemini red team (optional)
 OPENMETEO_API_KEY=...        # Customer tier (optional, uses free tier without)
@@ -379,6 +439,8 @@ src/weather_edge/
     backtester.py        # Historical backtest engine
     correlation_matrix.py # City forecast correlation
     execution_analytics.py # Trading metrics and distributions
+    exit_monitor.py      # AI-reviewed early exit (edge inversion, profit cap)
+    contracts.py         # 7 pure validation functions (runtime contract checks)
   trading/
     paper.py             # Paper trader with three-pool split + spread trades + smart close
     executor.py          # Real Polymarket CLOB execution (limit orders, dry-run mode)
@@ -388,6 +450,9 @@ src/weather_edge/
     templates/
       index.html         # Bloomberg-grade dashboard (3,300+ lines)
     static/              # Static assets
+tests/
+  test_contracts.py      # 40 exhaustive tests for 7 validation contracts
+  test_edge_math.py      # Property-based tests (hypothesis) for Kelly, EMOS, budgets
 scripts/
   build_bias_table.py    # Re-run monthly to refresh bias corrections
 sql/
