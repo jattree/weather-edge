@@ -445,13 +445,16 @@ async def run_cycle(
             continue
 
         trade = paper_trader.place_trade(signal)
-        # Generate hedge/spread order only when book shows real profit
+        # Generate hedge/spread order only for core trades (not penny bets)
+        # Penny bets at 0.1-5c: max loss is the entry cost, hedging is wasteful
         if trade:
-            prices = market_prices.get(signal.market_id, {})
-            if prices.get("spread_profitable"):
-                hedge = market_maker.generate_hedge_orders(signal, market_prices, settings.bankroll)
-                if hedge:
-                    paper_trader.place_spread_trade(signal, hedge)
+            strategy = getattr(signal, "strategy", "core")
+            if strategy != "tail":
+                prices = market_prices.get(signal.market_id, {})
+                if prices.get("spread_profitable"):
+                    hedge = market_maker.generate_hedge_orders(signal, market_prices, settings.bankroll)
+                    if hedge:
+                        paper_trader.place_spread_trade(signal, hedge)
 
     # Log spread capture summary
     spread_summary = market_maker.simulate_spread_pnl()

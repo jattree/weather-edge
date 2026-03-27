@@ -65,6 +65,10 @@ CITY_CLIMATOLOGY = {
     "szn": (23.0, 3.0),   # Shenzhen
     # South America
     "bue": (25.0, 3.5),   # Buenos Aires (southern hemisphere autumn)
+    # Oceania
+    "wlg": (17.0, 3.0),   # Wellington, maritime, windy, moderate
+    # South Asia
+    "lko": (32.0, 4.0),   # Lucknow, hot, March is pre-monsoon transition
 }
 
 # Fallback for unknown cities
