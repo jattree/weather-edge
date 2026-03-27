@@ -18,6 +18,8 @@ dependencies = [
     "rich>=13.7",
     "apscheduler>=3.10",
     "python-dateutil>=2.8",
+    "redis>=5.0",
+    "hiredis>=3.0",
 ]
 
 [project.optional-dependencies]
