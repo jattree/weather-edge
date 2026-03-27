@@ -239,6 +239,23 @@ async def run_cycle(
             if consensus is None:
                 continue
 
+            # Track forecast trends (run-to-run consistency)
+            trend_mult = 1.0
+            try:
+                from weather_edge.analysis.forecast_trends import record_forecast, compute_trend
+                if variable == "temp_max_c":
+                    record_forecast(city_id.value, consensus.weighted_mean)
+                    trend = compute_trend(city_id.value, consensus.weighted_mean)
+                    trend_mult = trend.confidence_multiplier
+                    if trend.signal not in ("stable", "insufficient_data"):
+                        logger.info(
+                            "  %s TREND: %s (%.2f°C/cycle, stability=%.1f) → conf ×%.2f",
+                            city_id.value, trend.signal, trend.trend_per_cycle,
+                            trend.stability, trend_mult,
+                        )
+            except Exception:
+                pass
+
             logger.info(
                 "  %s/%s: mean=%.1f°C std=%.1f conf=%.0f%% (%d models)",
                 city_id.value, variable,
@@ -268,8 +285,8 @@ async def run_cycle(
                 ).replace(tzinfo=timezone.utc)
                 hours_to = max(0, (resolution_dt - now).total_seconds() / 3600)
 
-                # Apply pattern-based confidence boost
-                adjusted_conf = min(1.0, consensus.confidence * pattern_conf_mult)
+                # Apply pattern-based confidence boost + forecast trend stability
+                adjusted_conf = min(1.0, consensus.confidence * pattern_conf_mult * trend_mult)
 
                 # Apply AI vs physics divergence (GraphCast comparison)
                 ai_fc = ai_forecasts.get(city_id.value)
