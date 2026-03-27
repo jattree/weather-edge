@@ -290,5 +290,9 @@ class Settings(BaseSettings):
     polymarket_gamma_url: str = "https://gamma-api.polymarket.com"
     polymarket_clob_url: str = "https://clob.polymarket.com"
 
+    # Open-Meteo tier, set True after subscribing to paid tier ($30/month)
+    # Paid tier: 600 req/min, no inter-request delay, parallel model fetches
+    openmeteo_paid_tier: bool = False
+
 
 settings = Settings()

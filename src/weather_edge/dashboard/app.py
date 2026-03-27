@@ -315,7 +315,7 @@ async def background_loop() -> None:
 
 
 async def sniper_loop() -> None:
-    """Sniper runs independently, probes every 2 min even when trading is active."""
+    """Sniper runs independently, lightweight metadata probes every 60s."""
     # Wire the sniper callback to trigger a full dashboard cycle
     async def snipe_trigger():
         if trading_active:
@@ -323,7 +323,7 @@ async def sniper_loop() -> None:
             await run_dashboard_cycle()
 
     sniper.set_callback(snipe_trigger)
-    await sniper.run_sniper_loop(poll_interval_seconds=120)
+    await sniper.run_sniper_loop(poll_interval_seconds=60)
 
 
 @app.on_event("startup")
