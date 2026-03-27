@@ -47,6 +47,7 @@ paper_trader = PersistentPaperTrader(bankroll=settings.bankroll)
 sniper = ModelSniper()
 competitor_tracker = CompetitorTracker()
 trading_active = False  # Must click START to begin
+_cycle_lock = asyncio.Lock()  # Prevent concurrent cycles from corrupting state
 latest_state: dict = {
     "cities": {},
     "signals": [],
@@ -158,6 +159,16 @@ async def run_dashboard_cycle(run_ai: bool = True) -> None:
     Args:
         run_ai: If True, run Claude + Gemini reasoning. False for sniper-triggered cycles.
     """
+    # Prevent concurrent cycles from corrupting paper_trader state
+    if _cycle_lock.locked():
+        logger.info("Cycle already running, skipping this trigger")
+        return
+    async with _cycle_lock:
+        await _run_dashboard_cycle_inner(run_ai)
+
+
+async def _run_dashboard_cycle_inner(run_ai: bool = True) -> None:
+    """Inner cycle logic, always called under _cycle_lock."""
     global latest_state
 
     from weather_edge.analysis.consensus import compute_consensus

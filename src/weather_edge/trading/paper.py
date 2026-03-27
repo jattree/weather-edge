@@ -5,6 +5,7 @@ import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
+from weather_edge.analysis.contracts import validate_pool_budget, validate_reserve_pot
 from weather_edge.analysis.edge import Signal
 from weather_edge.models.enums import SignalTier, TradeStatus
 
@@ -75,8 +76,9 @@ class PaperTrader:
 
     @property
     def available_capital(self) -> float:
-        """Capital remaining to deploy (bankroll - at risk + resolved P&L)."""
-        return self.bankroll - self.capital_at_risk + self.total_pnl
+        """Capital remaining to deploy. Capped at bankroll, profits don't inflate deployment capacity."""
+        raw = self.bankroll - self.capital_at_risk + self.total_pnl
+        return min(raw, self.bankroll - self.capital_at_risk)
 
     @property
     def today_budget(self) -> float:
@@ -112,6 +114,12 @@ class PaperTrader:
         if signal.recommended_size <= 0:
             return False
 
+        # Contract: total capital at risk must not exceed bankroll
+        budget_check = validate_pool_budget(self.capital_at_risk, self.bankroll)
+        if not budget_check.valid:
+            logger.warning("CONTRACT [%s]: %s", budget_check.code, budget_check.error)
+            return False
+
         # Enforce three-pool budgets
         strategy = getattr(signal, "strategy", "core")
         if strategy == "tail":
@@ -120,10 +128,19 @@ class PaperTrader:
             # Core bets: check today + tomorrow combined budget
             remaining = self.core_budget - self.core_at_risk
 
-        # Reserve: keep 10% of bankroll uncommitted unless this is HIGH tier
-        reserve = self.bankroll * self.RESERVE_PCT
+        # Contract: reserve pot check (replaces ad-hoc reserve logic)
+        tier_name = signal.confidence_tier.value
+        reserve_check = validate_reserve_pot(
+            self.available_capital, self.bankroll, self.RESERVE_PCT, tier_name
+        )
         available = self.available_capital
+        if not reserve_check.valid:
+            logger.warning("CONTRACT [%s]: %s", reserve_check.code, reserve_check.error)
+            available = 0
+
+        # Reserve: keep 10% of bankroll uncommitted unless this is HIGH tier
         if signal.confidence_tier != SignalTier.HIGH:
+            reserve = self.bankroll * self.RESERVE_PCT
             available = max(0, available - reserve)
 
         remaining = min(remaining, available)
@@ -237,31 +254,51 @@ class PaperTrader:
                 # Both sides together always pay $1, so profit = shares - total_cost
                 total_cost = trade.entry_price + paired.entry_price
                 if total_cost < 1.0:
-                    # Guaranteed spread profit
-                    shares = min(trade.size_usd / trade.entry_price, paired.size_usd / paired.entry_price)
-                    trade.pnl = (1.0 - total_cost) * shares / 2  # Split credit between both legs
+                    # Guaranteed spread profit, split evenly between both legs
+                    shares = min(trade.size_usd / trade.entry_price if trade.entry_price > 0 else 0,
+                                 paired.size_usd / paired.entry_price if paired.entry_price > 0 else 0)
+                    total_profit = (1.0 - total_cost) * shares
+                    half_profit = total_profit / 2
+
+                    trade.pnl = half_profit
                     trade.status = TradeStatus.WON
                     trade.exit_price = 1.0
+
+                    # Also update the paired trade so full P&L is captured
+                    paired.pnl = half_profit
+                    paired.status = TradeStatus.WON
+                    paired.exit_price = 1.0
+                    paired.resolved_at = trade.resolved_at
+
                     logger.info(
                         "MERGE SIM: %s %s, spread profit $%.2f (cost %.2f + %.2f = %.2f < $1)",
                         trade.city_id, trade.market_id[:20],
-                        trade.pnl * 2, trade.entry_price, paired.entry_price, total_cost,
+                        total_profit, trade.entry_price, paired.entry_price, total_cost,
                     )
                     return
 
         if trade.side == "YES":
+            # YES trade: paid entry_price per share, shares = size_usd / entry_price
+            shares = trade.size_usd / trade.entry_price if trade.entry_price > 0 else 0
             if outcome_yes:
-                trade.pnl = (1.0 - trade.entry_price) * trade.size_usd
+                # Win: each share pays $1, profit = shares - cost
+                trade.pnl = shares - trade.size_usd
                 trade.status = TradeStatus.WON
             else:
-                trade.pnl = -trade.entry_price * trade.size_usd
+                # Lose: shares worth $0, lose entire cost
+                trade.pnl = -trade.size_usd
                 trade.status = TradeStatus.LOST
         else:  # NO
+            # NO trade: paid (1 - entry_price) per share, shares = size_usd / (1 - entry_price)
+            no_price = 1.0 - trade.entry_price
+            shares = trade.size_usd / no_price if no_price > 0 else 0
             if not outcome_yes:
-                trade.pnl = trade.entry_price * trade.size_usd
+                # Win: each share pays $1, profit = shares - cost
+                trade.pnl = shares - trade.size_usd
                 trade.status = TradeStatus.WON
             else:
-                trade.pnl = -(1.0 - trade.entry_price) * trade.size_usd
+                # Lose: shares worth $0, lose entire cost
+                trade.pnl = -trade.size_usd
                 trade.status = TradeStatus.LOST
 
         trade.exit_price = 1.0 if outcome_yes else 0.0
@@ -284,11 +321,15 @@ class PaperTrader:
 
         # Calculate what P&L would be if we close now
         if trade.side == "YES":
-            potential_pnl = (current_price - trade.entry_price) * trade.size_usd
+            # Shares = size / entry_price. Sell at current_price.
+            shares = trade.size_usd / trade.entry_price if trade.entry_price > 0 else 0
+            potential_pnl = (current_price - trade.entry_price) * shares
         else:
+            # NO shares = size / (1 - entry_price). Sell at (1 - current_price).
             entry_no_price = 1.0 - trade.entry_price
             exit_no_price = 1.0 - current_price
-            potential_pnl = (exit_no_price - entry_no_price) * trade.size_usd
+            shares = trade.size_usd / entry_no_price if entry_no_price > 0 else 0
+            potential_pnl = (exit_no_price - entry_no_price) * shares
 
         # Only close if profitable or breakeven.
         # On losing positions, hold to resolution, downside is capped on binary markets.

@@ -37,6 +37,22 @@ def _get_gemini_key() -> str:
 
 GEMINI_API_KEY = _get_gemini_key()
 
+# Contract: warn at module load if AI keys are missing
+def _check_ai_keys_at_load() -> None:
+    from weather_edge.analysis.contracts import validate_ai_keys_present
+    anthropic_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    if not anthropic_key:
+        try:
+            from weather_edge.config import settings as _s
+            anthropic_key = getattr(_s, "anthropic_api_key", "")
+        except Exception:
+            pass
+    result = validate_ai_keys_present(anthropic_key, GEMINI_API_KEY)
+    if not result.valid:
+        logger.warning("CONTRACT [%s]: %s, AI reasoning will be degraded", result.code, result.error)
+
+_check_ai_keys_at_load()
+
 RED_TEAM_PROMPT = """You are a weather trading RED TEAM analyst. Your job is to find reasons NOT to take a trade that another analyst has approved.
 
 You receive a weather trading signal that has already been approved. Your task:

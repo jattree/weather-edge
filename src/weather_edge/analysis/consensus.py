@@ -224,7 +224,9 @@ def compute_consensus(
     if "temp" in variable:
         std_val = max(EMOS_VARIANCE_FLOOR_C, raw_std * SPREAD_INFLATION_FACTOR)
     else:
-        std_val = max(raw_std * 0.5, raw_std * SPREAD_INFLATION_FACTOR)
+        # Non-temp variables: apply inflation with a small floor to avoid zero-std step functions
+        NON_TEMP_VARIANCE_FLOOR = 0.5  # mm for precip, cm for snow
+        std_val = max(NON_TEMP_VARIANCE_FLOOR, raw_std * SPREAD_INFLATION_FACTOR)
 
     # Confidence: 1 - (std / normalization_range), clamped to [0, 1]
     norm_range = CONFIDENCE_NORMALIZATION.get(variable, 10.0)
