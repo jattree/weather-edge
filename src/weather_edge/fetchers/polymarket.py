@@ -117,6 +117,8 @@ class MarketInfo:
     no_price: float = 0.0
     resolution_source: str = "nws"
     slug: str = ""
+    volume_24h: float = 0.0
+    liquidity: float = 0.0
 
 
 @dataclass
@@ -375,6 +377,15 @@ async def discover_weather_markets(
 
                     parsed.description = question
                     parsed.slug = mkt.get("slug", "")
+                    # Volume and liquidity from Gamma API
+                    try:
+                        parsed.volume_24h = float(mkt.get("volumeNum") or mkt.get("volume") or 0)
+                    except (ValueError, TypeError):
+                        pass
+                    try:
+                        parsed.liquidity = float(mkt.get("liquidityNum") or mkt.get("liquidity") or 0)
+                    except (ValueError, TypeError):
+                        pass
                     markets.append(parsed)
 
             logger.info("Fetched %d events at offset %d, %d markets so far", len(events), offset, len(markets))

@@ -170,7 +170,7 @@ async def run_dashboard_cycle(run_ai: bool = True) -> None:
     await competitor_tracker.update_all()
 
     # Run the core cycle (fetches markets, forecasts, computes signals, places paper trades)
-    all_signals, forecast_cache = await run_cycle(paper_trader, target_dates, run_ai_reasoning=run_ai)
+    all_signals, forecast_cache, city_volume = await run_cycle(paper_trader, target_dates, run_ai_reasoning=run_ai)
 
     # Build city data from the forecast cache (no re-fetching!)
     city_data = {}
@@ -203,6 +203,12 @@ async def run_dashboard_cycle(run_ai: bool = True) -> None:
                     "mean": consensus.weighted_mean,
                     "confidence": consensus.confidence,
                 }
+
+        # Add volume data from market discovery
+        vol = city_volume.get(city_id.value, {})
+        city_info["volume_24h"] = vol.get("volume_24h", 0)
+        city_info["liquidity"] = vol.get("liquidity", 0)
+        city_info["market_count"] = vol.get("markets", 0)
 
         city_data[city_id.value] = city_info
 
