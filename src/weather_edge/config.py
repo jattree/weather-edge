@@ -273,7 +273,7 @@ class Settings(BaseSettings):
     min_confidence: float = 0.6
     kelly_fraction: float = 0.25
     max_position_pct: float = 0.03
-    fetch_interval_minutes: int = 30
+    fetch_interval_minutes: int = 15
 
     # Pool allocation (Gemini-validated 60/30/10 split)
     pool_today_pct: float = 0.60    # Same-day markets, recycles nightly

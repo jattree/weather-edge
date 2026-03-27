@@ -81,7 +81,7 @@ CITY_PRIORITY: list[City] = [
 
 # Seconds to wait after detecting new data before triggering cycle
 # Allows Open-Meteo's CDN cluster to reach consistency
-CLUSTER_CONSISTENCY_DELAY_SECONDS = 60
+CLUSTER_CONSISTENCY_DELAY_SECONDS = 30
 
 
 @dataclass
