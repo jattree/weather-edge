@@ -60,20 +60,24 @@ def compute_model_prob_for_market(market: MarketInfo, consensus) -> float | None
     # During extreme events (tight model agreement + anomalous temps), raise the cap
     if prob is not None and market.threshold_dir in ("range", "lte"):
         from weather_edge.analysis.consensus import (
-            MAX_BUCKET_PROBABILITY_EXTREME, CLIMATOLOGICAL_MEAN, CLIMATOLOGICAL_STD
+            MAX_BUCKET_PROBABILITY_EXTREME, CITY_CLIMATOLOGY, CLIMATOLOGICAL_MEAN, CLIMATOLOGICAL_STD
         )
         cap = MAX_BUCKET_PROBABILITY
         if consensus.std_dev < 1.5 and consensus.model_count >= 5:
-            # Models tightly clustered, check if this is an extreme event
-            clim_mean = CLIMATOLOGICAL_MEAN.get("temp_max_c", 20.0)
-            clim_std = CLIMATOLOGICAL_STD.get("temp_max_c", 8.0)
+            # Models tightly clustered, check if extreme for THIS city
+            city_key = market.city_id.value if market.city_id else ""
+            clim = CITY_CLIMATOLOGY.get(city_key)
+            if clim:
+                clim_mean, clim_std = clim
+            else:
+                clim_mean = CLIMATOLOGICAL_MEAN.get("temp_max_c", 15.0)
+                clim_std = CLIMATOLOGICAL_STD.get("temp_max_c", 6.0)
             anomaly = abs(consensus.weighted_mean - clim_mean) / clim_std if clim_std > 0 else 0
             if anomaly > 2.0:
                 cap = MAX_BUCKET_PROBABILITY_EXTREME
                 logger.info(
-                    "EXTREME EVENT: %s consensus=%.1f°C (%.1f sigma), std=%.1f, cap raised to %.0f%%",
-                    market.city_id.value if market.city_id else "?",
-                    consensus.weighted_mean, anomaly, consensus.std_dev, cap * 100,
+                    "EXTREME EVENT: %s consensus=%.1f°C (%.1f sigma from %.1f°C norm), std=%.1f, cap raised to %.0f%%",
+                    city_key, consensus.weighted_mean, anomaly, clim_mean, consensus.std_dev, cap * 100,
                 )
         prob = min(prob, cap)
 

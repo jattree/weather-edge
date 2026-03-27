@@ -35,14 +35,41 @@ MAX_BUCKET_PROBABILITY = 0.70
 # This catches heat domes, cold snaps, etc. where 80%+ on a bucket is genuine.
 MAX_BUCKET_PROBABILITY_EXTREME = 0.85
 
-# Approximate climatological means by variable (°C) for "extreme" detection
-# Used to determine if the consensus is anomalous, not for forecasting
-CLIMATOLOGICAL_MEAN = {
-    "temp_max_c": 20.0,  # Rough global average daily high
+# Per-city March climatological normals (°C) for extreme event detection.
+# A forecast is "extreme" when it's >2 sigma from that city's normal.
+# Source: approximate 30-year March daily high averages.
+CITY_CLIMATOLOGY = {
+    # US cities
+    "nyc": (12.0, 4.0),   # NYC March avg high 12°C, std 4°C
+    "chi": (8.0, 5.0),    # Chicago, volatile spring
+    "dal": (20.0, 5.0),   # Dallas
+    "hou": (22.0, 4.0),   # Houston
+    "atl": (18.0, 4.0),   # Atlanta
+    "mia": (28.0, 2.5),   # Miami, small variance, warm baseline
+    "den": (12.0, 6.0),   # Denver, Chinook swings
+    "sea": (11.0, 3.5),   # Seattle
+    "lax": (20.0, 3.0),   # LA
+    "sfo": (16.0, 3.0),   # SF
+    "aus": (21.0, 5.0),   # Austin
+    "tor": (5.0, 5.0),    # Toronto
+    # Europe
+    "lon": (10.0, 3.5),   # London
+    "muc": (8.0, 4.5),    # Munich, Foehn swings
+    "mad": (15.0, 4.0),   # Madrid
+    "war": (6.0, 5.0),    # Warsaw, continental extremes
+    # Asia-Pacific
+    "tyo": (13.0, 3.5),   # Tokyo
+    "sel": (10.0, 4.5),   # Seoul
+    "hkg": (22.0, 3.0),   # Hong Kong
+    "sha": (13.0, 4.0),   # Shanghai
+    "szn": (23.0, 3.0),   # Shenzhen
+    # South America
+    "bue": (25.0, 3.5),   # Buenos Aires (southern hemisphere autumn)
 }
-CLIMATOLOGICAL_STD = {
-    "temp_max_c": 8.0,   # Typical seasonal variation
-}
+
+# Fallback for unknown cities
+CLIMATOLOGICAL_MEAN = {"temp_max_c": 15.0}
+CLIMATOLOGICAL_STD = {"temp_max_c": 6.0}
 
 # EMOS minimum variance floor: even when models perfectly agree,
 # instrument error + microclimate fluctuations create irreducible uncertainty.
