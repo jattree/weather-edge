@@ -326,7 +326,10 @@ async def sniper_loop() -> None:
     async def snipe_trigger():
         if trading_active:
             logger.warning("SNIPER TRIGGERED, running immediate cycle")
-            await run_dashboard_cycle()
+            try:
+                await run_dashboard_cycle()
+            except Exception:
+                logger.exception("Sniper-triggered cycle failed")
 
     sniper.set_callback(snipe_trigger)
     await sniper.run_sniper_loop(poll_interval_seconds=30)
@@ -365,7 +368,12 @@ async def api_start():
     # Broadcast the state change immediately so UI updates
     await broadcast(latest_state)
     # Run first cycle in background, don't block the response
-    asyncio.create_task(run_dashboard_cycle())
+    async def _safe_first_cycle():
+        try:
+            await run_dashboard_cycle()
+        except Exception:
+            logger.exception("First cycle after START failed")
+    asyncio.create_task(_safe_first_cycle())
     return {"status": "started", "trading_active": True}
 
 
