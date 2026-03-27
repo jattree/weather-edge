@@ -153,6 +153,11 @@ class PaperTrader:
         if not self.should_trade(signal):
             return None
 
+        # Dedup: don't place same market+side twice in same session
+        for existing in self.open_trades:
+            if existing.market_id == signal.market_id and existing.side == signal.recommended_side.value:
+                return None  # Already have this position
+
         strategy = getattr(signal, "strategy", "core")
         if strategy == "tail":
             remaining = min(self.penny_budget - self.penny_at_risk, self.available_capital)
