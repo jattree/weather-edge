@@ -291,7 +291,7 @@ async def run_dashboard_cycle() -> None:
         ),
         "cycle_count": paper_trader.store.increment_cycle(),
         "last_update": datetime.now(timezone.utc).isoformat(),
-        "weather_alerts": latest_state.get("weather_alerts", []),
+        "weather_alerts": [],
         "correlation_matrix": correlation_data,
         "execution_analytics": exec_analytics,
     }
