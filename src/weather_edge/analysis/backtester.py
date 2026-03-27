@@ -13,18 +13,9 @@ from weather_edge.models.enums import City, WeatherModel
 
 logger = logging.getLogger(__name__)
 
-# Open-Meteo historical forecast archive endpoint
-def _archive_url() -> str:
-    from weather_edge.config import settings
-    if settings.openmeteo_api_key:
-        return "https://customer-historical-forecast-api.open-meteo.com/v1/forecast"
-    return "https://historical-forecast-api.open-meteo.com/v1/forecast"
-
-def _observation_url() -> str:
-    from weather_edge.config import settings
-    if settings.openmeteo_api_key:
-        return "https://customer-archive-api.open-meteo.com/v1/archive"
-    return "https://archive-api.open-meteo.com/v1/archive"
+# Open-Meteo historical endpoints, always free tier (customer archive needs Professional plan)
+_ARCHIVE_URL = "https://historical-forecast-api.open-meteo.com/v1/forecast"
+_OBSERVATION_URL = "https://archive-api.open-meteo.com/v1/archive"
 
 # Semaphore for rate-limiting
 _SEM = asyncio.Semaphore(4)
@@ -119,10 +110,8 @@ async def _fetch_historical_forecasts(
                             "models": model_id,
                             "timezone": "auto",
                         }
-                    if _s.openmeteo_api_key:
-                        _p["apikey"] = _s.openmeteo_api_key
                     resp = await client.get(
-                        _archive_url(),
+                        _ARCHIVE_URL,
                         params=_p,
                     )
                     resp.raise_for_status()
@@ -164,10 +153,8 @@ async def _fetch_observations(
                         "daily": "temperature_2m_max",
                         "timezone": "auto",
                     }
-                if _s2.openmeteo_api_key:
-                    _p2["apikey"] = _s2.openmeteo_api_key
                 resp = await client.get(
-                    _observation_url(),
+                    _OBSERVATION_URL,
                     params=_p2,
                 )
                 resp.raise_for_status()
