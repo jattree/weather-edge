@@ -140,6 +140,19 @@ async def run_cycle(
 
     logger.info("Active market groups: %d city-date combos", len(market_groups))
 
+    # Step 1c: Fetch AI model forecasts (GraphCast via GribStream) for comparison
+    ai_forecasts: dict[str, dict] = {}  # city_id -> AIModelForecast
+    try:
+        from weather_edge.fetchers.gribstream import fetch_ai_forecasts_batch, compute_ai_physics_divergence
+        market_cities = list({city_id for city_id, _ in market_groups})
+        tomorrow = target_dates[1] if len(target_dates) > 1 else target_dates[0]
+        ai_batch = await fetch_ai_forecasts_batch(market_cities, tomorrow)
+        ai_forecasts = ai_batch
+        if ai_batch:
+            logger.info("GraphCast: %d city forecasts fetched", len(ai_batch))
+    except Exception:
+        logger.debug("GribStream AI fetch skipped", exc_info=True)
+
     # Step 2: For each city with markets, fetch forecasts and compute signals
     cities_processed = set()
     for (city_id, target_date), city_markets in market_groups.items():
@@ -229,6 +242,20 @@ async def run_cycle(
 
                 # Apply pattern-based confidence boost
                 adjusted_conf = min(1.0, consensus.confidence * pattern_conf_mult)
+
+                # Apply AI vs physics divergence (GraphCast comparison)
+                ai_fc = ai_forecasts.get(city_id.value)
+                if ai_fc and variable == "temp_max_c":
+                    try:
+                        div = compute_ai_physics_divergence(ai_fc, consensus.weighted_mean)
+                        adjusted_conf = min(1.0, adjusted_conf * div["confidence_multiplier"])
+                        if div["signal"] == "strong_diverge":
+                            logger.info(
+                                "AI DIVERGE: %s GraphCast=%.1fC vs physics=%.1fC (%+.1fC), conf reduced",
+                                city_id.value, div["ai_max_c"], div["physics_mean_c"], div["divergence_c"],
+                            )
+                    except Exception:
+                        pass
 
                 signal = calculate_edge(
                     market_id=market.market_id,
