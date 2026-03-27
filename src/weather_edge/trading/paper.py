@@ -179,26 +179,79 @@ class PaperTrader:
         )
         return trade
 
+    def place_spread_trade(self, signal: Signal, hedge) -> PaperTrade | None:
+        """Log a spread/hedge paper trade paired with a directional trade.
+
+        This simulates ColdMath's spread capture: buy the opposite side
+        so if both fill, we can merge for guaranteed profit.
+        """
+        remaining = self.available_capital
+        size = min(hedge.cost, remaining)
+        if size < 1.0:
+            return None
+
+        trade = PaperTrade(
+            trade_id=self._next_id,
+            market_id=hedge.market_id,
+            city_id=hedge.city_id,
+            side=hedge.side,
+            size_usd=size,
+            entry_price=hedge.limit_price,
+            description=f"[SPREAD] {hedge.description}",
+        )
+        self._next_id += 1
+        self.trades.append(trade)
+
+        logger.info(
+            "SPREAD TRADE: %s %s $%.0f @ %.2f | guaranteed=$%.2f | %s",
+            trade.side, trade.city_id, trade.size_usd,
+            trade.entry_price, hedge.guaranteed_profit,
+            trade.description[:50],
+        )
+        return trade
+
     def resolve_trade(self, trade: PaperTrade, outcome_yes: bool) -> None:
         """Resolve a paper trade based on market outcome."""
         trade.resolved_at = datetime.now(timezone.utc)
 
+        # Spread trades: find the paired directional trade and simulate merge
+        if "[SPREAD]" in (trade.description or ""):
+            # Find the directional trade on the same market
+            paired = None
+            for t in self.trades:
+                if t.market_id == trade.market_id and t.trade_id != trade.trade_id and "[SPREAD]" not in (t.description or ""):
+                    paired = t
+                    break
+
+            if paired:
+                # Merge simulation: YES cost + NO cost, payout = $1/share
+                # Both sides together always pay $1, so profit = shares - total_cost
+                total_cost = trade.entry_price + paired.entry_price
+                if total_cost < 1.0:
+                    # Guaranteed spread profit
+                    shares = min(trade.size_usd / trade.entry_price, paired.size_usd / paired.entry_price)
+                    trade.pnl = (1.0 - total_cost) * shares / 2  # Split credit between both legs
+                    trade.status = TradeStatus.WON
+                    trade.exit_price = 1.0
+                    logger.info(
+                        "MERGE SIM: %s %s, spread profit $%.2f (cost %.2f + %.2f = %.2f < $1)",
+                        trade.city_id, trade.market_id[:20],
+                        trade.pnl * 2, trade.entry_price, paired.entry_price, total_cost,
+                    )
+                    return
+
         if trade.side == "YES":
             if outcome_yes:
-                # Won: paid entry_price, received 1.0
                 trade.pnl = (1.0 - trade.entry_price) * trade.size_usd
                 trade.status = TradeStatus.WON
             else:
-                # Lost: paid entry_price, received 0
                 trade.pnl = -trade.entry_price * trade.size_usd
                 trade.status = TradeStatus.LOST
         else:  # NO
             if not outcome_yes:
-                # Won: paid (1 - entry_price), received 1.0
                 trade.pnl = trade.entry_price * trade.size_usd
                 trade.status = TradeStatus.WON
             else:
-                # Lost: paid (1 - entry_price), received 0
                 trade.pnl = -(1.0 - trade.entry_price) * trade.size_usd
                 trade.status = TradeStatus.LOST
 
