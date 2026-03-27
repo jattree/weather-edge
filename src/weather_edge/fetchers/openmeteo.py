@@ -105,12 +105,12 @@ async def fetch_model_forecast(
 
     # Retry with backoff on 429 rate limits
     data = None
-    for attempt in range(3):
+    for attempt in range(4):
         try:
             resp = await client.get(base_url, params=params, timeout=15.0)
             if resp.status_code == 429:
-                wait = 2 ** attempt * 5  # 5s, 10s, 20s
-                logger.info("Rate limited (429) on %s/%s, waiting %ds", city_id.value, model_id, wait)
+                wait = 2 ** attempt * 10  # 10s, 20s, 40s, 80s
+                logger.info("Rate limited (429) on %s/%s, waiting %ds (attempt %d/4)", city_id.value, model_id, wait, attempt + 1)
                 await asyncio.sleep(wait)
                 continue
             resp.raise_for_status()
@@ -123,7 +123,7 @@ async def fetch_model_forecast(
             logger.warning("Request error fetching %s for %s: %s", model_id, city_id, e)
             return None
     if data is None:
-        logger.warning("Gave up on %s/%s after 3 rate-limit retries", city_id.value, model_id)
+        logger.warning("Gave up on %s/%s after rate-limit retries", city_id.value, model_id)
         return None
 
     now = datetime.now(timezone.utc)
@@ -190,13 +190,13 @@ async def fetch_city_forecasts(
             ]
             raw_results = await asyncio.gather(*tasks, return_exceptions=True)
     else:
-        # Free tier (~10 req/min): fetch models sequentially to avoid 429s
+        # Free tier (~10 req/min): fetch models sequentially with delay
         raw_results = []
         async with httpx.AsyncClient() as client:
             for model in models:
                 r = await fetch_model_forecast(client, city_id, model, target_date, settings.openmeteo_base_url)
                 raw_results.append(r)
-                await asyncio.sleep(0.3)  # ~3 req/sec max
+                await asyncio.sleep(1.0)  # 1 req/sec to stay well under limit
 
     for r in raw_results:
         if isinstance(r, ForecastResult):
@@ -233,7 +233,7 @@ async def fetch_all_cities(
         settings = _settings
 
     all_forecasts: dict[City, list[ForecastResult]] = {}
-    inter_city_delay = 0.0 if settings.openmeteo_paid_tier else 0.5
+    inter_city_delay = 0.0 if settings.openmeteo_paid_tier else 2.0
 
     # Use provided city order, or default to all cities
     cities = city_order if city_order is not None else list(City)
