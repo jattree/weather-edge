@@ -209,7 +209,7 @@ async def run_dashboard_cycle() -> None:
         trade_log.append({
             "side": t.side,
             "city": t.city_id.upper() if isinstance(t.city_id, str) else t.city_id,
-            "description": t.description[:50] if t.description else "",
+            "description": t.description if t.description else "",
             "size": t.size_usd,
             "pnl": t.pnl,
             "time": t.placed_at.strftime("%H:%M:%S"),
