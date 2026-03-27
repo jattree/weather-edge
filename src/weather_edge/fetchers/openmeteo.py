@@ -173,39 +173,104 @@ async def fetch_city_forecasts(
     target_date: date,
     settings: Settings | None = None,
 ) -> list[ForecastResult]:
-    """Fetch forecasts from all applicable models for a city, concurrently."""
+    """Fetch forecasts from all applicable models for a city in ONE request.
+
+    Open-Meteo supports multi-model queries: pass all model IDs as a
+    comma-separated `models` param and the response keys become
+    `variable_modelid` (e.g. `temperature_2m_max_ecmwf_ifs025`).
+
+    This cuts API calls from ~7 per city to 1 per city.
+    """
     if settings is None:
         from weather_edge.config import settings as _settings
         settings = _settings
 
     models = get_models_for_city(city_id)
+    city = CITIES[city_id]
+    model_ids = [OPENMETEO_MODEL_IDS[m] for m in models]
+    now = datetime.now(timezone.utc)
+
+    params = {
+        "latitude": city.latitude,
+        "longitude": city.longitude,
+        "daily": "temperature_2m_max,temperature_2m_min,precipitation_sum,snowfall_sum,wind_speed_10m_max",
+        "timezone": "UTC",
+        "models": ",".join(model_ids),
+        "start_date": str(target_date),
+        "end_date": str(target_date),
+    }
+
+    # Retry with backoff on 429
+    data = None
+    async with httpx.AsyncClient() as client:
+        for attempt in range(4):
+            try:
+                resp = await client.get(settings.openmeteo_base_url, params=params, timeout=20.0)
+                if resp.status_code == 429:
+                    wait = 2 ** attempt * 10
+                    logger.info("Rate limited (429) batch for %s, waiting %ds (attempt %d/4)", city_id.value, wait, attempt + 1)
+                    await asyncio.sleep(wait)
+                    continue
+                resp.raise_for_status()
+                data = resp.json()
+                break
+            except httpx.HTTPStatusError as e:
+                logger.warning("HTTP %s batch fetch for %s: %s", e.response.status_code, city_id.value, e)
+                return []
+            except httpx.RequestError as e:
+                logger.warning("Request error batch fetch for %s: %s", city_id.value, e)
+                return []
+
+    if data is None:
+        logger.warning("Gave up on %s after rate-limit retries", city_id.value)
+        return []
+
+    # Parse multi-model response: keys are like "temperature_2m_max_ecmwf_ifs025"
+    daily = data.get("daily", {})
     results: list[ForecastResult] = []
 
-    if settings.openmeteo_paid_tier:
-        # Paid tier (600 req/min): fetch all models in parallel, no delay
-        async with httpx.AsyncClient() as client:
-            tasks = [
-                fetch_model_forecast(client, city_id, model, target_date, settings.openmeteo_base_url)
-                for model in models
-            ]
-            raw_results = await asyncio.gather(*tasks, return_exceptions=True)
-    else:
-        # Free tier (~10 req/min): fetch models sequentially with delay
-        raw_results = []
-        async with httpx.AsyncClient() as client:
-            for model in models:
-                r = await fetch_model_forecast(client, city_id, model, target_date, settings.openmeteo_base_url)
-                raw_results.append(r)
-                await asyncio.sleep(1.0)  # 1 req/sec to stay well under limit
+    for model, model_id in zip(models, model_ids):
+        temp_max_key = f"temperature_2m_max_{model_id}"
+        temp_min_key = f"temperature_2m_min_{model_id}"
+        precip_key = f"precipitation_sum_{model_id}"
+        snow_key = f"snowfall_sum_{model_id}"
+        wind_key = f"wind_speed_10m_max_{model_id}"
 
-    for r in raw_results:
-        if isinstance(r, ForecastResult):
-            results.append(r)
-        elif isinstance(r, Exception):
-            logger.warning("Forecast fetch failed: %s", r)
+        temp_max_list = daily.get(temp_max_key, [])
+        temp_min_list = daily.get(temp_min_key, [])
+        precip_list = daily.get(precip_key, [])
+        snow_list = daily.get(snow_key, [])
+        wind_list = daily.get(wind_key, [])
+
+        temp_max_c = temp_max_list[0] if temp_max_list else None
+        temp_min_c = temp_min_list[0] if temp_min_list else None
+        precip_sum_mm = precip_list[0] if precip_list else None
+        snow_sum_cm = snow_list[0] if snow_list else None
+        wind_max_kmh = wind_list[0] if wind_list else None
+
+        # Skip models that returned no data (e.g. regional model outside coverage)
+        if temp_max_c is None and temp_min_c is None:
+            continue
+
+        results.append(ForecastResult(
+            city_id=city_id.value,
+            model_name=model.value,
+            target_date=target_date,
+            fetched_at=now,
+            temperature_2m_hourly=[],  # Not fetched in batch mode
+            precipitation_hourly=[],
+            snowfall_hourly=[],
+            wind_speed_10m_hourly=[],
+            temp_max_c=temp_max_c,
+            temp_min_c=temp_min_c,
+            precip_sum_mm=precip_sum_mm,
+            snow_sum_cm=snow_sum_cm,
+            wind_max_kmh=wind_max_kmh,
+            raw_response=None,
+        ))
 
     logger.info(
-        "Fetched %d/%d model forecasts for %s on %s",
+        "Fetched %d/%d model forecasts for %s on %s (1 request)",
         len(results), len(models), city_id.value, target_date,
     )
     return results
