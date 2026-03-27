@@ -365,9 +365,14 @@ async def api_state():
 
 @app.post("/api/refresh")
 async def api_refresh():
-    """Trigger an immediate data refresh."""
-    await run_dashboard_cycle()
-    return {"status": "ok", "cycle": latest_state["cycle_count"]}
+    """Trigger an immediate data refresh (runs in background)."""
+    async def _safe_refresh():
+        try:
+            await run_dashboard_cycle()
+        except Exception:
+            logger.exception("Manual refresh cycle failed")
+    asyncio.create_task(_safe_refresh())
+    return {"status": "refreshing"}
 
 
 @app.post("/api/start")

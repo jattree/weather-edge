@@ -4539,7 +4539,16 @@
          *  CONTROLS (button click handlers)
          * ================================================================ */
         document.getElementById('refreshBtn').addEventListener('click', function() {
-            fetch('/api/refresh', {method: 'POST'}).then(function(r) { return r.json(); });
+            var btn = document.getElementById('refreshBtn');
+            btn.textContent = 'Refreshing...';
+            btn.disabled = true;
+            btn.style.opacity = '0.5';
+            fetch('/api/refresh', {method: 'POST'}).then(function(r) { return r.json(); }).then(function() {
+                btn.textContent = 'Refresh Now';
+                btn.disabled = false;
+                btn.style.opacity = '1';
+                addAlert('system', 'Manual refresh triggered', new Date().toLocaleTimeString('en', { hour12: false }));
+            });
         });
 
         document.getElementById('startBtn').addEventListener('click', function() {
