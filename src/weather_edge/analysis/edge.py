@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from weather_edge.analysis.model_timing import get_confidence_boost
 from weather_edge.config import settings
 from weather_edge.models.enums import SignalTier, TradeSide
+from weather_edge.trading.fees import calculate_taker_fee, fee_adjusted_edge, fee_eats_alpha
 
 logger = logging.getLogger(__name__)
 
@@ -25,12 +26,14 @@ class Signal:
     market_prob: float       # Polymarket implied probability (midpoint)
 
     edge: float              # adj_prob - market_prob
+    net_edge: float          # edge after taker fees
     edge_pct: float          # edge / market_prob
     kelly_fraction: float    # Optimal Kelly bet fraction
     half_kelly: float        # Conservative (half-Kelly)
     recommended_side: TradeSide
     recommended_size: float  # Dollar amount
     confidence_tier: SignalTier
+    taker_fee: float = 0.0   # Estimated taker fee in USD
 
     # Extra context
     city_id: str = ""
@@ -127,6 +130,13 @@ def calculate_edge(
 
     edge_pct = edge / market_prob if market_prob > 0 else 0.0
 
+    # Compute taker fee and net edge (edge after fees)
+    taker_fee_usd = calculate_taker_fee(market_prob, bet_size)
+    net_edge = fee_adjusted_edge(edge, market_prob, bet_size)
+
+    # If fee eats >40% of alpha, downgrade to LOW tier (won't trade)
+    fee_kills_alpha = fee_eats_alpha(edge, market_prob, bet_size)
+
     # Detect if this is a penny sweep opportunity
     # Penny bet: market prices YES at <$0.05 but our model says 3x+ higher probability
     is_penny = (
@@ -144,11 +154,14 @@ def calculate_edge(
         strategy = "tail"
     else:
         strategy = "core"
-        # Determine confidence tier for core bets
+        # Determine confidence tier for core bets using net_edge (after fees)
         spread_ok = True  # We'd check spread from price data in practice
-        if edge >= 0.05 and adjusted_confidence >= 0.8 and spread_ok:
+        if fee_kills_alpha:
+            # Fee eats >40% of alpha, not worth taking as taker
+            tier = SignalTier.LOW
+        elif net_edge >= 0.05 and adjusted_confidence >= 0.8 and spread_ok:
             tier = SignalTier.HIGH
-        elif edge >= 0.03 and adjusted_confidence >= 0.6:
+        elif net_edge >= 0.03 and adjusted_confidence >= 0.6:
             tier = SignalTier.MEDIUM
         else:
             tier = SignalTier.LOW
@@ -161,12 +174,14 @@ def calculate_edge(
         model_confidence=round(adjusted_confidence, 4),
         market_prob=round(market_prob, 4),
         edge=round(edge, 4),
+        net_edge=round(net_edge, 4),
         edge_pct=round(edge_pct, 4),
         kelly_fraction=round(kelly_f, 4),
         half_kelly=round(half_k, 4),
         recommended_side=side,
         recommended_size=round(bet_size, 2),
         confidence_tier=tier,
+        taker_fee=round(taker_fee_usd, 4),
         city_id=city_id,
         description=description,
         strategy=strategy,

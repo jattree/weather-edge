@@ -7,7 +7,7 @@ from datetime import date, datetime, timedelta, timezone
 
 from weather_edge.analysis.arbitrage import check_bucket_parity, find_parity_opportunities
 from weather_edge.analysis.claude_reasoning import analyze_trade, record_decision, ANTHROPIC_API_KEY
-from weather_edge.analysis.contracts import validate_emos_active, validate_model_count
+from weather_edge.analysis.contracts import validate_emos_active, validate_fee_alpha_ratio, validate_model_count
 from weather_edge.analysis.pattern_detector import detect_patterns, get_pattern_adjustment
 from weather_edge.analysis.consensus import (
     compute_consensus,
@@ -351,6 +351,19 @@ async def run_cycle(
     logger.info("Book price fetch complete, placing trades...")
 
     for signal in all_signals:
+        # Contract: verify taker fee doesn't eat >40% of projected alpha
+        fee_check = validate_fee_alpha_ratio(
+            edge=signal.edge,
+            price=signal.market_prob,
+            size_usd=signal.recommended_size,
+        )
+        if not fee_check.valid:
+            logger.info(
+                "CONTRACT [%s]: %s, skipping %s %s",
+                fee_check.code, fee_check.error, signal.city_id, signal.description[:40],
+            )
+            continue
+
         trade = paper_trader.place_trade(signal)
         # Generate hedge/spread order only when book shows real profit
         if trade:
