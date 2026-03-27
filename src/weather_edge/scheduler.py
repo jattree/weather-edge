@@ -25,32 +25,35 @@ logger = logging.getLogger(__name__)
 def compute_model_prob_for_market(market: MarketInfo, consensus) -> float | None:
     """Compute model probability for a market bucket.
 
-    Handles the multi-bucket format:
-    - "lte" (X°F or below): P(temp <= threshold)
-    - "range" (between X-Y°F): P(low <= temp <= high)
-    - "gte" (X°F or above): P(temp >= threshold)
-    - "any" (snow): P(snow > 0)
+    Handles the multi-bucket format with EMOS probability cap:
+    - A single 2°F bucket should never exceed 70% at >12h horizon
+    - Per Gemini: >90% on a single bucket is "likely broken"
     """
+    from weather_edge.analysis.consensus import MAX_BUCKET_PROBABILITY
+
+    prob = None
+
     if market.threshold_dir == "lte":
-        # P(temp <= high_c)
         p_gte = get_probability_for_threshold(consensus, market.threshold_high_c or market.threshold_value, "gte")
-        return 1.0 - p_gte
+        prob = 1.0 - p_gte
 
     elif market.threshold_dir == "range":
         if market.threshold_low_c is not None and market.threshold_high_c is not None:
-            # P(low <= temp <= high) = P(temp >= low) - P(temp >= high+1)
             p_gte_low = get_probability_for_threshold(consensus, market.threshold_low_c, "gte")
             p_gte_high = get_probability_for_threshold(consensus, market.threshold_high_c + 1.0, "gte")
-            return max(0.0, p_gte_low - p_gte_high)
-        return None
+            prob = max(0.0, p_gte_low - p_gte_high)
 
     elif market.threshold_dir == "gte":
-        return get_probability_for_threshold(consensus, market.threshold_value, "gte")
+        prob = get_probability_for_threshold(consensus, market.threshold_value, "gte")
 
     elif market.threshold_dir == "any":
-        return get_probability_for_threshold(consensus, 0.0, "any")
+        prob = get_probability_for_threshold(consensus, 0.0, "any")
 
-    return None
+    # Apply bucket probability cap for range/lte buckets (narrow temperature ranges)
+    if prob is not None and market.threshold_dir in ("range", "lte"):
+        prob = min(prob, MAX_BUCKET_PROBABILITY)
+
+    return prob
 
 
 async def run_cycle(
