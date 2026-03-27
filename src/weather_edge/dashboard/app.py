@@ -204,7 +204,7 @@ async def run_dashboard_cycle() -> None:
 
     # Build trade log entries (with resolution countdown for open trades)
     trade_log = []
-    for t in sorted(paper_trader.trades, key=lambda x: x.placed_at, reverse=True)[:20]:
+    for t in sorted(paper_trader.trades, key=lambda x: x.placed_at, reverse=True)[:100]:
         resolves_at, resolves_in = _compute_resolution_time(t)
         trade_log.append({
             "side": t.side,

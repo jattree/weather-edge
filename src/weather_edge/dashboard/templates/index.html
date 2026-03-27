@@ -3600,27 +3600,24 @@
             dateGroups[today] = { label: 'Today', count: 0, risk: 0 };
             dateGroups[tom] = { label: 'Tomorrow', count: 0, risk: 0 };
 
+            /* Group open trades by actual pool tag in description */
+            var openCount = 0;
             allTrades.forEach(function(t) {
-                if (t.status === 'open') {
-                    /* Approximate: distribute evenly */
+                if (t.status !== 'open') return;
+                openCount++;
+                var desc = t.description || '';
+                if (desc.indexOf('[TODAY]') >= 0 || desc.indexOf('[PENNY]') >= 0) {
                     dateGroups[today].count++;
                     dateGroups[today].risk += t.size;
+                    if (!dateGroups[today].trades) dateGroups[today].trades = [];
+                    dateGroups[today].trades.push(t);
+                } else {
+                    dateGroups[tom].count++;
+                    dateGroups[tom].risk += t.size;
+                    if (!dateGroups[tom].trades) dateGroups[tom].trades = [];
+                    dateGroups[tom].trades.push(t);
                 }
             });
-
-            /* If more open than today can hold, spill to tomorrow */
-            var openCount = allTrades.filter(function(t) { return t.status === 'open'; }).length;
-            if (openCount > 0) {
-                var half = Math.ceil(openCount / 2);
-                var openTrades = allTrades.filter(function(t) { return t.status === 'open'; });
-                dateGroups[today] = { label: 'Today', count: 0, risk: 0 };
-                dateGroups[tom] = { label: 'Tomorrow', count: 0, risk: 0 };
-                openTrades.forEach(function(t, i) {
-                    var bucket = i < half ? today : tom;
-                    dateGroups[bucket].count++;
-                    dateGroups[bucket].risk += t.size;
-                });
-            }
 
             var totalRisk = prevState.capital_at_risk || 0;
             var maxRisk = Math.max(totalRisk, 1);
@@ -3637,23 +3634,21 @@
                 barFill.style.background = g.risk > 0 ? 'var(--cyan)' : 'var(--border)';
                 barWrap.appendChild(barFill);
 
-                /* Show earliest resolution countdown for open trades in this date group */
+                /* Show earliest resolution countdown for trades in THIS date group */
                 var resText = '';
-                if (g.count > 0) {
-                    var openTrades = allTrades.filter(function(t) { return t.status === 'open' && t.resolves_in; });
-                    if (openTrades.length > 0) {
-                        /* Find the earliest resolves_at among trades in this group */
-                        var earliest = null;
-                        openTrades.forEach(function(t) {
-                            if (t.resolves_in === 'OVERDUE') {
-                                if (!earliest) earliest = 'OVERDUE';
-                            } else if (t.resolves_in && (!earliest || earliest === 'OVERDUE')) {
-                                earliest = t.resolves_in;
-                            }
-                        });
-                        if (earliest) {
-                            resText = earliest === 'OVERDUE' ? ' \u00B7 OVERDUE' : ' \u00B7 Resolves in ' + earliest;
+                var groupTrades = g.trades || [];
+                if (groupTrades.length > 0) {
+                    var earliest = null;
+                    groupTrades.forEach(function(t) {
+                        if (!t.resolves_in) return;
+                        if (t.resolves_in === 'OVERDUE') {
+                            if (!earliest) earliest = 'OVERDUE';
+                        } else if (!earliest || earliest === 'OVERDUE') {
+                            earliest = t.resolves_in;
                         }
+                    });
+                    if (earliest) {
+                        resText = earliest === 'OVERDUE' ? ' \u00B7 OVERDUE' : ' \u00B7 Resolves in ' + earliest;
                     }
                 }
 
