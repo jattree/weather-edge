@@ -16,6 +16,10 @@ Patterns detected:
 - Arctic outbreak shallow pool (Warsaw, Chicago), GFS warm-biased 5-15°C
 - Convective quench (Miami), models cool-biased 2-4°F
 - Saharan dust/Calima (Madrid), models warm-biased 3-5°C
+- Pearl River Delta haze (Shenzhen, HK), pollution blocks solar, models warm-biased 2-5°C
+- Shanghai boundary layer (UHI vs haze), models disagree 3-6°C
+- Asian cold front intrusion (SHA, SZN, HKG, SEL, TYO), timing errors cause 8-12°C swings
+- Return of Nantian 回南天 (SZN, HKG, SHA), humidity fog suppresses max temp 2-4°C
 
 Detection method: analyze the spread and direction of model forecasts.
 When models disagree in a pattern-consistent way, flag the pattern.
@@ -204,6 +208,82 @@ def detect_patterns(
                 estimated_magnitude_c=min(3.0, spread * 0.4),
                 confidence=0.4,
                 trading_implication="Wide spread suggests sea breeze timing uncertainty, reduce position size",
+            ))
+
+    # === PEARL RIVER DELTA (Shenzhen, Hong Kong): Pollution haze suppression ===
+    # When models disagree AND mean is high, haze likely suppresses actual max temp
+    # Models don't account for particulate radiation blocking: 2-5°C over-prediction
+    if city_id in (City.SZN, City.HKG) and mean_temp > 24.0:
+        # High temps + high spread suggests some models see the haze effect
+        if spread > 2.0:
+            alerts.append(PatternAlert(
+                city_id=city_id,
+                pattern_name="prd_haze_suppression",
+                description=f"PRD haze: models predict {mean_temp:.1f}°C but pollution blocks "
+                           f"solar radiation, actual likely 2-4°C lower",
+                affected_models=[WeatherModel.GFS.value, WeatherModel.ECMWF.value],
+                bias_direction="warm",
+                estimated_magnitude_c=min(4.0, spread * 0.8),
+                confidence=0.55,
+                trading_implication="Fade HIGH temp buckets in Pearl River Delta, haze cooling",
+            ))
+
+    # === SHANGHAI: Urban heat island + haze combination ===
+    # Shanghai has massive UHI (3-6°C) but also heavy pollution
+    # Net effect: models under-predict on clear days, over-predict on hazy days
+    if city_id == City.SHA and ecmwf and gfs:
+        ecmwf_gfs_diff = abs(ecmwf - gfs)
+        if ecmwf_gfs_diff > 2.5:
+            # Large disagreement suggests boundary layer complexity
+            alerts.append(PatternAlert(
+                city_id=city_id,
+                pattern_name="shanghai_boundary_layer",
+                description=f"Shanghai boundary layer: ECMWF={ecmwf:.1f} vs GFS={gfs:.1f}, "
+                           f"UHI vs haze uncertainty",
+                affected_models=[WeatherModel.GFS.value],
+                bias_direction="warm" if gfs > ecmwf else "cold",
+                estimated_magnitude_c=min(4.0, ecmwf_gfs_diff * 0.6),
+                confidence=0.50,
+                trading_implication="Shanghai boundary layer conflict, reduce position, trust ECMWF",
+            ))
+
+    # === ALL ASIAN CITIES: Spring cold front intrusion ===
+    # March-April: Siberian cold air can plunge temps 8-12°C in 24h
+    # Models often misjudge timing by 6-12 hours
+    if city_id in (City.SHA, City.SZN, City.HKG, City.SEL, City.TYO):
+        # Detect: when tomorrow is predicted much colder than today's similar forecast
+        # We can proxy this by checking if models split (some see the front, some don't)
+        if spread > 5.0:
+            alerts.append(PatternAlert(
+                city_id=city_id,
+                pattern_name="asian_cold_front",
+                description=f"Cold front uncertainty: {spread:.1f}°C spread, models split on "
+                           f"timing of Siberian air intrusion",
+                affected_models=[WeatherModel.GFS.value, WeatherModel.ICON.value],
+                bias_direction="unknown",
+                estimated_magnitude_c=min(6.0, spread * 0.5),
+                confidence=0.45,
+                trading_implication="High uncertainty, extreme spread suggests frontal timing disagreement, reduce size",
+            ))
+
+    # === RETURN OF NANTIAN (回南天), South China humidity event ===
+    # When warm moist air meets cooler surfaces: persistent fog, drizzle, extreme humidity
+    # Models struggle with persistence, they clear it too fast
+    # Effect: suppresses max temp by 2-4°C because sun never breaks through
+    if city_id in (City.SZN, City.HKG, City.SHA):
+        # Detect: when multiple models agree on warm temps but spread is unusually tight
+        # AND temps are in the 18-26°C range (Nantian range)
+        if 18.0 < mean_temp < 26.0 and spread < 1.5 and len(temps) >= 5:
+            alerts.append(PatternAlert(
+                city_id=city_id,
+                pattern_name="nantian_humidity",
+                description=f"Possible Nantian (回南天): tight consensus at {mean_temp:.1f}°C, "
+                           f"humidity may suppress actual max by 2-4°C if fog persists",
+                affected_models=[WeatherModel.GFS.value, WeatherModel.ECMWF.value],
+                bias_direction="warm",
+                estimated_magnitude_c=2.5,
+                confidence=0.35,  # Low confidence, needs humidity data to confirm
+                trading_implication="If Nantian active: fog suppresses max temp, fade ABOVE buckets",
             ))
 
     # Log detected patterns
