@@ -14,10 +14,30 @@ from weather_edge.models.enums import City, MarketType, WeatherModel
 
 logger = logging.getLogger(__name__)
 
+# === EMOS / CALIBRATION CONSTANTS ===
+# Per Gemini analysis: raw ensemble spread underestimates true uncertainty.
+# Models are correlated (shared physics + initial conditions) so spread is artificially narrow.
+
+# Spread inflation factor: multiply raw std_dev by this before computing probabilities.
+# Professional forecasting uses 1.5-2.2x. We use 2.0x per Gemini recommendation.
+SPREAD_INFLATION_FACTOR = 2.0
+
+# Bias shrinkage: apply only this fraction of the 30-day bias correction.
+# Full correction overfits to the average; 50% is a standard "shrinkage" approach.
+BIAS_SHRINKAGE = 0.5
+
+# Probability cap: never assign more than this to a single 2°F bucket >12h out.
+# A >90% single-bucket probability is "likely broken" per Gemini.
+MAX_BUCKET_PROBABILITY = 0.70
+
+# EMOS minimum variance floor: even when models perfectly agree,
+# instrument error + microclimate fluctuations create irreducible uncertainty.
+# ~1.2°C for temperature accounts for NWS station measurement precision.
+EMOS_VARIANCE_FLOOR_C = 1.2
+
 # Normalization ranges for confidence calculation
-# (how much spread is "normal" for each variable)
 CONFIDENCE_NORMALIZATION: dict[str, float] = {
-    "temp_max_c": 8.0,   # 8°C spread = confidence drops to 0
+    "temp_max_c": 8.0,
     "temp_min_c": 8.0,
     "precip_sum_mm": 15.0,
     "snow_sum_cm": 10.0,
@@ -154,12 +174,14 @@ def compute_consensus(
         thresholds: Specific thresholds to compute P(X >= t) for
     """
     # Extract the value for the requested variable from each forecast
-    # Apply NWS station bias correction to each model's forecast
+    # Apply NWS station bias correction with shrinkage (50% of full correction)
     model_values: dict[str, float] = {}
     for f in forecasts:
         val = getattr(f, variable, None)
         if val is not None:
-            corrected = apply_bias_correction(val, variable, f.model_name, city_id)
+            full_correction = apply_bias_correction(val, variable, f.model_name, city_id)
+            # Shrinkage: blend raw and corrected (BIAS_SHRINKAGE=0.5 means 50% correction)
+            corrected = val + (full_correction - val) * BIAS_SHRINKAGE
             model_values[f.model_name] = corrected
 
     if not model_values:
@@ -191,10 +213,18 @@ def compute_consensus(
     # Core statistics
     mean_val = float(np.mean(values_arr))
     median_val = float(np.median(values_arr))
-    std_val = float(np.std(values_arr, ddof=1)) if len(values_arr) > 1 else 0.0
+    raw_std = float(np.std(values_arr, ddof=1)) if len(values_arr) > 1 else 0.0
     min_val = float(np.min(values_arr))
     max_val = float(np.max(values_arr))
     weighted_mean = float(np.average(values_arr, weights=weights_arr))
+
+    # EMOS: inflate spread to account for correlated models + add variance floor
+    # Raw ensemble spread underestimates true uncertainty (Gemini-validated)
+    # σ_emos² = c + d * σ_raw² where c = VARIANCE_FLOOR², d = INFLATION²
+    if "temp" in variable:
+        std_val = max(EMOS_VARIANCE_FLOOR_C, raw_std * SPREAD_INFLATION_FACTOR)
+    else:
+        std_val = max(raw_std * 0.5, raw_std * SPREAD_INFLATION_FACTOR)
 
     # Confidence: 1 - (std / normalization_range), clamped to [0, 1]
     norm_range = CONFIDENCE_NORMALIZATION.get(variable, 10.0)
@@ -238,17 +268,20 @@ def compute_consensus(
                         0.4 * empirical_probs.get(key, 0) + 0.6 * hurdle_prob, 4
                     )
     else:
-        # Use KDE (handles multimodal + asymmetric distributions) blended with
-        # normal fit and empirical counts. KDE is primary per Gemini analysis.
+        # EMOS-calibrated probability computation:
+        # 1. KDE with inflated bandwidth (captures multimodal patterns)
+        # 2. Normal with EMOS-inflated std (captures spread underestimation)
+        # 3. Empirical (reality check from raw model counts)
+        # Weight toward parametric since EMOS inflation handles the calibration
         kde_probs = _compute_threshold_probs_kde(values, weights, thresholds)
         parametric = _compute_threshold_probs_normal(weighted_mean, std_val, thresholds)
         empirical = _compute_threshold_probs_empirical(values, thresholds)
         threshold_probs = {}
         for key in parametric:
-            # Blend: 50% KDE + 30% parametric + 20% empirical
-            p = (0.5 * kde_probs.get(key, 0)
-                 + 0.3 * parametric.get(key, 0)
-                 + 0.2 * empirical.get(key, 0))
+            # Blend: 40% parametric (EMOS-calibrated) + 30% KDE + 30% empirical
+            p = (0.4 * parametric.get(key, 0)
+                 + 0.3 * kde_probs.get(key, 0)
+                 + 0.3 * empirical.get(key, 0))
             threshold_probs[key] = round(p, 4)
 
     return ConsensusResult(
@@ -307,4 +340,6 @@ def get_probability_for_threshold(
     if direction == "lte":
         prob = 1.0 - prob
 
+    # Clamp to valid range (no cap here, cap is applied at the bucket level
+    # in the scheduler when computing P(low <= X <= high) for range buckets)
     return max(0.0, min(1.0, prob))
