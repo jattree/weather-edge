@@ -57,8 +57,25 @@ def compute_model_prob_for_market(market: MarketInfo, consensus) -> float | None
         prob = get_probability_for_threshold(consensus, 0.0, "any")
 
     # Apply bucket probability cap for range/lte buckets (narrow temperature ranges)
+    # During extreme events (tight model agreement + anomalous temps), raise the cap
     if prob is not None and market.threshold_dir in ("range", "lte"):
-        prob = min(prob, MAX_BUCKET_PROBABILITY)
+        from weather_edge.analysis.consensus import (
+            MAX_BUCKET_PROBABILITY_EXTREME, CLIMATOLOGICAL_MEAN, CLIMATOLOGICAL_STD
+        )
+        cap = MAX_BUCKET_PROBABILITY
+        if consensus.std_dev < 1.5 and consensus.model_count >= 5:
+            # Models tightly clustered, check if this is an extreme event
+            clim_mean = CLIMATOLOGICAL_MEAN.get("temp_max_c", 20.0)
+            clim_std = CLIMATOLOGICAL_STD.get("temp_max_c", 8.0)
+            anomaly = abs(consensus.weighted_mean - clim_mean) / clim_std if clim_std > 0 else 0
+            if anomaly > 2.0:
+                cap = MAX_BUCKET_PROBABILITY_EXTREME
+                logger.info(
+                    "EXTREME EVENT: %s consensus=%.1f°C (%.1f sigma), std=%.1f, cap raised to %.0f%%",
+                    market.city_id.value if market.city_id else "?",
+                    consensus.weighted_mean, anomaly, consensus.std_dev, cap * 100,
+                )
+        prob = min(prob, cap)
 
     return prob
 
