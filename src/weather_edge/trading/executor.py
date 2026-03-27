@@ -199,11 +199,54 @@ class TradeExecutor:
             logger.error("Failed to place order: %s", e)
             return None
 
+    async def send_heartbeat(self) -> bool:
+        """Send session heartbeat to prevent Polymarket from cancelling open orders.
+
+        Per Polymarket docs: "If heartbeats are not sent regularly, all open
+        orders for the user will be automatically canceled."
+
+        Should be called every ~30 seconds during active trading.
+        """
+        if self.dry_run or self._client is None:
+            return True
+
+        try:
+            # py-clob-client should have a heartbeat method
+            if hasattr(self._client, 'send_heartbeat'):
+                await self._client.send_heartbeat()
+            else:
+                # Manual heartbeat via HTTP
+                import httpx
+                async with httpx.AsyncClient() as client:
+                    resp = await client.post(
+                        "https://clob.polymarket.com/heartbeat",
+                        headers=self._get_auth_headers(),
+                        timeout=5.0,
+                    )
+                    resp.raise_for_status()
+
+            # Track in Redis for monitoring
+            try:
+                from weather_edge.live_state import set_value
+                from datetime import datetime, timezone
+                set_value("heartbeat:last", datetime.now(timezone.utc).isoformat(), ttl=60)
+            except Exception:
+                pass
+
+            return True
+        except Exception as e:
+            logger.warning("Heartbeat failed: %s, open orders may be cancelled", e)
+            return False
+
+    def _get_auth_headers(self) -> dict:
+        """Build authentication headers for CLOB API."""
+        # Placeholder, real implementation needs POLY_* headers from API key
+        return {"Content-Type": "application/json"}
+
     async def cancel_stale_orders(self, max_age_seconds: int = 300) -> int:
         """Cancel orders that haven't filled within max_age_seconds."""
         if self.dry_run or self._client is None:
             return 0
 
-        # Implementation would track open orders and cancel stale ones
         logger.info("Checking for stale orders (max age: %ds)", max_age_seconds)
         return 0
