@@ -242,27 +242,45 @@ async def run_cycle(
                 signal.recommended_size = round(signal.recommended_size * reasoning.confidence_adjustment, 2)
 
     # Place trades for all signals + generate spread capture orders
+    from weather_edge.fetchers.polymarket import fetch_book_prices
     from weather_edge.trading.market_maker import MarketMaker
     market_maker = MarketMaker()
 
-    # Build market prices dict from discovered markets for spread detection
+    # Build market prices dict using real order book asks (not midpoints)
+    # Per Gemini: spread only exists if YES_ask + NO_ask < 1.00
     market_prices: dict[str, dict] = {}
-    for m in markets:
-        market_prices[m.market_id] = {
-            "yes_price": m.yes_price,
-            "no_price": 1.0 - m.yes_price,
-            "bid": m.yes_price - 0.01,
-            "ask": m.yes_price + 0.01,
-        }
+    market_by_id = {m.market_id: m for m in markets}
+
+    # Fetch book prices for markets with signals (rate-limited to top opportunities)
+    top_signals = sorted(all_signals, key=lambda s: abs(s.edge), reverse=True)[:15]
+    for signal in top_signals:
+        m = market_by_id.get(signal.market_id)
+        if m and m.token_id_yes and m.token_id_no:
+            book = await fetch_book_prices(m)
+            if book:
+                market_prices[signal.market_id] = {
+                    "yes_price": book.get("yes_ask") or m.yes_price,
+                    "no_price": book.get("no_ask") or (1.0 - m.yes_price),
+                    "bid": book.get("yes_bid") or (m.yes_price - 0.01),
+                    "ask": book.get("yes_ask") or (m.yes_price + 0.01),
+                    "spread_profitable": book.get("profitable", False),
+                }
+                if book.get("profitable"):
+                    logger.info(
+                        "SPREAD OPP: %s, YES_ask=%.3f NO_ask=%.3f total=%.3f profit=%.3f/share",
+                        signal.city_id, book["yes_ask"], book["no_ask"],
+                        book["spread_cost"], book["spread_profit"],
+                    )
 
     for signal in all_signals:
         trade = paper_trader.place_trade(signal)
-        # Generate hedge/spread order for each placed trade
+        # Generate hedge/spread order only when book shows real profit
         if trade:
-            hedge = market_maker.generate_hedge_orders(signal, market_prices, settings.bankroll)
-            if hedge:
-                # Paper-trade the hedge side too
-                paper_trader.place_spread_trade(signal, hedge)
+            prices = market_prices.get(signal.market_id, {})
+            if prices.get("spread_profitable"):
+                hedge = market_maker.generate_hedge_orders(signal, market_prices, settings.bankroll)
+                if hedge:
+                    paper_trader.place_spread_trade(signal, hedge)
 
     # Log spread capture summary
     spread_summary = market_maker.simulate_spread_pnl()
