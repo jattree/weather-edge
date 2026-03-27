@@ -23,7 +23,18 @@ from weather_edge.analysis.edge import Signal
 
 logger = logging.getLogger(__name__)
 
-ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
+def _get_api_key() -> str:
+    """Get API key from env or .env file via pydantic-settings."""
+    key = os.environ.get("ANTHROPIC_API_KEY", "")
+    if not key:
+        try:
+            from weather_edge.config import settings
+            key = getattr(settings, "anthropic_api_key", "")
+        except Exception:
+            pass
+    return key
+
+ANTHROPIC_API_KEY = _get_api_key()
 CLAUDE_MODEL = "claude-sonnet-4-20250514"
 
 

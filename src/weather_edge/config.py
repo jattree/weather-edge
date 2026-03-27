@@ -285,7 +285,8 @@ class Settings(BaseSettings):
     penny_min_position: float = 10.0        # Min $10 per penny bet (gas efficiency)
     penny_max_position: float = 20.0        # Max $20 per penny bet
 
-    # API base URLs
+    # API keys
+    anthropic_api_key: str = ""  # Claude reasoning layer
     openmeteo_base_url: str = "https://api.open-meteo.com/v1/forecast"
     openmeteo_api_key: str = ""  # Customer API key for paid tier
     polymarket_gamma_url: str = "https://gamma-api.polymarket.com"
