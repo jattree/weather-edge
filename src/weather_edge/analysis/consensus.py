@@ -30,6 +30,20 @@ BIAS_SHRINKAGE = 0.5
 # A >90% single-bucket probability is "likely broken" per Gemini.
 MAX_BUCKET_PROBABILITY = 0.70
 
+# Extreme event override: when models are tightly clustered (low std) AND
+# consensus is >2 std deviations from climatological normal, raise the cap.
+# This catches heat domes, cold snaps, etc. where 80%+ on a bucket is genuine.
+MAX_BUCKET_PROBABILITY_EXTREME = 0.85
+
+# Approximate climatological means by variable (°C) for "extreme" detection
+# Used to determine if the consensus is anomalous, not for forecasting
+CLIMATOLOGICAL_MEAN = {
+    "temp_max_c": 20.0,  # Rough global average daily high
+}
+CLIMATOLOGICAL_STD = {
+    "temp_max_c": 8.0,   # Typical seasonal variation
+}
+
 # EMOS minimum variance floor: even when models perfectly agree,
 # instrument error + microclimate fluctuations create irreducible uncertainty.
 # ~1.2°C for temperature accounts for NWS station measurement precision.
