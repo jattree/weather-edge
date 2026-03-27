@@ -332,6 +332,58 @@ async def run_cycle(
             spread_summary["spread_orders"], spread_summary["estimated_guaranteed_pnl"],
         )
 
+    # === Early exit monitor: check if open positions should be closed ===
+    try:
+        from weather_edge.analysis.exit_monitor import scan_for_exits, ai_review_exit
+        # Build current market prices and model probs for open trades
+        current_market_prices = {m.market_id: m.yes_price for m in markets}
+        current_model_probs = {}
+        for signal in all_signals:
+            current_model_probs[signal.market_id] = signal.model_prob
+
+        exit_candidates = scan_for_exits(paper_trader.open_trades, current_market_prices, current_model_probs)
+        if exit_candidates:
+            logger.info("EXIT MONITOR: %d candidates found, reviewing top 3...", len(exit_candidates))
+            for candidate in exit_candidates[:3]:
+                # Get model context for AI review
+                model_vals = {}
+                c_mean, c_std = 0.0, 1.0
+                for (cid, td), f_list in _forecast_cache.items():
+                    if cid.value == candidate.trade.city_id:
+                        model_vals = {f.model_name: f.temp_max_c for f in f_list if f.temp_max_c is not None}
+                        if model_vals:
+                            vals = list(model_vals.values())
+                            c_mean = sum(vals) / len(vals)
+                            c_std = (max(vals) - min(vals)) / 2 if len(vals) > 1 else 0.5
+                        break
+
+                candidate = await ai_review_exit(candidate, model_vals, c_mean, c_std)
+
+                if candidate.final_decision == "EXIT":
+                    logger.warning(
+                        "EARLY EXIT: %s %s $%.0f, %s (Claude: %s, Gemini: %s)",
+                        candidate.trade.side, candidate.trade.city_id,
+                        candidate.trade.size_usd, candidate.reason,
+                        candidate.claude_verdict, candidate.gemini_verdict,
+                    )
+                    # In paper mode: close at current market price
+                    paper_trader.close_position(candidate.trade, candidate.current_market_price)
+
+                # Record exit decision to AI Decisions tab
+                from weather_edge.analysis.claude_reasoning import _decision_history
+                _decision_history.insert(0, {
+                    "time": datetime.now(timezone.utc).strftime("%H:%M:%S"),
+                    "city": candidate.trade.city_id.upper(),
+                    "decision": "EXIT" if candidate.final_decision == "EXIT" else "HOLD",
+                    "signal": f"[EXIT CHECK] {candidate.reason}: {candidate.trade.description[:40]}",
+                    "adjustment": round(candidate.current_edge, 2),
+                    "rationale": candidate.claude_rationale or "No AI review",
+                    "risk_factors": [candidate.gemini_rationale or ""],
+                    "source": "exit_monitor",
+                })
+    except Exception:
+        logger.debug("Exit monitor failed", exc_info=True)
+
     # Also fetch forecasts for cities without active markets (monitoring)
     # But only for tomorrow (not all dates) to save API calls
     tomorrow = target_dates[1] if len(target_dates) > 1 else target_dates[0]
