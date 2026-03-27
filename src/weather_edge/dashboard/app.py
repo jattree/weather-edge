@@ -534,6 +534,13 @@ async def api_execution_analytics():
     return latest_state.get("execution_analytics", {})
 
 
+@app.get("/api/system-status")
+async def api_system_status():
+    """Return health status of all external services and API keys."""
+    from weather_edge.analysis.service_health import get_service_status
+    return get_service_status()
+
+
 @app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket):
     await ws.accept()

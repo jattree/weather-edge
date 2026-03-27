@@ -224,13 +224,36 @@ Should I take this trade? What weather risks should I watch for?"""
             ", ".join(reasoning.risk_factors[:2]) or "no risks flagged",
         )
 
+        try:
+            from weather_edge.analysis.service_health import record_service_call
+            existing = {}
+            try:
+                from weather_edge.live_state import get_json
+                existing = get_json("svc:claude") or {}
+            except Exception:
+                pass
+            decisions_today = existing.get("decisions_today", 0) + 1
+            record_service_call("claude", True, extra={"decisions_today": decisions_today})
+        except Exception:
+            pass
+
         return reasoning
 
     except httpx.HTTPError as e:
         logger.warning("Claude API call failed: %s", e)
+        try:
+            from weather_edge.analysis.service_health import record_service_call
+            record_service_call("claude", False)
+        except Exception:
+            pass
         return None
     except Exception as e:
         logger.warning("Claude reasoning failed: %s", e)
+        try:
+            from weather_edge.analysis.service_health import record_service_call
+            record_service_call("claude", False)
+        except Exception:
+            pass
         return None
 
 

@@ -108,10 +108,26 @@ async def _fetch_nws_alerts(city_id: City, config: CityConfig) -> list[WeatherAl
                     source="nws",
                 ))
 
+            try:
+                from weather_edge.analysis.service_health import record_service_call
+                record_service_call("nws", True)
+            except Exception:
+                pass
+
         except httpx.HTTPStatusError as e:
             logger.warning("NWS API error for %s: HTTP %d", config.name, e.response.status_code)
+            try:
+                from weather_edge.analysis.service_health import record_service_call
+                record_service_call("nws", False)
+            except Exception:
+                pass
         except Exception:
             logger.warning("NWS alert fetch failed for %s", config.name, exc_info=True)
+            try:
+                from weather_edge.analysis.service_health import record_service_call
+                record_service_call("nws", False)
+            except Exception:
+                pass
 
     return alerts
 

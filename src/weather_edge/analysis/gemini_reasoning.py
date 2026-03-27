@@ -170,6 +170,19 @@ Apply the failure vectors from your system prompt to this specific city. Find th
             "; ".join(counters[:2]) if counters else "no counter-arguments",
         )
 
+        try:
+            from weather_edge.analysis.service_health import record_service_call
+            existing = {}
+            try:
+                from weather_edge.live_state import get_json
+                existing = get_json("svc:gemini") or {}
+            except Exception:
+                pass
+            dissents_today = existing.get("dissents_today", 0) + (1 if verdict == "DISSENT" else 0)
+            record_service_call("gemini", True, extra={"dissents_today": dissents_today})
+        except Exception:
+            pass
+
         return {
             "dissent_strength": dissent,
             "verdict": verdict,
@@ -182,4 +195,9 @@ Apply the failure vectors from your system prompt to this specific city. Find th
 
     except (httpx.HTTPError, json.JSONDecodeError, KeyError, IndexError) as e:
         logger.warning("Gemini red team failed: %s", e)
+        try:
+            from weather_edge.analysis.service_health import record_service_call
+            record_service_call("gemini", False)
+        except Exception:
+            pass
         return None

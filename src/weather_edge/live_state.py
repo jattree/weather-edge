@@ -42,10 +42,21 @@ def _get_redis():
         )
         _redis_client.ping()
         logger.info("Redis connected (localhost:6379)")
+        # Record Redis health (avoid circular import, write directly to in-memory store)
+        try:
+            from weather_edge.analysis.service_health import record_service_call
+            record_service_call("redis", True)
+        except Exception:
+            pass
         return _redis_client
     except Exception as e:
         logger.warning("Redis unavailable (%s), using in-memory fallback", e)
         _redis_client = None
+        try:
+            from weather_edge.analysis.service_health import record_service_call
+            record_service_call("redis", False)
+        except Exception:
+            pass
         return None
 
 
