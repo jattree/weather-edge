@@ -118,8 +118,9 @@ async def _fetch_nws_alerts(city_id: City, config: CityConfig) -> list[WeatherAl
 
 async def _fetch_openmeteo_synthetic_alerts(city_id: City, config: CityConfig) -> list[WeatherAlert]:
     """Generate synthetic alerts from Open-Meteo forecast data for international cities."""
+    from weather_edge.config import settings
     alerts: list[WeatherAlert] = []
-    url = "https://api.open-meteo.com/v1/forecast"
+    url = settings.effective_openmeteo_url
     params = {
         "latitude": config.latitude,
         "longitude": config.longitude,
@@ -127,6 +128,8 @@ async def _fetch_openmeteo_synthetic_alerts(city_id: City, config: CityConfig) -
         "forecast_days": 2,
         "timezone": "auto",
     }
+    if settings.openmeteo_api_key:
+        params["apikey"] = settings.openmeteo_api_key
 
     async with _INTL_SEMAPHORE:
         try:

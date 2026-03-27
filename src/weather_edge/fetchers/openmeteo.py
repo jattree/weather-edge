@@ -190,6 +190,7 @@ async def fetch_city_forecasts(
     model_ids = [OPENMETEO_MODEL_IDS[m] for m in models]
     now = datetime.now(timezone.utc)
 
+    base_url = settings.effective_openmeteo_url
     params = {
         "latitude": city.latitude,
         "longitude": city.longitude,
@@ -199,13 +200,15 @@ async def fetch_city_forecasts(
         "start_date": str(target_date),
         "end_date": str(target_date),
     }
+    if settings.openmeteo_api_key:
+        params["apikey"] = settings.openmeteo_api_key
 
     # Retry with backoff on 429
     data = None
     async with httpx.AsyncClient() as client:
         for attempt in range(4):
             try:
-                resp = await client.get(settings.openmeteo_base_url, params=params, timeout=20.0)
+                resp = await client.get(base_url, params=params, timeout=20.0)
                 if resp.status_code == 429:
                     wait = 2 ** attempt * 10
                     logger.info("Rate limited (429) batch for %s, waiting %ds (attempt %d/4)", city_id.value, wait, attempt + 1)

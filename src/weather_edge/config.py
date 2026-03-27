@@ -287,12 +287,20 @@ class Settings(BaseSettings):
 
     # API base URLs
     openmeteo_base_url: str = "https://api.open-meteo.com/v1/forecast"
+    openmeteo_api_key: str = ""  # Customer API key for paid tier
     polymarket_gamma_url: str = "https://gamma-api.polymarket.com"
     polymarket_clob_url: str = "https://clob.polymarket.com"
 
-    # Open-Meteo tier, set True after subscribing to paid tier ($30/month)
-    # Paid tier: 600 req/min, no inter-request delay, parallel model fetches
+    # Open-Meteo tier, auto-detected from api key presence
+    # Paid tier: 1M req/month, dedicated servers, no rate-limit ban risk
     openmeteo_paid_tier: bool = False
+
+    @property
+    def effective_openmeteo_url(self) -> str:
+        """Use customer endpoint when API key is set."""
+        if self.openmeteo_api_key:
+            return "https://customer-api.open-meteo.com/v1/forecast"
+        return self.openmeteo_base_url
 
 
 settings = Settings()

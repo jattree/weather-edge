@@ -184,15 +184,18 @@ class ModelSniper:
 
         async with httpx.AsyncClient() as client:
             try:
-                resp = await client.get(
-                    settings.openmeteo_base_url,
-                    params={
+                _params = {
                         "latitude": 0,
                         "longitude": 0,
                         "hourly": "temperature_2m",
                         "forecast_days": 1,
                         "models": model_id,
-                    },
+                    }
+                if settings.openmeteo_api_key:
+                    _params["apikey"] = settings.openmeteo_api_key
+                resp = await client.get(
+                    settings.effective_openmeteo_url,
+                    params=_params,
                     timeout=10.0,
                 )
                 resp.raise_for_status()
@@ -233,9 +236,7 @@ class ModelSniper:
 
         async with httpx.AsyncClient() as client:
             try:
-                resp = await client.get(
-                    settings.openmeteo_base_url,
-                    params={
+                _params2 = {
                         "latitude": city.latitude,
                         "longitude": city.longitude,
                         "daily": "temperature_2m_max",
@@ -243,7 +244,12 @@ class ModelSniper:
                         "timezone": "UTC",
                         "start_date": str(target_date),
                         "end_date": str(target_date),
-                    },
+                    }
+                if settings.openmeteo_api_key:
+                    _params2["apikey"] = settings.openmeteo_api_key
+                resp = await client.get(
+                    settings.effective_openmeteo_url,
+                    params=_params2,
                     timeout=10.0,
                 )
                 resp.raise_for_status()
