@@ -27,12 +27,8 @@ BELOW_PATTERN = re.compile(r"(\d+)\s*°?\s*F\s+or\s+below", re.IGNORECASE)
 # Matches "60°F or above" / "60 °F or above"
 ABOVE_PATTERN = re.compile(r"(\d+)\s*°?\s*F\s+or\s+above", re.IGNORECASE)
 
-# Open-Meteo archive API
-def _archive_url() -> str:
-    from weather_edge.config import settings
-    if settings.openmeteo_api_key:
-        return "https://customer-archive-api.open-meteo.com/v1/archive"
-    return "https://archive-api.open-meteo.com/v1/archive"
+# Open-Meteo archive API, always use free tier (customer archive needs Professional plan)
+ARCHIVE_API_URL = "https://archive-api.open-meteo.com/v1/archive"
 
 
 async def fetch_resolved_markets() -> dict[str, bool]:
@@ -150,10 +146,9 @@ async def check_nws_observations(city_id: str, target_date: date) -> float | Non
                     "daily": "temperature_2m_max",
                     "timezone": "auto",
                 }
-            if settings.openmeteo_api_key:
-                _params["apikey"] = settings.openmeteo_api_key
+            # Always use free archive tier (no apikey needed)
             resp = await client.get(
-                _archive_url(),
+                ARCHIVE_API_URL,
                 params=_params,
                 timeout=15.0,
             )
