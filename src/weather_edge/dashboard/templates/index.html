@@ -1761,9 +1761,9 @@
                         </div>
                     </div>
                     <!-- vs ColdMath -->
-                    <div class="vs-block" id="vsBlock" style="display: none;">
+                    <div class="vs-block" id="vsBlock">
                         <div class="vs-header">
-                            <span class="vs-title">vs Competitors</span>
+                            <span class="vs-title">Benchmark</span>
                         </div>
                         <div id="vsContent"></div>
                     </div>
@@ -2629,41 +2629,70 @@
         }
 
         /* ================================================================
-         *  COMPETITORS
+         *  BENCHMARK TRACKER (vs ColdMath's 49% monthly pace)
          * ================================================================ */
         function updateCompetitors(comp) {
             var block = document.getElementById('vsBlock');
             var content = document.getElementById('vsContent');
-            if (!comp || !comp.competitors || Object.keys(comp.competitors).length === 0) {
-                block.style.display = 'none';
-                return;
-            }
             block.style.display = 'block';
             while (content.firstChild) content.removeChild(content.firstChild);
 
+            var ourPnl = (comp && comp.our_pnl) ? comp.our_pnl : (prevState.total_pnl || 0);
+            var bankroll = prevState.bankroll || 2000;
+
+            // ColdMath benchmark: 49% monthly = ~1.6% daily
+            var dailyTargetPct = 0.016;
+            var dailyTarget = bankroll * dailyTargetPct;
+
+            // Our row
             var ourRow = el('div', 'vs-row');
             var ourName = el('span', 'vs-player us', 'WeatherEdge');
             var ourStat = el('span', 'vs-stat');
-            var ourPnl = comp.our_pnl || 0;
             ourStat.textContent = fmtPnl(ourPnl);
             ourStat.style.color = ourPnl >= 0 ? 'var(--green)' : 'var(--red)';
             ourRow.appendChild(ourName);
             ourRow.appendChild(ourStat);
             content.appendChild(ourRow);
 
-            var competitors = comp.competitors;
-            Object.keys(competitors).forEach(function(name) {
-                var c = competitors[name];
-                var row = el('div', 'vs-row');
-                var nameEl = el('span', 'vs-player them', name);
-                var statEl = el('span', 'vs-stat');
-                var cPnl = c.pnl || c.total_pnl || 0;
-                statEl.textContent = fmtPnl(cPnl);
-                statEl.style.color = cPnl >= 0 ? 'var(--green)' : 'var(--red)';
-                row.appendChild(nameEl);
-                row.appendChild(statEl);
-                content.appendChild(row);
+            // Benchmark row
+            var benchRow = el('div', 'vs-row');
+            var benchName = el('span', 'vs-player them', 'Target (1.6%/day)');
+            var benchStat = el('span', 'vs-stat');
+            benchStat.textContent = '$' + dailyTarget.toFixed(0) + '/day';
+            benchStat.style.color = 'var(--text-dim)';
+            benchRow.appendChild(benchName);
+            benchRow.appendChild(benchStat);
+            content.appendChild(benchRow);
+
+            // Progress bar: our P&L vs daily target
+            var pctOfTarget = dailyTarget > 0 ? Math.min(ourPnl / dailyTarget, 3.0) : 0;
+            var barOuter = el('div');
+            setStyle(barOuter, {
+                background: 'var(--bg-card)', borderRadius: '3px', height: '6px',
+                marginTop: '6px', overflow: 'hidden', position: 'relative'
             });
+            var barInner = el('div');
+            var barWidth = Math.max(0, Math.min(100, pctOfTarget * 100));
+            var barColor = pctOfTarget >= 1.0 ? 'var(--green)' : pctOfTarget >= 0.5 ? 'var(--yellow)' : 'var(--red)';
+            setStyle(barInner, {
+                background: barColor, height: '100%', width: barWidth + '%',
+                borderRadius: '3px', transition: 'width 0.5s'
+            });
+            barOuter.appendChild(barInner);
+            content.appendChild(barOuter);
+
+            // Pace label
+            var paceLabel = el('div');
+            setStyle(paceLabel, { fontSize: '9px', color: 'var(--text-muted)', marginTop: '4px', textAlign: 'right' });
+            if (ourPnl >= dailyTarget) {
+                paceLabel.textContent = 'Beating ColdMath pace';
+                paceLabel.style.color = 'var(--green)';
+            } else if (ourPnl > 0) {
+                paceLabel.textContent = (pctOfTarget * 100).toFixed(0) + '% of daily target';
+            } else {
+                paceLabel.textContent = 'Below target';
+            }
+            content.appendChild(paceLabel);
         }
 
         /* ================================================================
