@@ -4,14 +4,18 @@ Weather models update on fixed schedules. Right after a new model run drops,
 there's a 5-15 minute window where Polymarket prices haven't adjusted.
 This is the "Golden Window" for placing trades with maximum edge.
 
-Model update schedules (approximate UTC times for data availability):
-- HRRR: Every hour (H+45min, i.e., data from 12z run available ~12:45 UTC)
-- GFS: 4x/day, 00z (~04:30), 06z (~10:30), 12z (~16:30), 18z (~22:30)
-- ECMWF: 2x/day, 00z (~06:00), 12z (~18:00)
+Model update schedules (approximate UTC times for data availability on Open-Meteo):
+- HRRR: Every hour (H+2h, i.e., data from 12z run available ~14:00 UTC)
+- GFS: 4x/day, 00z (~04:00), 06z (~10:00), 12z (~16:00), 18z (~22:00)
+- ECMWF: 2x/day, 00z (~07:00), 12z (~19:00)
 - NAM: 4x/day, 00z (~03:30), 06z (~09:30), 12z (~15:30), 18z (~21:30)
 - ICON: 4x/day, 00z (~04:00), 06z (~10:00), 12z (~16:00), 18z (~22:00)
 
-Source: Gemini CLI analysis + standard meteorological data dissemination schedules.
+Note: ECMWF and GFS times corrected upward from earlier estimates.
+ECMWF requires ~7h (model run + computation + Open-Meteo ingest).
+GFS requires ~4h. HRRR requires ~2h.
+
+Source: Gemini CLI analysis + Open-Meteo generationtime_ms observations.
 """
 from __future__ import annotations
 
@@ -35,17 +39,17 @@ class ModelRun:
 # Model run schedules: (run_hour_utc, minutes_after_when_available)
 MODEL_SCHEDULES: dict[WeatherModel, list[ModelRun]] = {
     WeatherModel.HRRR: [
-        ModelRun(WeatherModel.HRRR, h, 45) for h in range(24)  # Every hour
+        ModelRun(WeatherModel.HRRR, h, 120) for h in range(24)  # Every hour, T+2h
     ],
     WeatherModel.GFS: [
-        ModelRun(WeatherModel.GFS, 0, 270),   # 00z available ~04:30 UTC
-        ModelRun(WeatherModel.GFS, 6, 270),   # 06z available ~10:30 UTC
-        ModelRun(WeatherModel.GFS, 12, 270),  # 12z available ~16:30 UTC
-        ModelRun(WeatherModel.GFS, 18, 270),  # 18z available ~22:30 UTC
+        ModelRun(WeatherModel.GFS, 0, 240),   # 00z available ~04:00 UTC (T+4h)
+        ModelRun(WeatherModel.GFS, 6, 240),   # 06z available ~10:00 UTC (T+4h)
+        ModelRun(WeatherModel.GFS, 12, 240),  # 12z available ~16:00 UTC (T+4h)
+        ModelRun(WeatherModel.GFS, 18, 240),  # 18z available ~22:00 UTC (T+4h)
     ],
     WeatherModel.ECMWF: [
-        ModelRun(WeatherModel.ECMWF, 0, 360),   # 00z available ~06:00 UTC
-        ModelRun(WeatherModel.ECMWF, 12, 360),  # 12z available ~18:00 UTC
+        ModelRun(WeatherModel.ECMWF, 0, 420),   # 00z available ~07:00 UTC (T+7h)
+        ModelRun(WeatherModel.ECMWF, 12, 420),  # 12z available ~19:00 UTC (T+7h)
     ],
     WeatherModel.NAM: [
         ModelRun(WeatherModel.NAM, 0, 210),
