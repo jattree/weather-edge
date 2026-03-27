@@ -460,3 +460,47 @@ async def fetch_market_price(
         midpoint=midpoint,
         spread=spread,
     )
+
+
+async def fetch_book_prices(market: "MarketInfo") -> dict | None:
+    """Fetch top-of-book ask prices for both YES and NO sides of a market.
+
+    Returns dict with yes_ask, no_ask, spread_cost (yes_ask + no_ask).
+    Spread capture is profitable when spread_cost < 1.0.
+    """
+    if not market.token_id_yes or not market.token_id_no:
+        return None
+
+    from weather_edge.config import settings
+
+    result = {"yes_ask": None, "no_ask": None, "yes_bid": None, "no_bid": None}
+
+    async with httpx.AsyncClient() as client:
+        for side, token_id in [("yes", market.token_id_yes), ("no", market.token_id_no)]:
+            try:
+                resp = await client.get(
+                    f"{settings.polymarket_clob_url}/book",
+                    params={"token_id": token_id},
+                    timeout=10.0,
+                )
+                resp.raise_for_status()
+                book = resp.json()
+                bids = book.get("bids", [])
+                asks = book.get("asks", [])
+                if asks:
+                    result[f"{side}_ask"] = float(asks[0].get("price", 0))
+                if bids:
+                    result[f"{side}_bid"] = float(bids[0].get("price", 0))
+            except (httpx.HTTPError, ValueError) as e:
+                logger.debug("Book fetch failed for %s %s: %s", side, token_id[:20], e)
+
+    if result["yes_ask"] and result["no_ask"]:
+        result["spread_cost"] = result["yes_ask"] + result["no_ask"]
+        result["spread_profit"] = 1.0 - result["spread_cost"]
+        result["profitable"] = result["spread_cost"] < 0.985  # 1.5% safety buffer per Gemini
+    else:
+        result["spread_cost"] = None
+        result["spread_profit"] = None
+        result["profitable"] = False
+
+    return result
