@@ -95,10 +95,11 @@ class ModelSnapshot:
 
 @dataclass
 class MetadataProbe:
-    """Lightweight probe result tracking generationtime_ms for update detection."""
+    """Lightweight probe result, hashes forecast output to detect real model updates."""
     model: WeatherModel
-    generationtime_ms: float
+    generationtime_ms: float  # Legacy compat, now stores hash-derived number
     probed_at: datetime
+    _data_hash: str = ""  # MD5 of actual forecast values
 
 
 @dataclass
@@ -174,12 +175,13 @@ class ModelSniper:
         self,
         model: WeatherModel,
     ) -> MetadataProbe | None:
-        """Ultra-lightweight probe, fetch minimal payload to check generationtime_ms.
+        """Lightweight probe, fetch a small forecast and hash the output.
 
-        Uses lat=0, lon=0 with only temperature_2m for 1 day. The key data point
-        is `generationtime_ms` in the response, which changes when Open-Meteo
-        ingests a new model run.
+        Uses lat=0, lon=0 with daily temp for 1 day. We hash the actual
+        forecast values (not generationtime_ms which is just processing time
+        and changes every request). A hash change means new model data.
         """
+        import hashlib
         model_id = model.value
 
         async with httpx.AsyncClient() as client:
@@ -187,8 +189,8 @@ class ModelSniper:
                 _params = {
                         "latitude": 0,
                         "longitude": 0,
-                        "hourly": "temperature_2m",
-                        "forecast_days": 1,
+                        "daily": "temperature_2m_max",
+                        "forecast_days": 2,
                         "models": model_id,
                     }
                 if settings.openmeteo_api_key:
@@ -204,15 +206,16 @@ class ModelSniper:
                 logger.debug("Metadata probe failed for %s: %s", model_id, e)
                 return None
 
-        gen_time = data.get("generationtime_ms")
-        if gen_time is None:
-            logger.debug("No generationtime_ms in response for %s", model_id)
-            return None
+        # Hash the actual forecast values, these only change on real model updates
+        daily = data.get("daily", {})
+        hash_input = str(daily.get(f"temperature_2m_max_{model_id}", daily.get("temperature_2m_max", [])))
+        data_hash = hashlib.md5(hash_input.encode()).hexdigest()
 
         return MetadataProbe(
             model=model,
-            generationtime_ms=float(gen_time),
+            generationtime_ms=float(hash(data_hash) % 1000000),  # Store hash as number for compatibility
             probed_at=datetime.now(timezone.utc),
+            _data_hash=data_hash,
         )
 
     async def probe_model(
@@ -298,19 +301,19 @@ class ModelSniper:
                 continue
 
             cache_key = model.value
-            old_gen = self._generation_cache.get(cache_key)
+            old_hash = self._generation_cache.get(cache_key)
 
-            if old_gen is not None and probe.generationtime_ms != old_gen:
+            if old_hash is not None and probe._data_hash != old_hash:
                 logger.info(
-                    "NEW DATA DETECTED: %s generationtime_ms changed %.2f -> %.2f",
+                    "NEW DATA DETECTED: %s forecast hash changed (real model update)",
                     config["label"],
-                    old_gen,
-                    probe.generationtime_ms,
                 )
                 models_with_new_data.append(model)
+            elif old_hash is not None:
+                logger.debug("No change for %s (hash=%s)", config["label"], probe._data_hash[:8])
 
-            # Update generation cache
-            self._generation_cache[cache_key] = probe.generationtime_ms
+            # Update cache with hash
+            self._generation_cache[cache_key] = probe._data_hash
 
         # Phase 2: For models with new data, wait for cluster consistency then full probe
         if models_with_new_data:

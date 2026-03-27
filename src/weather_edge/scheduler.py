@@ -59,8 +59,12 @@ def compute_model_prob_for_market(market: MarketInfo, consensus) -> float | None
 async def run_cycle(
     paper_trader: PaperTrader,
     target_dates: list[date] | None = None,
+    run_ai_reasoning: bool = True,
 ) -> tuple[list[Signal], dict[tuple, list]]:
     """Run one full fetch → analyze → signal cycle.
+
+    Args:
+        run_ai_reasoning: If False, skip Claude + Gemini calls (sniper-triggered cycles).
 
     Returns:
         (signals, forecast_cache) where forecast_cache maps (city_id, date) -> forecasts
@@ -205,10 +209,9 @@ async def run_cycle(
                 )
                 all_signals.append(signal)
 
-    # === Claude reasoning layer ===
-    # Run on top 3 tradeable signals (new signals or sniper triggers)
-    # Skips if no API key or if signals haven't changed meaningfully
-    if ANTHROPIC_API_KEY and all_signals:
+    # === Claude + Gemini reasoning layer ===
+    # Only on main cycles (not sniper-triggered) to save API costs
+    if run_ai_reasoning and ANTHROPIC_API_KEY and all_signals:
         tradeable = sorted(
             [s for s in all_signals if s.confidence_tier.value != "low"],
             key=lambda s: abs(s.edge),
