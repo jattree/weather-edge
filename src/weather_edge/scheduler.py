@@ -251,12 +251,17 @@ async def run_cycle(
     market_prices: dict[str, dict] = {}
     market_by_id = {m.market_id: m for m in markets}
 
-    # Fetch book prices for markets with signals (rate-limited to top opportunities)
-    top_signals = sorted(all_signals, key=lambda s: abs(s.edge), reverse=True)[:15]
+    # Fetch book prices for top 5 signals only (each = 2 CLOB API calls)
+    logger.info("Fetching order book prices for spread detection...")
+    top_signals = sorted(all_signals, key=lambda s: abs(s.edge), reverse=True)[:5]
     for signal in top_signals:
         m = market_by_id.get(signal.market_id)
         if m and m.token_id_yes and m.token_id_no:
-            book = await fetch_book_prices(m)
+            try:
+                book = await asyncio.wait_for(fetch_book_prices(m), timeout=10.0)
+            except (asyncio.TimeoutError, Exception) as e:
+                logger.debug("Book fetch timeout/error for %s: %s", signal.city_id, e)
+                continue
             if book:
                 market_prices[signal.market_id] = {
                     "yes_price": book.get("yes_ask") or m.yes_price,
@@ -271,6 +276,7 @@ async def run_cycle(
                         signal.city_id, book["yes_ask"], book["no_ask"],
                         book["spread_cost"], book["spread_profit"],
                     )
+    logger.info("Book price fetch complete, placing trades...")
 
     for signal in all_signals:
         trade = paper_trader.place_trade(signal)
