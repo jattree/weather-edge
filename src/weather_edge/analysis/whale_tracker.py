@@ -27,16 +27,14 @@ logger = logging.getLogger(__name__)
 
 # Known whale wallets, add more as we identify them
 TRACKED_WALLETS: dict[str, str] = {
-    # ColdMath's wallet, find this from his Polymarket profile activity
-    # The hex address is visible in the transaction links on his activity page
-    # "coldmath": "0x...",  # TODO: populate from Polymarket profile
+    "coldmath": "0xcbd48cc9c6c9272dc4008c52f6e4f326ddd88832",
 }
 
 # Polymarket CTF contract on Polygon
 CTF_CONTRACT = "0x4D97DCd97eC945f40cF65F87097ACe5EA0476045"
 
-# Polygonscan API (free tier: 5 calls/sec)
-POLYGONSCAN_API = "https://api.polygonscan.com/api"
+# Etherscan V2 API (supports Polygon via chainid=137, free tier: 5 calls/sec)
+POLYGONSCAN_API = "https://api.etherscan.io/v2/api"
 POLYGONSCAN_KEY = os.environ.get("POLYGONSCAN_API_KEY", "")  # Free key from polygonscan.com
 
 
@@ -86,6 +84,7 @@ class WhaleTracker:
                 resp = await client.get(
                     POLYGONSCAN_API,
                     params={
+                        "chainid": "137",  # Polygon
                         "module": "account",
                         "action": "token1155tx",
                         "address": wallet_address,
