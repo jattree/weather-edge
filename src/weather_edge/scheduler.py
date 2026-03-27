@@ -244,6 +244,39 @@ async def run_cycle(
                 # Apply Claude's confidence adjustment to position size
                 signal.recommended_size = round(signal.recommended_size * reasoning.confidence_adjustment, 2)
 
+                # === Gemini red team on Claude-approved trades ===
+                try:
+                    from weather_edge.analysis.gemini_reasoning import red_team_trade
+                    gemini_result = await red_team_trade(
+                        signal, model_vals, consensus_mean, consensus_std,
+                        claude_rationale=reasoning.rationale,
+                    )
+                    if gemini_result:
+                        dissent = gemini_result.get("dissent_strength", 0)
+                        verdict = gemini_result.get("verdict", "AGREE")
+                        # Record Gemini decision for dashboard
+                        from weather_edge.analysis.claude_reasoning import _decision_history
+                        _decision_history.insert(0, {
+                            "time": datetime.now(timezone.utc).strftime("%H:%M:%S"),
+                            "city": signal.city_id.upper() if isinstance(signal.city_id, str) else signal.city_id,
+                            "decision": "DISSENT" if verdict == "DISSENT" else "AGREE",
+                            "signal": signal.description[:60],
+                            "adjustment": round(1.0 - dissent, 2),
+                            "rationale": "; ".join(gemini_result.get("counter_arguments", [])[:2]),
+                            "risk_factors": [gemini_result.get("risk_the_bull_missed", "")],
+                            "source": "gemini",
+                        })
+                        # High dissent = reduce size
+                        if dissent >= 0.7:
+                            old_size = signal.recommended_size
+                            signal.recommended_size = round(signal.recommended_size * 0.5, 2)
+                            logger.info(
+                                "GEMINI DISSENT: %s, reducing $%.0f -> $%.0f (dissent=%.1f)",
+                                signal.city_id, old_size, signal.recommended_size, dissent,
+                            )
+                except Exception:
+                    logger.debug("Gemini red team skipped", exc_info=True)
+
     # Place trades for all signals + generate spread capture orders
     from weather_edge.fetchers.polymarket import fetch_book_prices
     from weather_edge.trading.market_maker import MarketMaker
