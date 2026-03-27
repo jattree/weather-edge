@@ -53,20 +53,31 @@ def _check_ai_keys_at_load() -> None:
 
 _check_ai_keys_at_load()
 
-RED_TEAM_PROMPT = """You are a weather trading RED TEAM analyst. Your job is to find reasons NOT to take a trade that another analyst has approved.
+COASTAL_CITIES = {"sf", "la", "seattle", "nyc", "miami", "boston", "san_diego", "portland_or"}
 
-You receive a weather trading signal that has already been approved. Your task:
-1. Find the strongest counter-arguments against this trade
-2. Identify risks the approving analyst may have missed
-3. Rate your dissent strength from 0.0 (agree with trade) to 1.0 (strongly disagree)
+RED_TEAM_PROMPT = """You are a Lead Forensic Meteorologist. Your mission is to find the thermodynamic kill-switch for this proposed weather trade. Ignore the crowd; find why the math fails.
 
-Be specific. Generic warnings like "weather is uncertain" are useless. Point to concrete model disagreements, historical busts, or market microstructure risks.
+Analyze these failure vectors:
+
+1. CIN Cap: If the bull case relies on convective cooling (storms), check for Convective Inhibition. If CIN is likely high, the cap won't break, expect +3-5F temperature overshoot from uninterrupted solar heating.
+
+2. Marine Layer Trap: For coastal cities (SF, LA, Seattle, NYC), if a strong inversion is present, global models burn off fog 2-4 hours too early. Argue for lower max temps.
+
+3. Soil-Moisture Feedback: In Dallas, Chicago, Houston, Atlanta, if conditions are dry, GFS has a documented 4-8F warm bias. Discount GFS-led heat spikes.
+
+4. Multimodal Ensemble Dissent: If the model forecasts show two distinct clusters (not one peak), the ensemble is bimodal. Assign high dissent, averaging two different weather regimes produces a number that matches neither.
+
+5. Diurnal Timing Error: Models predict daily max temp but the actual peak depends on cloud timing. If afternoon clouds are likely (convective initiation), max temp occurs earlier and lower than models suggest.
+
+Be specific to this city and date. Generic warnings like "weather is uncertain" get a dissent score of 0.
 
 Respond in JSON only:
 {
     "dissent_strength": 0.0-1.0,
+    "primary_failure_mode": "specific mechanism",
     "counter_arguments": ["specific reason 1", "specific reason 2"],
     "risk_the_bull_missed": "one key risk",
+    "sizing_recommendation": "full" or "half" or "skip",
     "verdict": "AGREE" or "DISSENT"
 }"""
 
@@ -90,8 +101,13 @@ async def red_team_trade(
         f"  {name}: {val:.1f}°C" for name, val in sorted(model_values.items())
     )
 
+    city_lower = signal.city_id.lower().replace(" ", "_")
+    is_coastal = city_lower in COASTAL_CITIES
+    coastal_label = "YES, marine layer / inversion failure modes apply" if is_coastal else "NO, inland; soil-moisture and CIN failure modes apply"
+
     user_prompt = f"""APPROVED TRADE to red-team:
 City: {signal.city_id}
+Coastal city: {coastal_label}
 Side: {signal.recommended_side.value}
 Market price: {signal.market_prob:.1%}
 Model probability: {signal.model_prob:.1%}
@@ -106,7 +122,7 @@ Consensus: {consensus_mean:.1f}°C (std={consensus_std:.1f}°C)
 Bull case (approved by Claude):
 {claude_rationale}
 
-Find the strongest case AGAINST this trade."""
+Apply the failure vectors from your system prompt to this specific city. Find the thermodynamic kill-switch for this trade."""
 
     url = f"{GEMINI_API_URL}/{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
 
@@ -144,19 +160,23 @@ Find the strongest case AGAINST this trade."""
         verdict = result.get("verdict", "AGREE")
         counters = result.get("counter_arguments", [])
         risk = result.get("risk_the_bull_missed", "")
+        failure_mode = result.get("primary_failure_mode", "")
+        sizing = result.get("sizing_recommendation", "full")
 
         logger.info(
-            "GEMINI RED TEAM: %s %s, %s (dissent=%.1f), %s",
+            "GEMINI RED TEAM: %s %s, %s (dissent=%.1f, sizing=%s, failure=%s), %s",
             signal.city_id, signal.recommended_side.value,
-            verdict, dissent,
+            verdict, dissent, sizing, failure_mode,
             "; ".join(counters[:2]) if counters else "no counter-arguments",
         )
 
         return {
             "dissent_strength": dissent,
             "verdict": verdict,
+            "primary_failure_mode": failure_mode,
             "counter_arguments": counters,
             "risk_the_bull_missed": risk,
+            "sizing_recommendation": sizing,
             "model": "gemini",
         }
 
