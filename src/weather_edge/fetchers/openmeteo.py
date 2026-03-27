@@ -226,7 +226,18 @@ async def fetch_city_forecasts(
 
     if data is None:
         logger.warning("Gave up on %s after rate-limit retries", city_id.value)
+        try:
+            from weather_edge.analysis.service_health import record_service_call
+            record_service_call("openmeteo", False)
+        except Exception:
+            pass
         return []
+
+    try:
+        from weather_edge.analysis.service_health import record_service_call
+        record_service_call("openmeteo", True)
+    except Exception:
+        pass
 
     # Parse multi-model response: keys are like "temperature_2m_max_ecmwf_ifs025"
     daily = data.get("daily", {})

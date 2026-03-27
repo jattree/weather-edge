@@ -90,8 +90,18 @@ async def fetch_enso_state() -> ENSOState:
                 oni = float(last_line[-1])
             else:
                 oni = 0.0
+        try:
+            from weather_edge.analysis.service_health import record_service_call
+            record_service_call("noaa_cpc", True)
+        except Exception:
+            pass
     except Exception as e:
         logger.debug("NOAA ENSO fetch failed: %s, using hardcoded March 2026 values", e)
+        try:
+            from weather_edge.analysis.service_health import record_service_call
+            record_service_call("noaa_cpc", False)
+        except Exception:
+            pass
         # Fallback: known March 2026 state from CPC
         oni = -0.5  # Declining La Nina
 

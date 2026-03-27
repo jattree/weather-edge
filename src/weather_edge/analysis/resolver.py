@@ -154,8 +154,18 @@ async def check_nws_observations(city_id: str, target_date: date) -> float | Non
             )
             resp.raise_for_status()
             data = resp.json()
+            try:
+                from weather_edge.analysis.service_health import record_service_call
+                record_service_call("openmeteo_archive", True)
+            except Exception:
+                pass
         except (httpx.HTTPError, ValueError) as e:
             logger.warning("Failed to fetch observations for %s on %s: %s", city_id, target_date, e)
+            try:
+                from weather_edge.analysis.service_health import record_service_call
+                record_service_call("openmeteo_archive", False)
+            except Exception:
+                pass
             return None
 
     # Parse response

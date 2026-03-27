@@ -322,6 +322,11 @@ async def discover_weather_markets(
                 events = resp.json()
             except (httpx.HTTPError, ValueError) as e:
                 logger.error("Failed to fetch Polymarket events at offset %d: %s", offset, e)
+                try:
+                    from weather_edge.analysis.service_health import record_service_call
+                    record_service_call("polymarket_gamma", False)
+                except Exception:
+                    pass
                 break
 
             if not events:
@@ -402,6 +407,13 @@ async def discover_weather_markets(
         "Discovered %d total markets, %d for tracked cities",
         len(markets), len(tracked),
     )
+
+    try:
+        from weather_edge.analysis.service_health import record_service_call
+        record_service_call("polymarket_gamma", True, extra={"markets_discovered": len(tracked)})
+    except Exception:
+        pass
+
     return tracked
 
 
@@ -440,6 +452,11 @@ async def fetch_market_price(
             midpoint = float(mid_data.get("mid", 0))
         except (httpx.HTTPError, ValueError, KeyError) as e:
             logger.warning("Failed to fetch midpoint for %s: %s", token_id[:20], e)
+            try:
+                from weather_edge.analysis.service_health import record_service_call
+                record_service_call("polymarket_clob", False)
+            except Exception:
+                pass
             return None
 
         bid = None
@@ -463,6 +480,12 @@ async def fetch_market_price(
                 spread = ask - bid
         except (httpx.HTTPError, ValueError) as e:
             logger.debug("Failed to fetch book for %s: %s", token_id[:20], e)
+
+    try:
+        from weather_edge.analysis.service_health import record_service_call
+        record_service_call("polymarket_clob", midpoint is not None and midpoint > 0)
+    except Exception:
+        pass
 
     return PriceSnapshot(
         market_id=token_id,

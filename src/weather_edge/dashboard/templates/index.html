@@ -1616,6 +1616,91 @@
             margin-top: 2px;
         }
 
+        /* ---- SYSTEM STATUS TAB ---- */
+        .svc-summary-bar {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 10px 16px;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            margin-bottom: 16px;
+        }
+        .svc-summary-count {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 18px;
+            font-weight: 700;
+        }
+        .svc-summary-label {
+            font-size: 11px;
+            color: var(--text-dim);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        .svc-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+            gap: 10px;
+        }
+        .svc-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 12px 16px;
+            transition: border-color var(--transition-fast);
+        }
+        .svc-card:hover {
+            border-color: var(--border-active);
+        }
+        .svc-card-header {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 8px;
+        }
+        .svc-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+        .svc-dot.green { background: var(--green); box-shadow: 0 0 6px var(--green-glow); }
+        .svc-dot.yellow { background: var(--yellow); box-shadow: 0 0 6px rgba(234, 179, 8, 0.3); }
+        .svc-dot.red { background: var(--red); box-shadow: 0 0 6px var(--red-glow); }
+        .svc-dot.grey { background: var(--text-muted); }
+        .svc-dot.unknown { background: var(--text-muted); }
+        .svc-name {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--text-bright);
+        }
+        .svc-endpoint {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 10px;
+            color: var(--text-dim);
+            margin-left: auto;
+        }
+        .svc-details {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 4px 16px;
+        }
+        .svc-detail-row {
+            display: flex;
+            justify-content: space-between;
+            font-size: 11px;
+        }
+        .svc-detail-label {
+            color: var(--text-dim);
+        }
+        .svc-detail-value {
+            font-family: 'JetBrains Mono', monospace;
+            color: var(--text);
+            font-size: 11px;
+        }
+
         /* ---- KEYBOARD HELP OVERLAY ---- */
         .kbd-overlay {
             display: none;
@@ -1965,6 +2050,9 @@
 
         <!-- Tab 10: AI Decisions -->
         <div class="tab-content" id="tabAIDecisions" style="padding: 16px; flex-direction: column; overflow-y: auto;"></div>
+
+        <!-- Tab 11: System Status -->
+        <div class="tab-content" id="tabSystemStatus" style="padding: 16px; flex-direction: column; overflow-y: auto;"></div>
     </div>
 
     <!-- ======== TRADE DRILL-DOWN MODAL ======== -->
@@ -2167,7 +2255,8 @@
             { id: 'tabBacktest', label: 'Backtest', badge: null },
             { id: 'tabCorrelation', label: 'Correlation', badge: null },
             { id: 'tabExecution', label: 'Execution', badge: null },
-            { id: 'tabAIDecisions', label: 'AI Decisions', badge: '0' }
+            { id: 'tabAIDecisions', label: 'AI Decisions', badge: '0' },
+            { id: 'tabSystemStatus', label: 'System', badge: null }
         ];
         var activeTab = 'tabTradeLog';
 
@@ -2216,6 +2305,7 @@
             if (tabId === 'tabCorrelation') renderCorrelation();
             if (tabId === 'tabExecution') renderExecution();
             if (tabId === 'tabAIDecisions') renderAIDecisions();
+            if (tabId === 'tabSystemStatus') renderSystemStatus();
         }
 
         buildTabBar();
@@ -4436,7 +4526,254 @@
         }
 
         /* ================================================================
-         *  KEYBOARD SHORTCUTS (#11)
+         *  SYSTEM STATUS TAB (#11)
+         * ================================================================ */
+        var _systemStatusData = null;
+        var _systemStatusLoading = false;
+
+        function fetchSystemStatus(callback) {
+            if (_systemStatusLoading) return;
+            _systemStatusLoading = true;
+            fetch('/api/system-status')
+                .then(function(r) { return r.json(); })
+                .then(function(data) {
+                    _systemStatusData = data;
+                    _systemStatusLoading = false;
+                    if (callback) callback();
+                })
+                .catch(function() {
+                    _systemStatusLoading = false;
+                    if (callback) callback();
+                });
+        }
+
+        function renderSystemStatus() {
+            var pane = document.getElementById('tabSystemStatus');
+            while (pane.firstChild) pane.removeChild(pane.firstChild);
+
+            var title = el('div', 'panel-title', 'System Status');
+            title.style.marginBottom = '8px';
+            pane.appendChild(title);
+
+            if (!_systemStatusData) {
+                var loading = el('div');
+                loading.textContent = 'Loading system status...';
+                setStyle(loading, { color: 'var(--text-muted)', padding: '20px', textAlign: 'center', fontSize: '12px' });
+                pane.appendChild(loading);
+                fetchSystemStatus(function() { renderSystemStatus(); });
+                return;
+            }
+
+            var data = _systemStatusData;
+            var summary = data.summary || {};
+            var services = data.services || [];
+
+            /* Summary bar */
+            var summaryBar = el('div', 'svc-summary-bar');
+
+            var summaryDot = el('div', 'svc-dot');
+            var healthy = summary.healthy || 0;
+            var total = summary.total || 0;
+            if (healthy === total && total > 0) {
+                summaryDot.className = 'svc-dot green';
+            } else if (healthy >= total * 0.7) {
+                summaryDot.className = 'svc-dot yellow';
+            } else {
+                summaryDot.className = 'svc-dot red';
+            }
+            summaryBar.appendChild(summaryDot);
+
+            var countEl = el('span', 'svc-summary-count');
+            countEl.textContent = healthy + '/' + total;
+            if (healthy === total && total > 0) {
+                countEl.style.color = 'var(--green)';
+            } else if (healthy >= total * 0.7) {
+                countEl.style.color = 'var(--yellow)';
+            } else {
+                countEl.style.color = 'var(--red)';
+            }
+            summaryBar.appendChild(countEl);
+
+            var labelEl = el('span', 'svc-summary-label', 'services healthy');
+            summaryBar.appendChild(labelEl);
+
+            /* Refresh button */
+            var refreshBtn = el('button', 'tab-btn');
+            refreshBtn.textContent = 'Refresh';
+            setStyle(refreshBtn, {
+                marginLeft: 'auto', fontSize: '10px', padding: '3px 10px',
+                cursor: 'pointer', border: '1px solid var(--border)',
+                borderRadius: 'var(--radius-sm)', background: 'var(--bg-elevated)',
+                color: 'var(--text)', textTransform: 'uppercase', letterSpacing: '1px'
+            });
+            refreshBtn.addEventListener('click', function() {
+                _systemStatusData = null;
+                renderSystemStatus();
+            });
+            summaryBar.appendChild(refreshBtn);
+
+            /* Timestamp */
+            var tsEl = el('span', 'svc-summary-label');
+            if (data.timestamp) {
+                var ts = new Date(data.timestamp);
+                tsEl.textContent = ts.toLocaleTimeString('en', { hour12: false }) + ' UTC';
+            }
+            setStyle(tsEl, { marginLeft: '12px', fontSize: '10px' });
+            summaryBar.appendChild(tsEl);
+
+            pane.appendChild(summaryBar);
+
+            /* Service cards grid */
+            var grid = el('div', 'svc-grid');
+
+            services.forEach(function(svc) {
+                var card = el('div', 'svc-card');
+
+                /* Header: dot + name + endpoint */
+                var header = el('div', 'svc-card-header');
+
+                var dot = el('div', 'svc-dot');
+                var statusClass = svc.status || 'unknown';
+                if (statusClass === 'ok') statusClass = 'green';
+                if (statusClass === 'error') statusClass = 'red';
+                if (statusClass === 'disabled') statusClass = 'grey';
+                dot.className = 'svc-dot ' + statusClass;
+                header.appendChild(dot);
+
+                var nameEl = el('span', 'svc-name', svc.name);
+                header.appendChild(nameEl);
+
+                var epEl = el('span', 'svc-endpoint', svc.endpoint);
+                header.appendChild(epEl);
+
+                card.appendChild(header);
+
+                /* Details grid */
+                var details = el('div', 'svc-details');
+
+                /* Status */
+                _addDetailRow(details, 'Status', _statusLabel(svc.status), _statusColor(svc.status));
+
+                /* Last success */
+                _addDetailRow(details, 'Last OK', _formatTime(svc.last_success), 'var(--text)');
+
+                /* Key present (if applicable) */
+                if (svc.key_present !== null && svc.key_present !== undefined) {
+                    var keyColor = svc.key_present ? 'var(--green)' : 'var(--red)';
+                    _addDetailRow(details, 'API Key', svc.key_present ? 'Yes' : 'No', keyColor);
+                }
+
+                /* Service-specific metrics */
+                if (svc.id === 'openmeteo') {
+                    _addDetailRow(details, 'Paid Tier', svc.paid_tier ? 'Yes' : 'No',
+                        svc.paid_tier ? 'var(--green)' : 'var(--text-dim)');
+                }
+                if (svc.id === 'polymarket_gamma' && svc.markets_discovered !== undefined) {
+                    _addDetailRow(details, 'Markets', String(svc.markets_discovered), 'var(--cyan)');
+                }
+                if (svc.id === 'claude' && svc.decisions_today !== undefined) {
+                    _addDetailRow(details, 'Decisions', String(svc.decisions_today), 'var(--cyan)');
+                }
+                if (svc.id === 'gemini' && svc.dissents_today !== undefined) {
+                    _addDetailRow(details, 'Dissents', String(svc.dissents_today), 'var(--orange)');
+                }
+                if (svc.id === 'gribstream') {
+                    var credits = svc.credits_remaining != null ? String(svc.credits_remaining) : 'N/A';
+                    _addDetailRow(details, 'Credits', credits, 'var(--cyan)');
+                }
+                if (svc.id === 'redis') {
+                    _addDetailRow(details, 'Keys', svc.keys_count != null ? String(svc.keys_count) : 'N/A', 'var(--cyan)');
+                    _addDetailRow(details, 'Memory', svc.memory_used || 'N/A', 'var(--text)');
+                }
+                if (svc.id === 'noaa_cpc') {
+                    var phase = svc.enso_phase || 'unknown';
+                    var phaseLabel = phase.replace('_', ' ');
+                    phaseLabel = phaseLabel.charAt(0).toUpperCase() + phaseLabel.slice(1);
+                    var phaseColor = 'var(--text)';
+                    if (phase === 'el_nino') phaseColor = 'var(--red)';
+                    if (phase === 'la_nina') phaseColor = 'var(--cyan)';
+                    if (phase === 'neutral') phaseColor = 'var(--green)';
+                    _addDetailRow(details, 'Phase', phaseLabel, phaseColor);
+                    var oni = svc.oni_value != null ? svc.oni_value.toFixed(2) : 'N/A';
+                    _addDetailRow(details, 'ONI', String(oni), 'var(--text)');
+                }
+
+                /* Calls / errors */
+                if (svc.call_count > 0) {
+                    _addDetailRow(details, 'Calls', String(svc.call_count), 'var(--text-dim)');
+                    if (svc.error_count > 0) {
+                        _addDetailRow(details, 'Errors', String(svc.error_count), 'var(--red)');
+                    }
+                }
+
+                /* Response time */
+                if (svc.last_response_ms != null) {
+                    _addDetailRow(details, 'Latency', svc.last_response_ms.toFixed(0) + 'ms', 'var(--text-dim)');
+                }
+
+                card.appendChild(details);
+                grid.appendChild(card);
+            });
+
+            pane.appendChild(grid);
+        }
+
+        function _addDetailRow(parent, label, value, color) {
+            var row = el('div', 'svc-detail-row');
+            var labelEl = el('span', 'svc-detail-label', label);
+            var valueEl = el('span', 'svc-detail-value', value || '--');
+            if (color) valueEl.style.color = color;
+            row.appendChild(labelEl);
+            row.appendChild(valueEl);
+            parent.appendChild(row);
+        }
+
+        function _statusLabel(status) {
+            var map = {
+                'green': 'Healthy',
+                'yellow': 'Stale',
+                'red': 'Down',
+                'error': 'Error',
+                'disabled': 'Disabled',
+                'unknown': 'Unknown',
+                'ok': 'Healthy'
+            };
+            return map[status] || status || 'Unknown';
+        }
+
+        function _statusColor(status) {
+            var map = {
+                'green': 'var(--green)',
+                'yellow': 'var(--yellow)',
+                'red': 'var(--red)',
+                'error': 'var(--red)',
+                'disabled': 'var(--text-muted)',
+                'unknown': 'var(--text-muted)',
+                'ok': 'var(--green)'
+            };
+            return map[status] || 'var(--text-dim)';
+        }
+
+        function _formatTime(isoStr) {
+            if (!isoStr) return 'Never';
+            try {
+                var d = new Date(isoStr);
+                var now = new Date();
+                var diffMs = now - d;
+                var diffSec = Math.floor(diffMs / 1000);
+                if (diffSec < 60) return diffSec + 's ago';
+                var diffMin = Math.floor(diffSec / 60);
+                if (diffMin < 60) return diffMin + 'm ago';
+                var diffHr = Math.floor(diffMin / 60);
+                if (diffHr < 24) return diffHr + 'h ' + (diffMin % 60) + 'm ago';
+                return d.toLocaleString('en', { hour12: false, month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+            } catch (e) {
+                return isoStr;
+            }
+        }
+
+        /* ================================================================
+         *  KEYBOARD SHORTCUTS (#12)
          * ================================================================ */
         var SHORTCUTS = [
             { key: 'S', desc: 'Start trading' },
@@ -4628,6 +4965,7 @@
         renderBacktest();
         renderCorrelation();
         renderExecution();
+        renderSystemStatus();
     </script>
 </body>
 </html>
