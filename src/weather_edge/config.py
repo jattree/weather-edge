@@ -287,6 +287,7 @@ class Settings(BaseSettings):
 
     # API keys
     anthropic_api_key: str = ""  # Claude reasoning layer
+    gemini_api_key: str = ""  # Gemini red team / dissent layer
     openmeteo_base_url: str = "https://api.open-meteo.com/v1/forecast"
     openmeteo_api_key: str = ""  # Customer API key for paid tier
     polymarket_gamma_url: str = "https://gamma-api.polymarket.com"
