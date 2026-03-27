@@ -175,13 +175,25 @@ def compute_consensus(
     """
     # Extract the value for the requested variable from each forecast
     # Apply NWS station bias correction with shrinkage (50% of full correction)
+    # ENSO regime-aware bias shrinkage
+    # During La Nina → Neutral transition, reduce bias corrections for sensitive cities
+    enso_shrinkage = 1.0
+    try:
+        from weather_edge.analysis.enso_regime import _cached_enso, get_bias_shrinkage
+        if _cached_enso:
+            enso_shrinkage = get_bias_shrinkage(city_id.value if hasattr(city_id, 'value') else str(city_id), _cached_enso)
+    except Exception:
+        pass
+
+    effective_shrinkage = BIAS_SHRINKAGE * enso_shrinkage
+
     model_values: dict[str, float] = {}
     for f in forecasts:
         val = getattr(f, variable, None)
         if val is not None:
             full_correction = apply_bias_correction(val, variable, f.model_name, city_id)
-            # Shrinkage: blend raw and corrected (BIAS_SHRINKAGE=0.5 means 50% correction)
-            corrected = val + (full_correction - val) * BIAS_SHRINKAGE
+            # Shrinkage: blend raw and corrected, modulated by ENSO regime
+            corrected = val + (full_correction - val) * effective_shrinkage
             model_values[f.model_name] = corrected
 
     if not model_values:
