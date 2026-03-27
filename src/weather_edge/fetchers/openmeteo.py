@@ -103,15 +103,27 @@ async def fetch_model_forecast(
         "end_date": str(target_date),
     }
 
-    try:
-        resp = await client.get(base_url, params=params, timeout=15.0)
-        resp.raise_for_status()
-        data = resp.json()
-    except httpx.HTTPStatusError as e:
-        logger.warning("HTTP %s fetching %s for %s: %s", e.response.status_code, model_id, city_id, e)
-        return None
-    except httpx.RequestError as e:
-        logger.warning("Request error fetching %s for %s: %s", model_id, city_id, e)
+    # Retry with backoff on 429 rate limits
+    data = None
+    for attempt in range(3):
+        try:
+            resp = await client.get(base_url, params=params, timeout=15.0)
+            if resp.status_code == 429:
+                wait = 2 ** attempt * 5  # 5s, 10s, 20s
+                logger.info("Rate limited (429) on %s/%s, waiting %ds", city_id.value, model_id, wait)
+                await asyncio.sleep(wait)
+                continue
+            resp.raise_for_status()
+            data = resp.json()
+            break
+        except httpx.HTTPStatusError as e:
+            logger.warning("HTTP %s fetching %s for %s: %s", e.response.status_code, model_id, city_id, e)
+            return None
+        except httpx.RequestError as e:
+            logger.warning("Request error fetching %s for %s: %s", model_id, city_id, e)
+            return None
+    if data is None:
+        logger.warning("Gave up on %s/%s after 3 rate-limit retries", city_id.value, model_id)
         return None
 
     now = datetime.now(timezone.utc)
@@ -178,14 +190,13 @@ async def fetch_city_forecasts(
             ]
             raw_results = await asyncio.gather(*tasks, return_exceptions=True)
     else:
-        # Free tier: fetch models sequentially within a shared client
-        # (concurrent requests from gather are fine, they share one connection)
+        # Free tier (~10 req/min): fetch models sequentially to avoid 429s
+        raw_results = []
         async with httpx.AsyncClient() as client:
-            tasks = [
-                fetch_model_forecast(client, city_id, model, target_date, settings.openmeteo_base_url)
-                for model in models
-            ]
-            raw_results = await asyncio.gather(*tasks, return_exceptions=True)
+            for model in models:
+                r = await fetch_model_forecast(client, city_id, model, target_date, settings.openmeteo_base_url)
+                raw_results.append(r)
+                await asyncio.sleep(0.3)  # ~3 req/sec max
 
     for r in raw_results:
         if isinstance(r, ForecastResult):

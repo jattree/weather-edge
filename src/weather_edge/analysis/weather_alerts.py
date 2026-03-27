@@ -258,20 +258,113 @@ async def fetch_city_alerts(city_id: City) -> list[WeatherAlert]:
         return await _fetch_openmeteo_synthetic_alerts(city_id, config)
 
 
-async def fetch_all_alerts() -> list[dict]:
-    """Fetch weather alerts for all 21 monitored cities concurrently.
+def generate_synthetic_alerts_from_cache(city_id: City, config: CityConfig, forecasts: list) -> list[WeatherAlert]:
+    """Generate synthetic alerts from already-fetched forecast data (no API call)."""
+    alerts: list[WeatherAlert] = []
+    for f in forecasts:
+        d = str(f.forecast_date) if hasattr(f, 'forecast_date') else "upcoming"
+
+        if f.precip_sum_mm is not None and f.precip_sum_mm >= _PRECIP_HEAVY_MM:
+            alerts.append(WeatherAlert(
+                city_id=city_id.value, city_name=config.name, severity="warning",
+                headline=f"Heavy rain expected: {f.precip_sum_mm:.0f}mm on {d}",
+                description=f"Forecast precipitation of {f.precip_sum_mm:.1f}mm for {config.name}.",
+                expires=None, source="forecast-cache",
+            ))
+        elif f.precip_sum_mm is not None and f.precip_sum_mm >= _PRECIP_MODERATE_MM:
+            alerts.append(WeatherAlert(
+                city_id=city_id.value, city_name=config.name, severity="advisory",
+                headline=f"Moderate rain expected: {f.precip_sum_mm:.0f}mm on {d}",
+                description=f"Forecast precipitation of {f.precip_sum_mm:.1f}mm for {config.name}.",
+                expires=None, source="forecast-cache",
+            ))
+
+        if f.snow_sum_cm is not None and f.snow_sum_cm >= _SNOW_HEAVY_CM:
+            alerts.append(WeatherAlert(
+                city_id=city_id.value, city_name=config.name, severity="warning",
+                headline=f"Heavy snow expected: {f.snow_sum_cm:.0f}cm on {d}",
+                description=f"Forecast snowfall of {f.snow_sum_cm:.1f}cm for {config.name}.",
+                expires=None, source="forecast-cache",
+            ))
+        elif f.snow_sum_cm is not None and f.snow_sum_cm >= _SNOW_MODERATE_CM:
+            alerts.append(WeatherAlert(
+                city_id=city_id.value, city_name=config.name, severity="advisory",
+                headline=f"Snow expected: {f.snow_sum_cm:.0f}cm on {d}",
+                description=f"Forecast snowfall of {f.snow_sum_cm:.1f}cm for {config.name}.",
+                expires=None, source="forecast-cache",
+            ))
+
+        if f.temp_max_c is not None and f.temp_max_c >= _TEMP_EXTREME_HIGH_C:
+            alerts.append(WeatherAlert(
+                city_id=city_id.value, city_name=config.name, severity="warning",
+                headline=f"Extreme heat: {f.temp_max_c:.0f}C on {d}",
+                description=f"Forecast high of {f.temp_max_c:.1f}C for {config.name}.",
+                expires=None, source="forecast-cache",
+            ))
+
+        if f.temp_min_c is not None and f.temp_min_c <= _TEMP_EXTREME_LOW_C:
+            alerts.append(WeatherAlert(
+                city_id=city_id.value, city_name=config.name, severity="warning",
+                headline=f"Extreme cold: {f.temp_min_c:.0f}C on {d}",
+                description=f"Forecast low of {f.temp_min_c:.1f}C for {config.name}.",
+                expires=None, source="forecast-cache",
+            ))
+
+    # Deduplicate by headline (multiple models may produce same alert)
+    seen = set()
+    unique = []
+    for a in alerts:
+        if a.headline not in seen:
+            seen.add(a.headline)
+            unique.append(a)
+    return unique
+
+
+async def fetch_all_alerts(forecast_cache: dict | None = None) -> list[dict]:
+    """Fetch weather alerts for all 21 monitored cities.
+
+    US cities: NWS API (concurrent, rate-limited).
+    International cities: generated from forecast_cache (zero API calls).
+    Falls back to Open-Meteo API only if no cache provided.
 
     Returns a list of alert dicts sorted by severity (warning > watch > advisory > info).
     """
-    tasks = [fetch_city_alerts(city_id) for city_id in City]
-    results = await asyncio.gather(*tasks, return_exceptions=True)
-
     all_alerts: list[WeatherAlert] = []
-    for result in results:
-        if isinstance(result, Exception):
-            logger.warning("Alert fetch failed: %s", result)
+
+    # NWS alerts for US cities (these are a different API, no rate-limit issue)
+    nws_tasks = []
+    for city_id in City:
+        if city_id in _US_CITIES:
+            nws_tasks.append(fetch_city_alerts(city_id))
+    if nws_tasks:
+        results = await asyncio.gather(*nws_tasks, return_exceptions=True)
+        for result in results:
+            if isinstance(result, Exception):
+                logger.warning("NWS alert fetch failed: %s", result)
+                continue
+            all_alerts.extend(result)
+
+    # International cities: use forecast cache if available (no API calls)
+    for city_id in City:
+        if city_id in _US_CITIES:
             continue
-        all_alerts.extend(result)
+        config = CITIES[city_id]
+        if forecast_cache:
+            # Find any forecasts for this city in the cache
+            city_forecasts = []
+            for (cid, td), f_list in forecast_cache.items():
+                if cid == city_id:
+                    city_forecasts.extend(f_list)
+                    break
+            if city_forecasts:
+                all_alerts.extend(generate_synthetic_alerts_from_cache(city_id, config, city_forecasts))
+                continue
+        # Fallback: fetch from Open-Meteo (only if no cache)
+        try:
+            intl_alerts = await _fetch_openmeteo_synthetic_alerts(city_id, config)
+            all_alerts.extend(intl_alerts)
+        except Exception:
+            logger.debug("Synthetic alert fallback failed for %s", config.name)
 
     # Sort by severity priority
     severity_order = {"warning": 0, "watch": 1, "advisory": 2, "info": 3}
