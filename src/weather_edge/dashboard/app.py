@@ -18,7 +18,7 @@ from weather_edge.analysis.resolver import _extract_target_date_from_trade
 from weather_edge.analysis.sniper import ModelSniper
 from weather_edge.analysis.weather_alerts import fetch_all_alerts
 from weather_edge.config import CITIES, settings
-from weather_edge.fetchers.openmeteo import fetch_city_forecasts
+
 from weather_edge.models.enums import City
 from weather_edge.persistence import PersistentPaperTrader
 from weather_edge.scheduler import run_cycle
@@ -155,9 +155,9 @@ async def run_dashboard_cycle() -> None:
     await competitor_tracker.update_all()
 
     # Run the core cycle (fetches markets, forecasts, computes signals, places paper trades)
-    all_signals = await run_cycle(paper_trader, target_dates)
+    all_signals, forecast_cache = await run_cycle(paper_trader, target_dates)
 
-    # Build city data for the dashboard display
+    # Build city data from the forecast cache (no re-fetching!)
     city_data = {}
     for city_id in City:
         city_config = CITIES[city_id]
@@ -168,8 +168,10 @@ async def run_dashboard_cycle() -> None:
             "models": {},
         }
 
-        # Fetch tomorrow's forecasts for display
-        forecasts = await fetch_city_forecasts(city_id, tomorrow)
+        # Use cached forecasts from run_cycle
+        forecasts = forecast_cache.get((city_id, tomorrow), [])
+        if not forecasts:
+            forecasts = forecast_cache.get((city_id, today), [])
         if forecasts:
             for f in forecasts:
                 if f.temp_max_c is not None:
