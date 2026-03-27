@@ -60,7 +60,7 @@ async def run_cycle(
     paper_trader: PaperTrader,
     target_dates: list[date] | None = None,
     run_ai_reasoning: bool = True,
-) -> tuple[list[Signal], dict[tuple, list]]:
+) -> tuple[list[Signal], dict[tuple, list], dict[str, dict]]:
     """Run one full fetch → analyze → signal cycle.
 
     Args:
@@ -92,6 +92,17 @@ async def run_cycle(
     # Step 1: Discover active weather markets (prices included from Gamma API)
     logger.info("=== Discovering Polymarket weather markets ===")
     markets = await discover_weather_markets()
+
+    # Aggregate volume and liquidity by city for dashboard
+    city_volume: dict[str, dict] = {}
+    for m in markets:
+        if m.city_id:
+            cid = m.city_id.value
+            if cid not in city_volume:
+                city_volume[cid] = {"volume_24h": 0.0, "liquidity": 0.0, "markets": 0}
+            city_volume[cid]["volume_24h"] += m.volume_24h or 0
+            city_volume[cid]["liquidity"] += m.liquidity or 0
+            city_volume[cid]["markets"] += 1
 
     # Step 1b: Check bucket parity for arbitrage opportunities
     if markets:
@@ -402,7 +413,7 @@ async def run_cycle(
                         city_id.value, consensus.weighted_mean, consensus.confidence * 100,
                     )
 
-    return all_signals, _forecast_cache
+    return all_signals, _forecast_cache, city_volume
 
 
 async def run_loop(paper_trader: PaperTrader) -> None:
@@ -414,7 +425,7 @@ async def run_loop(paper_trader: PaperTrader) -> None:
         cycle_num += 1
         logger.info("===== CYCLE %d START =====", cycle_num)
         try:
-            signals, _ = await run_cycle(paper_trader)
+            signals, _, _ = await run_cycle(paper_trader)
             tradeable = [s for s in signals if s.confidence_tier.value != "low"]
             logger.info(
                 "Cycle %d complete: %d signals, %d tradeable, P&L=$%.2f",

@@ -3579,6 +3579,25 @@
                 }
                 cell.appendChild(edgeLabel);
 
+                /* Volume indicator */
+                var cityInfo = cities[cid.toLowerCase()] || {};
+                var vol = cityInfo.volume_24h || 0;
+                if (vol > 0) {
+                    var volRow = el('div', 'heatmap-row');
+                    var volLabel = el('span', 'heatmap-label', 'Vol:');
+                    var volVal = el('span');
+                    if (vol >= 1000) {
+                        volVal.textContent = '$' + (vol / 1000).toFixed(1) + 'K';
+                    } else {
+                        volVal.textContent = '$' + vol.toFixed(0);
+                    }
+                    volVal.style.color = vol >= 10000 ? 'var(--cyan)' : vol >= 1000 ? 'var(--text)' : 'var(--text-muted)';
+                    volVal.style.fontSize = '10px';
+                    volRow.appendChild(volLabel);
+                    volRow.appendChild(volVal);
+                    cell.appendChild(volRow);
+                }
+
                 hmGrid.appendChild(cell);
             });
 
