@@ -117,6 +117,7 @@ async def run_cycle(
 
     all_signals: list[Signal] = []
     _forecast_cache: dict[tuple, list] = {}  # (city_id, date) -> forecasts for Claude
+    _ai_divergence_cache: dict[tuple, dict | None] = {}  # (city, variable) -> divergence result
 
     # Check if we're in a golden window (model just updated)
     if is_golden_window():
@@ -288,19 +289,26 @@ async def run_cycle(
                 # Apply pattern-based confidence boost + forecast trend stability
                 adjusted_conf = min(1.0, consensus.confidence * pattern_conf_mult * trend_mult)
 
-                # Apply AI vs physics divergence (GraphCast comparison)
-                ai_fc = ai_forecasts.get(city_id.value)
-                if ai_fc and variable == "temp_max_c":
-                    try:
-                        div = compute_ai_physics_divergence(ai_fc, consensus.weighted_mean)
-                        adjusted_conf = min(1.0, adjusted_conf * div["confidence_multiplier"])
-                        if div["signal"] == "strong_diverge":
-                            logger.info(
-                                "AI DIVERGE: %s GraphCast=%.1fC vs physics=%.1fC (%+.1fC), conf reduced",
-                                city_id.value, div["ai_max_c"], div["physics_mean_c"], div["divergence_c"],
-                            )
-                    except Exception:
-                        pass
+                # Apply AI vs physics divergence (GraphCast comparison), computed once per city
+                _ai_div_key = (city_id.value, variable)
+                if _ai_div_key not in _ai_divergence_cache:
+                    ai_fc = ai_forecasts.get(city_id.value)
+                    if ai_fc and variable == "temp_max_c":
+                        try:
+                            div = compute_ai_physics_divergence(ai_fc, consensus.weighted_mean)
+                            _ai_divergence_cache[_ai_div_key] = div
+                            if div["signal"] == "strong_diverge":
+                                logger.info(
+                                    "AI DIVERGE: %s GraphCast=%.1fC vs physics=%.1fC (%+.1fC), conf ×%.2f",
+                                    city_id.value, div["ai_max_c"], div["physics_mean_c"],
+                                    div["divergence_c"], div["confidence_multiplier"],
+                                )
+                        except Exception:
+                            _ai_divergence_cache[_ai_div_key] = None
+
+                ai_div = _ai_divergence_cache.get(_ai_div_key)
+                if ai_div:
+                    adjusted_conf = min(1.0, adjusted_conf * ai_div["confidence_multiplier"])
 
                 signal = calculate_edge(
                     market_id=market.market_id,

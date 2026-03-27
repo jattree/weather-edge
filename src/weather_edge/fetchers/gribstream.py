@@ -198,7 +198,18 @@ async def fetch_ai_forecasts_batch(
             csv_text = resp.text
     except (httpx.HTTPError, Exception) as e:
         logger.warning("GribStream batch %s fetch failed: %s", model, e)
+        try:
+            from weather_edge.analysis.service_health import record_service_call
+            record_service_call("gribstream", False)
+        except Exception:
+            pass
         return {}
+
+    try:
+        from weather_edge.analysis.service_health import record_service_call
+        record_service_call("gribstream", True)
+    except Exception:
+        pass
 
     # Parse CSV, group by city name
     lines = csv_text.strip().split("\n")
