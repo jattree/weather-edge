@@ -102,6 +102,9 @@ class PaperTrader:
     def tail_budget(self) -> float:
         return self.penny_budget
 
+    # Reserve 10% of bankroll for high-conviction sniper trades
+    RESERVE_PCT = 0.10
+
     def should_trade(self, signal: Signal) -> bool:
         """Determine if a signal warrants a paper trade."""
         if signal.confidence_tier == SignalTier.LOW:
@@ -116,8 +119,14 @@ class PaperTrader:
         else:
             # Core bets: check today + tomorrow combined budget
             remaining = self.core_budget - self.core_at_risk
-        # Also check overall capital
-        remaining = min(remaining, self.available_capital)
+
+        # Reserve: keep 10% of bankroll uncommitted unless this is HIGH tier
+        reserve = self.bankroll * self.RESERVE_PCT
+        available = self.available_capital
+        if signal.confidence_tier != SignalTier.HIGH:
+            available = max(0, available - reserve)
+
+        remaining = min(remaining, available)
         if signal.recommended_size > remaining:
             return False
         return True
