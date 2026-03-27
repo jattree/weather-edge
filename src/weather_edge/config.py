@@ -230,6 +230,26 @@ CITIES: dict[City, CityConfig] = {
         timezone="America/Chicago",
         regional_models=[WeatherModel.HRRR, WeatherModel.NAM],
     ),
+    City.WLG: CityConfig(
+        city_id=City.WLG,
+        name="Wellington",
+        icao="NZWN",
+        latitude=-41.3272,
+        longitude=174.8050,
+        timezone="Pacific/Auckland",
+        regional_models=[],
+        temp_unit="celsius",
+    ),
+    City.LKO: CityConfig(
+        city_id=City.LKO,
+        name="Lucknow",
+        icao="VILK",
+        latitude=26.8467,
+        longitude=80.9462,
+        timezone="Asia/Kolkata",
+        regional_models=[],
+        temp_unit="celsius",
+    ),
 }
 
 # Global models applied to every city
@@ -284,15 +304,20 @@ class Settings(BaseSettings):
     max_position_pct: float = 0.03
     fetch_interval_minutes: int = 30
 
-    # Pool allocation (Gemini-validated 60/30/10 split)
-    pool_today_pct: float = 0.60    # Same-day markets, recycles nightly
-    pool_tomorrow_pct: float = 0.30  # Tomorrow conviction bets
-    pool_penny_pct: float = 0.10     # Penny sweep tail bets
+    # Pool allocation (hybrid: penny-first targeting, sustainable at $2K)
+    # Post-Monday fee cliff: penny bets are fee-immune, core trades get hit 1.25%
+    pool_today_pct: float = 0.35    # Same-day core trades (reduced, fee-penalised)
+    pool_tomorrow_pct: float = 0.25  # Tomorrow conviction bets
+    pool_penny_pct: float = 0.40     # Penny sniping (ColdMath's profit engine, fee-immune)
 
-    # Penny sweep constraints
+    # Penny sweep constraints (ColdMath targets 0.1-3c, $15-25 per position)
     penny_min_edge_multiplier: float = 3.0  # Model must say 3x market price
-    penny_min_position: float = 10.0        # Min $10 per penny bet (gas efficiency)
-    penny_max_position: float = 20.0        # Max $20 per penny bet
+    penny_min_position: float = 10.0        # Min $10 per penny bet
+    penny_max_position: float = 50.0        # Max $50 per penny bet (up from $20)
+    penny_max_entry_price: float = 0.05     # Only enter at 5c or below (was 6c)
+
+    # Order splitting for penny bets (avoid moving thin markets)
+    penny_order_split_max_shares: int = 5   # Max shares per order (ColdMath uses 1-5)
 
     # API keys
     anthropic_api_key: str = ""  # Claude reasoning layer

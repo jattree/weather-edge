@@ -43,6 +43,8 @@ ENSO_SENSITIVITY = {
     "lon": 0.2, "muc": 0.2, "war": 0.2, "mad": 0.3,
     "tyo": 0.4, "sel": 0.4, "hkg": 0.3, "sha": 0.3,
     "szn": 0.3, "bue": 0.5, "tor": 0.4,
+    "wlg": 0.6,  # Wellington, strong ENSO sensitivity, Southern Hemisphere
+    "lko": 0.4,  # Lucknow, moderate, monsoon onset timing shifts with ENSO
 }
 
 

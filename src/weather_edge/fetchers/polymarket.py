@@ -47,6 +47,8 @@ CITY_NAME_MAP: dict[str, City] = {
     "warsaw": City.WAR,
     "shenzhen": City.SZN,
     "austin": City.AUS,
+    "wellington": City.WLG,
+    "lucknow": City.LKO,
 }
 
 # Parse date from event titles: "... on March 27?"

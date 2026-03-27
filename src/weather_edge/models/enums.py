@@ -25,6 +25,8 @@ class City(str, Enum):
     WAR = "war"
     SZN = "szn"
     AUS = "aus"  # Austin, ColdMath trades this actively
+    WLG = "wlg"  # Wellington, ColdMath's $7K+ wins, thin market
+    LKO = "lko"  # Lucknow, ColdMath's $6.8K win at 0.1c, thin market
 
 
 class WeatherModel(str, Enum):
