@@ -207,8 +207,14 @@ The system detects weather patterns that cause systematic model failures:
 | Cold pool/inversion | Warsaw | GFS too warm | 5-15C | GFS >> ECMWF |
 | GFS dry bias | Houston, Dallas | GFS too warm | 3-5F | GFS >> ECMWF |
 | Sea breeze timing | Tokyo, Seoul, NYC | Variable | 2-3C | Large model spread |
+| PRD haze suppression | Shenzhen, HK | Models too warm | 2-5C | Pollution blocks solar radiation |
+| Shanghai boundary layer | Shanghai | UHI vs haze conflict | 3-6C | ECMWF vs GFS divergence |
+| Asian cold front | SHA, SZN, HKG, SEL, TYO | Timing error | 8-12C | Large model spread (>5C) |
+| Return of Nantian | Shenzhen, HK, Shanghai | Models too warm | 2-4C | Tight consensus + 18-26C range |
 
 When a pattern is detected, trading confidence increases on the correctly-predicted side.
+
+13 patterns across 22 cities. Asian markets (Shenzhen $111K volume on 3 markets) have outsized volume-per-market ratios driven by gambling-motivated participants, wide edges.
 
 ## Three-Pool Strategy (Gemini-Validated)
 
@@ -283,7 +289,9 @@ Resolution timing (after target date midnight local time + 2h NWS buffer):
 
 ## Dashboard (Bloomberg-Grade)
 
-10 tabs, all functional (no stubs):
+Header bar: Portfolio Value | Free Cash | Invested | P&L | Return % | Win Rate | Positions | Cycles
+
+11 tabs, all functional (no stubs):
 
 | Tab | Feature |
 |-----|---------|
@@ -297,6 +305,7 @@ Resolution timing (after target date midnight local time + 2h NWS buffer):
 | Correlation | 21x21 city forecast correlation matrix from model data |
 | Execution | Position sizing stats, edge distribution histogram, capital utilization |
 | AI Decisions | Claude TRADE/SKIP + Gemini AGREE/DISSENT decisions with rationale and risk factors |
+| System Status | Health monitoring for all 10 external services with status dots and key metrics |
 
 ### Dashboard Controls
 
