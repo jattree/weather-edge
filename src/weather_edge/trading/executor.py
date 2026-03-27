@@ -1,6 +1,8 @@
 """Real trade execution via Polymarket CLOB API.
 
-Uses limit orders (not market orders) for better fill prices on illiquid weather markets.
+Uses post-only limit orders (maker orders) to avoid taker fees.
+Weather markets charge dynamic taker fees from March 30 2026,
+posting as maker saves 1.25% at 50% and ensures $0 fees.
 """
 from __future__ import annotations
 
@@ -9,6 +11,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from weather_edge.analysis.edge import Signal
+from weather_edge.trading.fees import calculate_taker_fee
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +24,9 @@ class OrderResult:
     side: str
     size_usd: float
     limit_price: float
-    status: str  # 'pending', 'filled', 'partial', 'cancelled'
+    status: str  # 'pending', 'filled', 'partial', 'cancelled', 'post_only_reject'
+    is_maker: bool = True
+    taker_fee_avoided: float = 0.0  # Fee we avoided by being maker
     filled_price: float | None = None
     filled_at: datetime | None = None
     tx_hash: str | None = None
@@ -39,10 +44,12 @@ class TradeExecutor:
         api_key: str | None = None,
         private_key: str | None = None,
         dry_run: bool = True,
+        post_only: bool = True,
     ):
         self.api_key = api_key
         self.private_key = private_key
         self.dry_run = dry_run
+        self.post_only = post_only
         self._client = None
 
     async def initialize(self) -> None:
@@ -74,25 +81,33 @@ class TradeExecutor:
         token_id: str,
         improve_price_by: float = 0.005,
     ) -> OrderResult | None:
-        """Place a limit order with slight price improvement over midpoint.
+        """Place a post-only limit order to avoid taker fees.
 
-        Instead of market-ordering at the midpoint (like ColdMath seems to do),
-        we place a limit order slightly better than the current best bid/ask
-        to get a better fill price. On illiquid weather markets, this can
-        save 0.5-2% per trade.
+        Post-only ensures our order rests on the book (maker) rather than
+        crossing the spread (taker). Makers pay $0 fees; takers pay up to
+        1.25% at 50% probability. If the order would cross the spread,
+        it's rejected with POST_ONLY_REJECT, we log and skip rather than
+        falling back to a taker order.
 
         Args:
             signal: The trading signal
             token_id: Polymarket token ID for YES or NO
             improve_price_by: How much to improve the limit price vs midpoint
         """
+        # Calculate the taker fee we'd avoid by being maker
+        taker_fee_avoided = calculate_taker_fee(signal.market_prob, signal.recommended_size)
+
         if self.dry_run:
             logger.info(
-                "DRY RUN: Would place %s limit order for $%.0f @ %.3f on %s",
+                "DRY RUN: Would place %s %s limit order for $%.0f @ %.3f on %s "
+                "(post_only=%s, taker_fee_avoided=$%.2f)",
+                "MAKER" if self.post_only else "TAKER",
                 signal.recommended_side.value,
                 signal.recommended_size,
                 signal.market_prob,
                 signal.market_id[:30],
+                self.post_only,
+                taker_fee_avoided,
             )
             return OrderResult(
                 order_id="dry_run",
@@ -101,6 +116,8 @@ class TradeExecutor:
                 size_usd=signal.recommended_size,
                 limit_price=signal.market_prob,
                 status="dry_run",
+                is_maker=self.post_only,
+                taker_fee_avoided=round(taker_fee_avoided, 4),
             )
 
         if self._client is None:
@@ -121,22 +138,51 @@ class TradeExecutor:
         shares = signal.recommended_size / limit_price
 
         try:
-            # Place the order via CLOB client
-            order = await self._client.create_and_post_order(
+            # Build order kwargs, add post_only when enabled
+            order_kwargs = dict(
                 token_id=token_id,
                 price=limit_price,
                 size=shares,
                 side="BUY",
             )
+            if self.post_only:
+                order_kwargs["post_only"] = True
+
+            order = await self._client.create_and_post_order(**order_kwargs)
+
+            # Detect POST_ONLY_REJECT: order would have crossed spread
+            order_status = order.get("status", "")
+            if order_status == "POST_ONLY_REJECT":
+                logger.warning(
+                    "POST_ONLY_REJECT: %s %s @ %.3f, market moved, order would cross spread. "
+                    "Skipping to avoid taker fee ($%.2f).",
+                    signal.recommended_side.value,
+                    signal.city_id,
+                    limit_price,
+                    taker_fee_avoided,
+                )
+                return OrderResult(
+                    order_id=order.get("orderID", "rejected"),
+                    market_id=signal.market_id,
+                    side=signal.recommended_side.value,
+                    size_usd=signal.recommended_size,
+                    limit_price=limit_price,
+                    status="post_only_reject",
+                    is_maker=False,
+                    taker_fee_avoided=0.0,
+                )
 
             order_id = order.get("orderID", "unknown")
             logger.info(
-                "LIVE ORDER: %s %s $%.0f @ %.3f (limit) | order_id=%s",
+                "LIVE MAKER ORDER: %s %s $%.0f @ %.3f (post_only=%s) | "
+                "order_id=%s | taker_fee_avoided=$%.2f",
                 signal.recommended_side.value,
                 signal.city_id,
                 signal.recommended_size,
                 limit_price,
+                self.post_only,
                 order_id,
+                taker_fee_avoided,
             )
 
             return OrderResult(
@@ -146,6 +192,8 @@ class TradeExecutor:
                 size_usd=signal.recommended_size,
                 limit_price=limit_price,
                 status="pending",
+                is_maker=self.post_only,
+                taker_fee_avoided=round(taker_fee_avoided, 4),
             )
         except Exception as e:
             logger.error("Failed to place order: %s", e)

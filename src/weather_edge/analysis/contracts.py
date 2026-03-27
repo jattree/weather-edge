@@ -3,7 +3,7 @@
 Pure functions, no side effects, no API calls, no file I/O.
 Each returns a ContractResult indicating whether a business invariant holds.
 
-These catch the 7 dangerous silent failures that would cost real money:
+These catch the 8 dangerous silent failures that would cost real money:
 1. EMOS calibration disabled (edges go from 5% to 86%)
 2. Pool budget exceeded (betting more than the bankroll)
 3. Reserve pot breached (no capital left for high-conviction trades)
@@ -11,6 +11,7 @@ These catch the 7 dangerous silent failures that would cost real money:
 5. AI keys missing when reasoning expected (trading blind)
 6. Insufficient models for consensus (garbage in, garbage out)
 7. Spread profit calculated from midpoints instead of asks (phantom edge)
+8. Taker fee eats too much of projected alpha (fees > 40% of edge)
 """
 from __future__ import annotations
 
@@ -231,5 +232,52 @@ def validate_spread_uses_asks(
             valid=False,
             error=f"Spread calculated from midpoints: {'; '.join(problems)}",
             code="SPREAD_MIDPOINT_RISK",
+        )
+    return ContractResult(valid=True)
+
+
+def validate_fee_alpha_ratio(
+    edge: float,
+    price: float,
+    size_usd: float,
+    max_fee_pct: float = 0.40,
+    peak_rate: float = 0.0125,
+) -> ContractResult:
+    """Verify taker fee doesn't eat >40% of projected alpha.
+
+    Dynamic taker fee = peak_rate * 4 * P * (1-P) * size_usd.
+    Projected alpha = edge * size_usd.
+    If fee / alpha > max_fee_pct, the trade's not worth taking.
+
+    This catches trades where fees erode most of the edge, especially
+    dangerous near 50% probability where fees peak at 1.25%.
+
+    Args:
+        edge: Raw edge in probability units (e.g. 0.05 = 5%).
+        price: Market probability / price (0-1).
+        size_usd: Trade notional in USD.
+        max_fee_pct: Maximum acceptable fee as fraction of alpha (default 40%).
+        peak_rate: Taker fee peak rate (default 1.25%).
+    """
+    if edge <= 0 or size_usd <= 0:
+        return ContractResult(
+            valid=False,
+            error="No positive edge or size, trade has no alpha",
+            code="FEE_EATS_ALPHA",
+        )
+
+    fee = peak_rate * 4.0 * price * (1.0 - price) * size_usd
+    projected_alpha = edge * size_usd
+    fee_ratio = fee / projected_alpha if projected_alpha > 0 else float("inf")
+
+    if fee_ratio > max_fee_pct:
+        return ContractResult(
+            valid=False,
+            error=(
+                f"Taker fee ${fee:.2f} eats {fee_ratio:.0%} of "
+                f"projected alpha ${projected_alpha:.2f} "
+                f"(max allowed: {max_fee_pct:.0%})"
+            ),
+            code="FEE_EATS_ALPHA",
         )
     return ContractResult(valid=True)

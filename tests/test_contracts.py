@@ -11,11 +11,18 @@ from weather_edge.analysis.contracts import (
     ContractResult,
     validate_ai_keys_present,
     validate_emos_active,
+    validate_fee_alpha_ratio,
     validate_model_count,
     validate_penny_no_exit,
     validate_pool_budget,
     validate_reserve_pot,
     validate_spread_uses_asks,
+)
+from weather_edge.trading.fees import (
+    calculate_maker_rebate,
+    calculate_taker_fee,
+    fee_eats_alpha,
+    net_cost_after_fees,
 )
 
 
@@ -374,3 +381,146 @@ class TestContractResult:
         r = ContractResult(valid=True)
         with pytest.raises(AttributeError):
             r.valid = False  # type: ignore[misc]
+
+
+# ---------------------------------------------------------------------------
+# Taker fee calculations (fees.py)
+# Dynamic formula: fee = 0.0125 * 4 * P * (1-P) * trade_value
+# Peak at 50%, negligible at extremes. Makers pay $0.
+# ---------------------------------------------------------------------------
+
+class TestCalculateTakerFee:
+
+    def test_fee_at_50_pct(self):
+        """At 50% probability: fee = 0.0125 * 4 * 0.5 * 0.5 * 100 = $1.25."""
+        fee = calculate_taker_fee(0.50, 100.0)
+        assert fee == pytest.approx(1.25, abs=0.001)
+
+    def test_fee_at_95_pct(self):
+        """At 95% probability: fee ~0.24% of trade value."""
+        fee = calculate_taker_fee(0.95, 100.0)
+        # 0.0125 * 4 * 0.95 * 0.05 * 100 = 0.2375
+        assert fee == pytest.approx(0.2375, abs=0.001)
+
+    def test_fee_at_5_pct(self):
+        """At 5% probability: fee ~0.24% (symmetric with 95%)."""
+        fee = calculate_taker_fee(0.05, 100.0)
+        assert fee == pytest.approx(0.2375, abs=0.001)
+
+    def test_fee_at_99_pct(self):
+        """At 99% probability: fee ~0.05% (negligible)."""
+        fee = calculate_taker_fee(0.99, 100.0)
+        # 0.0125 * 4 * 0.99 * 0.01 * 100 = 0.0495
+        assert fee == pytest.approx(0.0495, abs=0.001)
+
+    def test_fee_at_1_pct(self):
+        """At 1% probability: symmetric with 99%."""
+        fee = calculate_taker_fee(0.01, 100.0)
+        assert fee == pytest.approx(0.0495, abs=0.001)
+
+    def test_fee_scales_with_size(self):
+        """Fee scales linearly with trade size."""
+        fee_100 = calculate_taker_fee(0.50, 100.0)
+        fee_200 = calculate_taker_fee(0.50, 200.0)
+        assert fee_200 == pytest.approx(fee_100 * 2, abs=0.001)
+
+    def test_fee_zero_size(self):
+        """Zero trade size = zero fee."""
+        assert calculate_taker_fee(0.50, 0.0) == 0.0
+
+    def test_fee_symmetric(self):
+        """Fee is symmetric around 50%: f(P) == f(1-P)."""
+        assert calculate_taker_fee(0.30, 100.0) == pytest.approx(
+            calculate_taker_fee(0.70, 100.0), abs=0.0001
+        )
+
+
+class TestMakerRebate:
+
+    def test_25_pct_rebate(self):
+        """25% of $1.25 taker fee = $0.3125 rebate."""
+        rebate = calculate_maker_rebate(1.25)
+        assert rebate == pytest.approx(0.3125, abs=0.001)
+
+    def test_zero_fee_zero_rebate(self):
+        """No taker fee = no rebate."""
+        assert calculate_maker_rebate(0.0) == 0.0
+
+
+class TestNetCostAfterFees:
+
+    def test_maker_pays_zero_fees(self):
+        """Makers (limit orders that don't cross spread) pay $0 in fees."""
+        cost = net_cost_after_fees(0.50, 100.0, is_maker=True)
+        assert cost == 100.0  # Exactly the trade value, no fee
+
+    def test_taker_pays_fee(self):
+        """Taker at 50%: $100 + $1.25 fee = $101.25."""
+        cost = net_cost_after_fees(0.50, 100.0, is_maker=False)
+        assert cost == pytest.approx(101.25, abs=0.01)
+
+
+class TestFeeEatsAlpha:
+
+    def test_large_edge_small_fee(self):
+        """10% edge at 95% price: fee is tiny vs alpha. Trade is good."""
+        assert fee_eats_alpha(0.10, 0.95, 50.0) is False
+
+    def test_small_edge_high_fee(self):
+        """1% edge at 50% price: fee is 1.25% > 40% of 1%. Skip."""
+        assert fee_eats_alpha(0.01, 0.50, 100.0) is True
+
+    def test_zero_edge(self):
+        """Zero edge = no alpha to protect. Always skip."""
+        assert fee_eats_alpha(0.0, 0.50, 100.0) is True
+
+    def test_negative_edge(self):
+        """Negative edge = losing trade. Always skip."""
+        assert fee_eats_alpha(-0.05, 0.50, 100.0) is True
+
+
+# ---------------------------------------------------------------------------
+# validate_fee_alpha_ratio (contract #8)
+# Ensures taker fee doesn't eat >40% of projected alpha before trade.
+# ---------------------------------------------------------------------------
+
+class TestValidateFeeAlphaRatio:
+
+    def test_healthy_edge(self):
+        """10% edge at 90% price: fee is small vs alpha."""
+        result = validate_fee_alpha_ratio(0.10, 0.90, 50.0)
+        assert result.valid is True
+
+    def test_fee_kills_trade(self):
+        """1% edge at 50% price: 1.25% fee >> 40% of 1% alpha."""
+        result = validate_fee_alpha_ratio(0.01, 0.50, 100.0)
+        assert result.valid is False
+        assert result.code == "FEE_EATS_ALPHA"
+        assert "fee" in result.error.lower() or "Fee" in result.error
+
+    def test_penny_price_low_fee(self):
+        """5% edge at 3% price: fee ~$0.006 on $50, alpha ~$2.50. Fine."""
+        result = validate_fee_alpha_ratio(0.05, 0.03, 50.0)
+        assert result.valid is True
+
+    def test_zero_edge_invalid(self):
+        """No edge = no alpha. Always invalid."""
+        result = validate_fee_alpha_ratio(0.0, 0.50, 100.0)
+        assert result.valid is False
+        assert result.code == "FEE_EATS_ALPHA"
+
+    def test_zero_size_invalid(self):
+        """Zero size = nothing to trade."""
+        result = validate_fee_alpha_ratio(0.05, 0.50, 0.0)
+        assert result.valid is False
+        assert result.code == "FEE_EATS_ALPHA"
+
+    def test_custom_max_fee_pct(self):
+        """With stricter 20% threshold, more trades get blocked."""
+        # At 50% price, fee rate is 1.25%. With 5% edge:
+        # fee = $1.25, alpha = $5.00, ratio = 25%
+        # At 50% threshold: valid. At 20% threshold: invalid.
+        result_50 = validate_fee_alpha_ratio(0.05, 0.50, 100.0, max_fee_pct=0.50)
+        result_20 = validate_fee_alpha_ratio(0.05, 0.50, 100.0, max_fee_pct=0.20)
+        assert result_50.valid is True
+        assert result_20.valid is False
