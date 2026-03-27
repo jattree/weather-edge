@@ -209,18 +209,55 @@
             display: grid;
             grid-template-columns: 310px 1fr 300px;
             grid-template-rows: 1fr;
-            height: calc(100vh - 50px - 380px);
+            height: var(--top-pane-height, calc(100vh - 50px - 380px));
             gap: 1px;
             background: var(--border-subtle);
+        }
+
+        /* ---- SPLITTER ---- */
+        .pane-splitter {
+            position: relative;
+            z-index: 20;
+            height: 6px;
+            background: var(--border);
+            cursor: row-resize;
+            flex-shrink: 0;
+            transition: background var(--transition-fast);
+        }
+        .pane-splitter::after {
+            content: '';
+            position: absolute;
+            left: 50%;
+            top: 50%;
+            transform: translate(-50%, -50%);
+            width: 40px;
+            height: 2px;
+            background: var(--text-muted);
+            border-radius: 1px;
+            transition: background var(--transition-fast), width var(--transition-fast);
+        }
+        .pane-splitter:hover {
+            background: var(--border-active);
+        }
+        .pane-splitter:hover::after {
+            background: var(--text-dim);
+            width: 60px;
+        }
+        .pane-splitter.dragging {
+            background: var(--cyan);
+        }
+        .pane-splitter.dragging::after {
+            background: var(--cyan-bright);
+            width: 60px;
         }
 
         /* ---- BOTTOM TABS AREA ---- */
         .bottom-area {
             position: relative;
             z-index: 1;
-            height: 380px;
+            height: var(--bottom-pane-height, 380px);
             background: var(--bg-panel);
-            border-top: 1px solid var(--border);
+            border-top: none;
             display: flex;
             flex-direction: column;
         }
@@ -1629,9 +1666,10 @@
             .main {
                 grid-template-columns: 1fr;
                 grid-template-rows: auto;
-                height: auto;
+                height: auto !important;
             }
-            .bottom-area { height: auto; min-height: 380px; }
+            .bottom-area { height: auto !important; min-height: 380px; }
+            .pane-splitter { display: none; }
             .header { flex-direction: column; gap: 10px; }
             .header-stats { flex-wrap: wrap; justify-content: center; }
             .risk-grid { grid-template-columns: repeat(2, 1fr); }
@@ -1730,6 +1768,9 @@
             </div>
         </div>
     </div>
+
+    <!-- ======== DRAGGABLE SPLITTER ======== -->
+    <div class="pane-splitter" id="paneSplitter"></div>
 
     <!-- ======== BOTTOM TABBED AREA ======== -->
     <div class="bottom-area">
@@ -1893,6 +1934,84 @@
         var blotterFilter = 'all';
         var blotterSortCol = 'time';
         var blotterSortAsc = false;
+
+        /* ================================================================
+         *  PANE SPLITTER (drag to resize top/bottom)
+         * ================================================================ */
+        (function initSplitter() {
+            var splitter = document.getElementById('paneSplitter');
+            var mainPane = document.querySelector('.main');
+            var bottomPane = document.querySelector('.bottom-area');
+            if (!splitter || !mainPane || !bottomPane) return;
+
+            var HEADER_HEIGHT = 50;
+            var SPLITTER_HEIGHT = 6;
+            var MIN_TOP = 150;
+            var MIN_BOTTOM = 120;
+            var dragging = false;
+            var startY = 0;
+            var startTopH = 0;
+
+            // Restore saved position
+            var saved = localStorage.getItem('we_splitter_top');
+            if (saved) {
+                var h = parseInt(saved, 10);
+                var avail = window.innerHeight - HEADER_HEIGHT - SPLITTER_HEIGHT;
+                if (h >= MIN_TOP && h <= avail - MIN_BOTTOM) {
+                    document.documentElement.style.setProperty('--top-pane-height', h + 'px');
+                    document.documentElement.style.setProperty('--bottom-pane-height', (avail - h) + 'px');
+                }
+            }
+
+            splitter.addEventListener('mousedown', function(e) {
+                e.preventDefault();
+                dragging = true;
+                startY = e.clientY;
+                startTopH = mainPane.getBoundingClientRect().height;
+                splitter.classList.add('dragging');
+                document.body.style.cursor = 'row-resize';
+                document.body.style.userSelect = 'none';
+            });
+
+            document.addEventListener('mousemove', function(e) {
+                if (!dragging) return;
+                var avail = window.innerHeight - HEADER_HEIGHT - SPLITTER_HEIGHT;
+                var delta = e.clientY - startY;
+                var newTop = Math.max(MIN_TOP, Math.min(avail - MIN_BOTTOM, startTopH + delta));
+                var newBottom = avail - newTop;
+                document.documentElement.style.setProperty('--top-pane-height', newTop + 'px');
+                document.documentElement.style.setProperty('--bottom-pane-height', newBottom + 'px');
+            });
+
+            document.addEventListener('mouseup', function() {
+                if (!dragging) return;
+                dragging = false;
+                splitter.classList.remove('dragging');
+                document.body.style.cursor = '';
+                document.body.style.userSelect = '';
+                // Persist
+                var topH = mainPane.getBoundingClientRect().height;
+                localStorage.setItem('we_splitter_top', Math.round(topH));
+            });
+
+            // Double-click resets to default
+            splitter.addEventListener('dblclick', function() {
+                document.documentElement.style.removeProperty('--top-pane-height');
+                document.documentElement.style.removeProperty('--bottom-pane-height');
+                localStorage.removeItem('we_splitter_top');
+            });
+
+            // Recalc on window resize
+            window.addEventListener('resize', function() {
+                var avail = window.innerHeight - HEADER_HEIGHT - SPLITTER_HEIGHT;
+                var topH = mainPane.getBoundingClientRect().height;
+                if (topH > avail - MIN_BOTTOM) {
+                    var clamped = avail - MIN_BOTTOM;
+                    document.documentElement.style.setProperty('--top-pane-height', clamped + 'px');
+                    document.documentElement.style.setProperty('--bottom-pane-height', (avail - clamped) + 'px');
+                }
+            });
+        })();
 
         /* ================================================================
          *  HELPERS
