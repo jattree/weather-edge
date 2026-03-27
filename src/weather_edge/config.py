@@ -302,6 +302,9 @@ class Settings(BaseSettings):
     openmeteo_api_key: str = ""  # Customer API key for paid tier
     polymarket_gamma_url: str = "https://gamma-api.polymarket.com"
     polymarket_clob_url: str = "https://clob.polymarket.com"
+    polymarket_api_key: str = ""  # CLOB API key for live execution
+    polymarket_private_key: str = ""  # Polygon wallet private key
+    polymarket_wallet: str = ""  # Polygon wallet address
 
     # Open-Meteo tier, auto-detected from api key presence
     # Paid tier: 1M req/month, dedicated servers, no rate-limit ban risk
