@@ -14,9 +14,17 @@ from weather_edge.models.enums import City, WeatherModel
 logger = logging.getLogger(__name__)
 
 # Open-Meteo historical forecast archive endpoint
-_ARCHIVE_URL = "https://historical-forecast-api.open-meteo.com/v1/forecast"
-# Open-Meteo observation/archive endpoint
-_OBSERVATION_URL = "https://archive-api.open-meteo.com/v1/archive"
+def _archive_url() -> str:
+    from weather_edge.config import settings
+    if settings.openmeteo_api_key:
+        return "https://customer-historical-forecast-api.open-meteo.com/v1/forecast"
+    return "https://historical-forecast-api.open-meteo.com/v1/forecast"
+
+def _observation_url() -> str:
+    from weather_edge.config import settings
+    if settings.openmeteo_api_key:
+        return "https://customer-archive-api.open-meteo.com/v1/archive"
+    return "https://archive-api.open-meteo.com/v1/archive"
 
 # Semaphore for rate-limiting
 _SEM = asyncio.Semaphore(4)
@@ -101,9 +109,8 @@ async def _fetch_historical_forecasts(
         for model_id in models:
             try:
                 async with httpx.AsyncClient(timeout=20.0) as client:
-                    resp = await client.get(
-                        _ARCHIVE_URL,
-                        params={
+                    from weather_edge.config import settings as _s
+                    _p = {
                             "latitude": config.latitude,
                             "longitude": config.longitude,
                             "start_date": start_date.isoformat(),
@@ -111,7 +118,12 @@ async def _fetch_historical_forecasts(
                             "daily": "temperature_2m_max",
                             "models": model_id,
                             "timezone": "auto",
-                        },
+                        }
+                    if _s.openmeteo_api_key:
+                        _p["apikey"] = _s.openmeteo_api_key
+                    resp = await client.get(
+                        _archive_url(),
+                        params=_p,
                     )
                     resp.raise_for_status()
                     data = resp.json()
@@ -143,16 +155,20 @@ async def _fetch_observations(
     async with _SEM:
         try:
             async with httpx.AsyncClient(timeout=20.0) as client:
-                resp = await client.get(
-                    _OBSERVATION_URL,
-                    params={
+                from weather_edge.config import settings as _s2
+                _p2 = {
                         "latitude": config.latitude,
                         "longitude": config.longitude,
                         "start_date": start_date.isoformat(),
                         "end_date": end_date.isoformat(),
                         "daily": "temperature_2m_max",
                         "timezone": "auto",
-                    },
+                    }
+                if _s2.openmeteo_api_key:
+                    _p2["apikey"] = _s2.openmeteo_api_key
+                resp = await client.get(
+                    _observation_url(),
+                    params=_p2,
                 )
                 resp.raise_for_status()
                 data = resp.json()

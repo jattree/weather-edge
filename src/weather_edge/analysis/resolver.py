@@ -28,7 +28,11 @@ BELOW_PATTERN = re.compile(r"(\d+)\s*°?\s*F\s+or\s+below", re.IGNORECASE)
 ABOVE_PATTERN = re.compile(r"(\d+)\s*°?\s*F\s+or\s+above", re.IGNORECASE)
 
 # Open-Meteo archive API
-ARCHIVE_API_URL = "https://archive-api.open-meteo.com/v1/archive"
+def _archive_url() -> str:
+    from weather_edge.config import settings
+    if settings.openmeteo_api_key:
+        return "https://customer-archive-api.open-meteo.com/v1/archive"
+    return "https://archive-api.open-meteo.com/v1/archive"
 
 
 async def fetch_resolved_markets() -> dict[str, bool]:
@@ -137,16 +141,20 @@ async def check_nws_observations(city_id: str, target_date: date) -> float | Non
 
     async with httpx.AsyncClient() as client:
         try:
-            resp = await client.get(
-                ARCHIVE_API_URL,
-                params={
+            from weather_edge.config import settings
+            _params = {
                     "latitude": city_config.latitude,
                     "longitude": city_config.longitude,
                     "start_date": target_date.isoformat(),
                     "end_date": target_date.isoformat(),
                     "daily": "temperature_2m_max",
                     "timezone": "auto",
-                },
+                }
+            if settings.openmeteo_api_key:
+                _params["apikey"] = settings.openmeteo_api_key
+            resp = await client.get(
+                _archive_url(),
+                params=_params,
                 timeout=15.0,
             )
             resp.raise_for_status()
