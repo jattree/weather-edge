@@ -6,17 +6,21 @@ Inspired by [@ColdMath's Claude Trader](https://polymarket.com/profile/@ColdMath
 
 ## How It Works
 
-1. Fetches forecasts from 6-8 weather models per city via Open-Meteo API
-2. Applies data-driven NWS station bias corrections (30-day rolling calibration)
-3. Computes weighted consensus with KDE distribution fitting
-4. Detects bust-causing weather patterns (Chinook, Foehn, marine layer, etc.) and adjusts confidence
-5. Discovers active Polymarket weather markets via Gamma API (130+ temperature markets daily)
-6. Claude API analyzes top 3 signals per cycle for qualitative risk assessment
-7. Calculates edge (model probability vs market price) with quarter-Kelly sizing
-8. Runs dual strategy: 70% core bets + 30% ColdMath-style penny tail bets
-9. Snipes model drops, triggers immediate trades when ECMWF/GFS release fresh data before the market adjusts
-10. Auto-resolves trades against Polymarket outcomes and NWS observations with countdown timers
-11. Persists all trades to SQLite (survives restarts)
+1. Fetches forecasts from 6-8 weather models per city in **one batched API call** via Open-Meteo customer API (1M calls/month)
+2. Applies EMOS calibration (2x spread inflation, 50% bias shrinkage, 70% bucket cap, 1.2C variance floor) to prevent overconfident edges
+3. Applies data-driven NWS station bias corrections (30-day rolling calibration)
+4. Computes weighted consensus with KDE distribution fitting
+5. Detects bust-causing weather patterns (Chinook, Foehn, marine layer, etc.) and adjusts confidence
+6. Discovers active Polymarket weather markets via Gamma API (130+ temperature markets daily)
+7. **Claude API** analyzes top 3 signals per cycle, approves or skips with rationale
+8. **Gemini 2.5 Flash** red-teams Claude-approved trades, finds counter-arguments and dissent. High dissent (>=0.7) halves position size
+9. Fetches real order book ask prices via CLOB `/book` endpoint for spread capture detection
+10. Calculates edge (model probability vs market price) with quarter-Kelly sizing
+11. Runs three-pool strategy: 60% today / 30% tomorrow / 10% penny (Gemini-validated allocation)
+12. Generates spread capture hedge orders (buy opposite side for merge profit)
+13. Snipes model drops, 30-second probes detect ECMWF/GFS/HRRR updates, trades before market adjusts
+14. Auto-resolves trades against Polymarket outcomes and NWS observations with countdown timers
+15. Persists all trades to SQLite (survives restarts)
 
 ## Production Deployment
 
@@ -89,7 +93,11 @@ cp .env.example .env
 uvicorn weather_edge.dashboard.app:app --port 8000
 ```
 
-No API keys needed for paper trading. Open-Meteo and Polymarket read endpoints are free/public.
+API keys needed for full functionality (set in `.env`):
+- `ANTHROPIC_API_KEY`, Claude reasoning layer
+- `GEMINI_API_KEY`, Gemini red team dissent layer
+- `OPENMETEO_API_KEY`, Open-Meteo customer tier (1M calls/month)
+- System works without keys but loses AI reasoning and uses free tier (rate-limited).
 
 ## GitLab Repository
 
@@ -110,15 +118,21 @@ Open-Meteo (6-8 models/city)
   Pattern Detector (Chinook, Foehn, marine layer, lake breeze, etc.)
         |
         v
+  EMOS Calibration (spread inflation, bias shrinkage, variance floor)
+        |
   KDE Consensus Engine (weighted by model skill)
         |                              Polymarket Gamma API
         v                                      |
-  Edge Detection + Kelly Sizing  <---  Market Prices
+  Edge Detection + Kelly Sizing  <---  Market Prices + Order Book Asks
         |                    |
-        |              Claude API Reasoning (top 3 signals)
+        |              Claude API (top 3 signals, bull case)
         |                    |
-        +-- Core bets (70% bankroll, quarter-Kelly)
-        +-- Tail bets (30% bankroll, penny sniping)
+        |              Gemini 2.5 Flash (red team, bear case)
+        |                    |
+        +-- Today pool (60% bankroll, quarter-Kelly)
+        +-- Tomorrow pool (30% bankroll, conviction bets)
+        +-- Penny pool (10% bankroll, ColdMath-style sniping)
+        +-- Spread capture (hedge orders on opposite side)
         |
         v
   Paper Trader / Live Executor  --->  SQLite Persistence
@@ -127,9 +141,9 @@ Open-Meteo (6-8 models/city)
    against NWS observations)          (survives restarts)
         |
         v
-  Web Dashboard (FastAPI + WebSocket + 9 Bloomberg tabs)
+  Web Dashboard (FastAPI + WebSocket + 10 Bloomberg tabs)
         |
-  Model-Drop Sniper (probes every 2 min)
+  Model-Drop Sniper (probes every 30s)
 ```
 
 ## Cities (21)
@@ -190,23 +204,44 @@ The system detects weather patterns that cause systematic model failures:
 
 When a pattern is detected, trading confidence increases on the correctly-predicted side.
 
-## Dual Strategy
+## Three-Pool Strategy (Gemini-Validated)
 
-- **Core bets (70% of bankroll)**, Medium-probability buckets where models strongly disagree with the market. Quarter-Kelly sizing. Higher win rate, steady returns.
-- **Tail bets (30% of bankroll)**, ColdMath-style penny sniping. Buy YES on buckets priced at $0.01-$0.05 where our model says 3x+ higher probability. Most lose, but 50:1 payoffs on the winners compound.
+- **Today pool (60%)**, Same-day markets. Capital recycles nightly when trades resolve. Quarter-Kelly sizing.
+- **Tomorrow pool (30%)**, Next-day conviction bets. Locked until resolution.
+- **Penny pool (10%)**, ColdMath-style penny sniping. Buy YES at $0.01-$0.06 where model says 3x+ higher probability. Most lose, but 50:1 payoffs compound.
 
-## Claude Reasoning Layer
+## Spread Capture (ColdMath Strategy)
 
-Claude API is wired into the trading loop as an intelligent filter on the top 3 signals each cycle:
+Detects when buying both YES and NO on a bucket costs less than $1.00:
+- Uses real order book ask prices from CLOB `/book` endpoint (not midpoints)
+- 1.5% safety buffer: only flags profitable when `YES_ask + NO_ask < 0.985`
+- Generates hedge orders on opposite side of directional trades
+- On resolution, simulates merge: both sides redeem for $1/share = guaranteed profit
+- Requires live execution for actual CTF contract merges (paper trading simulates P&L)
 
-- **Regular cycles**, Claude analyzes only when a new signal appears or edge shifts >5%
-- **Sniper triggers**, Claude ALWAYS runs (model just dropped, timing-critical)
-- Claude receives: individual model forecasts, consensus stats, edge calculation, market description
-- Claude returns: should_trade (yes/no), confidence_adjustment (0.5-1.5x), rationale, risk factors
-- If Claude says skip, the signal is dropped. If Claude adjusts confidence, position size scales accordingly
-- Cost: ~$0.72/day (3 calls/cycle, ~48 cycles/day)
+## Dual-AI Reasoning Pipeline
 
-Set `ANTHROPIC_API_KEY` in `.env` to enable. System works without it but loses the qualitative reasoning layer.
+Two AI models argue about every trade before capital is deployed:
+
+### Claude (Bull Case)
+- Analyzes top 3 signals per cycle
+- Returns: should_trade, confidence_adjustment (0.5-1.5x), rationale, risk_factors
+- If Claude skips, the trade is dropped entirely
+- Cost: ~$0.72/day
+
+### Gemini 2.5 Flash (Red Team / Bear Case)
+- Only runs on Claude-approved trades
+- Prompted to find the strongest case AGAINST the trade
+- Returns: dissent_strength (0-1), counter_arguments, risk_the_bull_missed
+- High dissent (>=0.7) halves position size automatically
+- Cost: ~$0.10/day
+
+### Decision Flow
+1. Model math finds edge → 2. Claude approves/skips → 3. Gemini red-teams approved trades → 4. Size adjusted by both AI confidence levels → 5. Trade placed
+
+All decisions logged to the **AI Decisions** dashboard tab with source (Claude/Gemini), rationale, and risk factors.
+
+Set `ANTHROPIC_API_KEY` and `GEMINI_API_KEY` in `.env` to enable. System works without them but loses the AI reasoning layers.
 
 ## Auto-Resolution
 
@@ -227,33 +262,34 @@ Resolution timing (after target date midnight local time + 2h NWS buffer):
 
 ## Dashboard (Bloomberg-Grade)
 
-9 tabs, all functional (no stubs):
+10 tabs, all functional (no stubs):
 
 | Tab | Feature |
 |-----|---------|
-| Trade Log | Live trades with core/tail tags, resolution countdown, session P&L sidebar |
+| Trade Log | Live trades with pool tags, resolution countdown, session P&L sidebar, market calendar |
 | Blotter | Full trade history, sortable columns, filters (All/Open/Won/Lost/Core/Tail), CSV export |
 | Risk / P&L | Canvas equity curve (1H/6H/1D/1W/ALL), Sharpe ratio, max drawdown, win rate by city |
-| Heat Map | 21-city edge color grid + market calendar with resolution countdown |
+| Heat Map | 21-city edge color grid + market calendar with per-pool resolution countdown |
 | Alerts | System activity feed (trades, sniper events, pattern detections, cycle completions) |
-| Weather | Live NWS alerts (US) + Open-Meteo synthetic alerts (international) |
+| Weather | Live NWS alerts (US) + synthetic alerts from forecast cache (international, zero API calls) |
 | Backtest | 7-day historical backtest via Open-Meteo archive, on-demand |
 | Correlation | 21x21 city forecast correlation matrix from model data |
 | Execution | Position sizing stats, edge distribution histogram, capital utilization |
+| AI Decisions | Claude TRADE/SKIP + Gemini AGREE/DISSENT decisions with rationale and risk factors |
 
 ### Dashboard Controls
 
-- **START**, Begin automated trading (30-min cycles + 2-min sniper)
+- **START**, Begin automated trading (15-min cycles + 30-sec sniper probes)
 - **STOP**, Pause trading, keep positions open
-- **CLOSE ALL**, Sell profitable positions, hold losers to resolution
-- **NEW SESSION**, Reset to fresh $1,000 bankroll
-- **REFRESH NOW**, Trigger immediate data cycle
+- **CLOSE ALL**, Sell profitable positions, hold losers to resolution (confirmation required)
+- **NEW SESSION**, Archive and reset (confirmation required)
+- **REFRESH NOW**, Trigger immediate cycle (runs in background, shows "Refreshing..." feedback)
 
 ### Keyboard Shortcuts
 
 Press `?` on the dashboard to see all shortcuts. Key ones:
 - `S` Start, `X` Stop, `C` Close All, `N` New Session, `R` Refresh
-- `1-9` Switch tabs
+- `1-9`, `0` Switch tabs (0 = AI Decisions)
 - `Escape` Close modals
 - Arrow keys to navigate city list
 
@@ -275,8 +311,9 @@ Tracks public Polymarket profiles of known weather traders each cycle:
 - **Model-drop sniper**, Detects ECMWF/GFS/HRRR updates within 2 min, trades before market adjusts
 - **Auto-resolver**, Settles trades against NWS observations with countdown timers
 - **Bucket parity arbitrage**, Flags when bucket YES prices sum to >1.05
-- **Claude reasoning layer**, LLM analysis of top signals with confidence adjustment per trade
-- **Competitor tracking**, Monitors @ColdMath's public stats for performance comparison
+- **Dual-AI reasoning**, Claude approves/skips, Gemini red-teams. Two AIs argue before every trade
+- **Spread capture**, Detects profitable YES+NO spreads using real order book asks
+- **Competitor tracking**, Monitors @ColdMath's public stats + on-chain wallet activity
 - **Quarter-Kelly sizing**, Conservative position sizing (ColdMath-validated)
 - **Smart close**, Only sells winners; holds losers to resolution (capped downside)
 - **SQLite persistence**, Sessions and trades survive restarts
@@ -285,20 +322,27 @@ Tracks public Polymarket profiles of known weather traders each cycle:
 - **Backtesting**, 7-day historical backtest against actual observations
 - **Correlation matrix**, Pairwise city forecast correlation for diversification
 - **Execution analytics**, Position sizing, edge distribution, capital utilization metrics
-- **Bloomberg-grade dashboard**, 9 functional tabs, keyboard shortcuts, CSV export
+- **Bloomberg-grade dashboard**, 10 functional tabs, draggable splitter, keyboard shortcuts, CSV export
+- **Draggable splitter**, Resize top/bottom panes, position persists in localStorage
 
 ## Configuration
 
 Edit `.env`:
 
 ```
-BANKROLL=1000.0              # Starting capital
-MIN_EDGE=0.05                # Minimum edge to trade (5%)
-MIN_CONFIDENCE=0.6           # Minimum model confidence
+BANKROLL=2000.0              # Starting capital
 KELLY_FRACTION=0.25          # Quarter-Kelly (conservative)
-MAX_POSITION_PCT=0.05        # Max 5% of bankroll per trade
-FETCH_INTERVAL_MINUTES=30
-ANTHROPIC_API_KEY=sk-ant-... # Claude reasoning layer (optional)
+MAX_POSITION_PCT=0.03        # Max 3% of bankroll per trade
+POOL_TODAY_PCT=0.60          # 60% today pool
+POOL_TOMORROW_PCT=0.30       # 30% tomorrow pool
+POOL_PENNY_PCT=0.10          # 10% penny pool
+PENNY_MIN_POSITION=10.0      # Min $10 per penny bet
+PENNY_MAX_POSITION=20.0      # Max $20 per penny bet
+FETCH_INTERVAL_MINUTES=15    # Main cycle interval
+ANTHROPIC_API_KEY=sk-ant-... # Claude reasoning (optional)
+GEMINI_API_KEY=AIza...       # Gemini red team (optional)
+OPENMETEO_API_KEY=...        # Customer tier (optional, uses free tier without)
+OPENMETEO_PAID_TIER=true     # Auto-detected from API key
 ```
 
 ## Project Structure
@@ -327,15 +371,18 @@ src/weather_edge/
     model_timing.py      # Golden window detection
     sniper.py            # Model-drop triggered trading
     resolver.py          # Auto-resolves trades against NWS observations
-    claude_reasoning.py  # Claude API trade analysis (wired into loop)
+    claude_reasoning.py  # Claude API trade analysis (bull case)
+    gemini_reasoning.py  # Gemini red team dissent (bear case)
     competitor_tracker.py # @ColdMath and whale tracking
+    whale_tracker.py     # On-chain ERC-1155 CTF token tracking
     weather_alerts.py    # Live NWS + synthetic weather alerts
     backtester.py        # Historical backtest engine
     correlation_matrix.py # City forecast correlation
     execution_analytics.py # Trading metrics and distributions
   trading/
-    paper.py             # Paper trader with core/tail split + smart close
-    executor.py          # Real Polymarket CLOB execution (limit orders)
+    paper.py             # Paper trader with three-pool split + spread trades + smart close
+    executor.py          # Real Polymarket CLOB execution (limit orders, dry-run mode)
+    market_maker.py      # Spread capture: hedge orders + merge simulation
   dashboard/
     app.py               # FastAPI + WebSocket backend (20+ API endpoints)
     templates/
