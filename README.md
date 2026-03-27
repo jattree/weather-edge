@@ -109,10 +109,10 @@ API keys needed for full functionality (set in `.env`):
 ## Architecture
 
 ```
-Open-Meteo (6-8 models/city)
+Open-Meteo (6-8 physics models/city) + GribStream (GraphCast AI model)
         |
         v
-  Bias Correction (30-day calibrated from real observations)
+  Bias Correction (30-day calibrated, ENSO regime-aware shrinkage)
         |
         v
   Pattern Detector (Chinook, Foehn, marine layer, lake breeze, etc.)
@@ -123,7 +123,7 @@ Open-Meteo (6-8 models/city)
   KDE Consensus Engine (weighted by model skill)
         |                              Polymarket Gamma API
         v                                      |
-  Edge Detection + Kelly Sizing  <---  Market Prices + Order Book Asks
+  Edge Detection + Kelly Sizing  <---  Market Prices + Order Book Asks + AI/Physics Divergence
         |                    |
         |              Claude API (top 3 signals, bull case)
         |                    |
@@ -132,10 +132,11 @@ Open-Meteo (6-8 models/city)
         +-- Today pool (60% bankroll, quarter-Kelly)
         +-- Tomorrow pool (30% bankroll, conviction bets)
         +-- Penny pool (10% bankroll, ColdMath-style sniping)
-        +-- Spread capture (hedge orders on opposite side)
+        +-- Spread capture (hedge orders on opposite side, 3% fee buffer)
+        +-- Fee gate (skip if taker fee > 40% of edge)
         |
         v
-  Paper Trader / Live Executor  --->  SQLite Persistence
+  Paper Trader / Live Executor (post_only maker)  --->  SQLite (cold) + Redis (hot)
         |                                    |
   Auto-Resolver (settles trades       Trade History
    against NWS observations)          (survives restarts)
@@ -150,7 +151,7 @@ Open-Meteo (6-8 models/city)
   Contract Validation (7 runtime checks, EMOS, budgets, model count)
 ```
 
-## Cities (21)
+## Cities (22)
 
 ### Americas (HRRR + NAM regional models)
 | City | ICAO | Notes |
@@ -165,6 +166,7 @@ Open-Meteo (6-8 models/city)
 | Seattle | KSEA | Marine layer |
 | Los Angeles | KLAX | June Gloom, Santa Ana winds |
 | San Francisco | KSFO | Fog, globals warm-biased 5-10F |
+| Austin | KAUS | GFS dry-soil warm bias (same as Dallas) |
 | Toronto | CYYZ | HRDPS regional model |
 
 ### Europe (global models only)
@@ -323,15 +325,19 @@ Tracks public Polymarket profiles of known weather traders each cycle:
 
 ## Key Features
 
-- **21 cities** across 3 continents with 130+ daily temperature markets
+- **22 cities** across 3 continents with 130+ daily temperature markets
 - **KDE consensus**, Handles multimodal distributions when models disagree
 - **Real bias corrections**, 30-day rolling calibration via Open-Meteo historical APIs
 - **Pattern detection**, Chinook, Foehn, marine layer, lake breeze, cold pool, Santa Ana
 - **Model-drop sniper**, Detects ECMWF/GFS/HRRR updates within 2 min, trades before market adjusts
 - **Auto-resolver**, Settles trades against NWS observations with countdown timers
 - **Bucket parity arbitrage**, Flags when bucket YES prices sum to >1.05
-- **Dual-AI reasoning**, Claude approves/skips, Gemini red-teams. Two AIs argue before every trade
-- **Spread capture**, Detects profitable YES+NO spreads using real order book asks
+- **Dual-AI reasoning**, Claude approves/skips, Gemini red-teams with meteorological bust vectors (CIN, marine layer, soil moisture, bimodal ensemble, diurnal timing)
+- **GraphCast AI model**, Google DeepMind forecasts via GribStream cross-check physics models. Divergence >3°C reduces confidence 30%
+- **ENSO regime awareness**, Bias corrections shrink during La Nina → Neutral transition for sensitive cities (Seattle, Houston, SF)
+- **Fee-aware execution**, Dynamic taker fee calculation, maker-only orders (post_only=True), fee-alpha gating (skip if fee >40% of edge)
+- **Spread capture**, Detects profitable YES+NO spreads using real order book asks, 3% buffer for post-March-30 fees
+- **Wet bulb temperature**, Humidity bias factor for tropical/humid cities (Houston, Miami, Hong Kong)
 - **Competitor tracking**, Monitors @ColdMath's public stats + on-chain wallet activity
 - **Quarter-Kelly sizing**, Conservative position sizing (ColdMath-validated)
 - **Smart close**, Only sells winners; holds losers to resolution (capped downside)
@@ -344,9 +350,13 @@ Tracks public Polymarket profiles of known weather traders each cycle:
 - **Bloomberg-grade dashboard**, 10 functional tabs, draggable splitter, keyboard shortcuts, CSV export
 - **Draggable splitter**, Resize top/bottom panes, position persists in localStorage
 - **Early exit monitor**, AI-reviewed exits on edge inversion, profit cap, pattern bust
-- **Contract validation**, 7 runtime checks prevent silent failures (EMOS disabled, budget exceeded, etc.)
+- **Contract validation**, 8 runtime checks prevent silent failures (EMOS, budget, fees, model count, etc.)
 - **Market volume**, 24h volume per city on Heat Map tab for liquidity assessment
 - **Race condition protection**, asyncio.Lock prevents concurrent cycles from corrupting state
+- **System status monitoring**, Health checks for all 10 external services with status indicators
+- **Cross-market registry**, Dormant correlations (ERCOT energy, SFO aviation, AQI) ready to activate
+- **Regret/adherence tracking**, Measures AI reasoning value: Claude accuracy, Gemini dissent accuracy, opportunity cost
+- **Session heartbeat**, Polymarket keepalive prevents open order cancellation during live execution
 
 ## Testing
 
@@ -403,6 +413,7 @@ ANTHROPIC_API_KEY=sk-ant-... # Claude reasoning (optional)
 GEMINI_API_KEY=AIza...       # Gemini red team (optional)
 OPENMETEO_API_KEY=...        # Customer tier (optional, uses free tier without)
 OPENMETEO_PAID_TIER=true     # Auto-detected from API key
+GRIBSTREAM_API_KEY=...       # GraphCast AI model (optional, free tier 1200 credits/day)
 ```
 
 ## Project Structure
@@ -418,9 +429,11 @@ src/weather_edge/
   models/
     enums.py             # City, WeatherModel, MarketType
     orm.py               # SQLAlchemy ORM (for PG migration)
+  live_state.py          # Redis hot-path cache (books, heartbeats, dashboard state)
   fetchers/
-    openmeteo.py         # Multi-model forecast fetcher
-    polymarket.py        # Market discovery + price fetcher
+    openmeteo.py         # Multi-model forecast fetcher (batch, customer API)
+    polymarket.py        # Market discovery + price fetcher + book asks
+    gribstream.py        # GraphCast AI model via GribStream API
   analysis/
     consensus.py         # Weighted KDE consensus engine
     edge.py              # Edge detection + dual Kelly sizing
@@ -440,11 +453,17 @@ src/weather_edge/
     correlation_matrix.py # City forecast correlation
     execution_analytics.py # Trading metrics and distributions
     exit_monitor.py      # AI-reviewed early exit (edge inversion, profit cap)
-    contracts.py         # 7 pure validation functions (runtime contract checks)
+    contracts.py         # 8 pure validation functions (runtime contract checks)
+    enso_regime.py       # ENSO state from NOAA CPC, regime-aware bias shrinkage
+    wet_bulb.py          # Wet bulb temp for humidity-sensitive cities
+    cross_market.py      # Dormant cross-market correlation registry
+    regret_tracker.py    # AI adherence/regret analysis (Claude vs Gemini accuracy)
+    service_health.py    # External service health tracking
   trading/
     paper.py             # Paper trader with three-pool split + spread trades + smart close
-    executor.py          # Real Polymarket CLOB execution (limit orders, dry-run mode)
+    executor.py          # Real Polymarket CLOB execution (post-only maker, heartbeat)
     market_maker.py      # Spread capture: hedge orders + merge simulation
+    fees.py              # Polymarket 2026 fee calculation (taker/maker/rebate)
   dashboard/
     app.py               # FastAPI + WebSocket backend (20+ API endpoints)
     templates/
