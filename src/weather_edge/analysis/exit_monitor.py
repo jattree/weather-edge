@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from weather_edge.analysis.consensus import compute_consensus, get_probability_for_threshold
+from weather_edge.analysis.contracts import validate_penny_no_exit
 from weather_edge.analysis.edge import Signal
 from weather_edge.trading.paper import PaperTrade
 
@@ -64,8 +65,9 @@ def scan_for_exits(
     candidates: list[ExitCandidate] = []
 
     for trade in open_trades:
-        # Never exit penny bets
-        if trade.entry_price <= PENNY_ENTRY_MAX:
+        # Contract: never exit penny bets (hold to resolution)
+        penny_check = validate_penny_no_exit(trade.entry_price, PENNY_ENTRY_MAX)
+        if not penny_check.valid:
             continue
 
         # Skip spread trades
@@ -79,16 +81,14 @@ def scan_for_exits(
             continue
 
         # Calculate current edge from our position's perspective
+        # Keep raw_market_price for ExitCandidate (close_position needs YES price)
+        raw_market_price = market_price
         if trade.side == "YES":
-            # We hold YES: profit if price goes up / resolves YES
             current_edge = model_prob - market_price
             original_edge = model_prob - trade.entry_price
         else:
-            # We hold NO: profit if price goes down / resolves NO
             current_edge = (1.0 - model_prob) - (1.0 - market_price)
             original_edge = (1.0 - model_prob) - (1.0 - trade.entry_price)
-            # For NO trades, flip the market price perspective
-            market_price = 1.0 - market_price
 
         # Check exit triggers
         reason = None
@@ -112,7 +112,7 @@ def scan_for_exits(
                 trade=trade,
                 reason=reason,
                 current_model_prob=model_prob,
-                current_market_price=market_price,
+                current_market_price=raw_market_price,  # Always YES price, close_position handles NO flip
                 original_edge=round(original_edge, 4),
                 current_edge=round(current_edge, 4),
                 urgency=urgency,

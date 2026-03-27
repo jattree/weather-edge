@@ -7,8 +7,15 @@ from datetime import date, datetime, timedelta, timezone
 
 from weather_edge.analysis.arbitrage import check_bucket_parity, find_parity_opportunities
 from weather_edge.analysis.claude_reasoning import analyze_trade, record_decision, ANTHROPIC_API_KEY
+from weather_edge.analysis.contracts import validate_emos_active, validate_model_count
 from weather_edge.analysis.pattern_detector import detect_patterns, get_pattern_adjustment
-from weather_edge.analysis.consensus import compute_consensus, get_probability_for_threshold
+from weather_edge.analysis.consensus import (
+    compute_consensus,
+    get_probability_for_threshold,
+    MAX_BUCKET_PROBABILITY,
+    SPREAD_INFLATION_FACTOR,
+    EMOS_VARIANCE_FLOOR_C,
+)
 from weather_edge.analysis.edge import Signal, calculate_edge
 from weather_edge.analysis.market_mapper import get_required_variable
 from weather_edge.analysis.model_timing import is_golden_window
@@ -72,6 +79,11 @@ async def run_cycle(
     if target_dates is None:
         today = date.today()
         target_dates = [today, today + timedelta(days=1), today + timedelta(days=2)]
+
+    # Contract: verify EMOS calibration is active at cycle start
+    emos_check = validate_emos_active(SPREAD_INFLATION_FACTOR, MAX_BUCKET_PROBABILITY, EMOS_VARIANCE_FLOOR_C)
+    if not emos_check.valid:
+        logger.warning("CONTRACT VIOLATION [%s]: %s", emos_check.code, emos_check.error)
 
     # Resolve any open trades before placing new ones
     # This frees up capital and updates P&L before new signals are computed
@@ -143,6 +155,16 @@ async def run_cycle(
         _forecast_cache[(city_id, target_date)] = forecasts
         if not forecasts:
             logger.warning("No forecasts for %s on %s", city_id.value, target_date)
+            continue
+
+        # Contract: verify sufficient models for reliable consensus
+        has_regional = bool(city_config.regional_models)
+        model_check = validate_model_count(len(forecasts), has_regional)
+        if not model_check.valid:
+            logger.warning(
+                "CONTRACT VIOLATION [%s]: %s, skipping %s on %s",
+                model_check.code, model_check.error, city_id.value, target_date,
+            )
             continue
 
         # Detect bust-causing weather patterns (Chinook, Foehn, marine layer, etc.)

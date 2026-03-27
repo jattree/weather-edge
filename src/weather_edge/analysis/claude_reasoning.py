@@ -71,6 +71,22 @@ def _get_api_key() -> str:
 ANTHROPIC_API_KEY = _get_api_key()
 CLAUDE_MODEL = "claude-sonnet-4-20250514"
 
+# Contract: warn at module load if AI keys are missing
+def _check_ai_keys_at_load() -> None:
+    from weather_edge.analysis.contracts import validate_ai_keys_present
+    gemini_key = os.environ.get("GEMINI_API_KEY", "")
+    if not gemini_key:
+        try:
+            from weather_edge.config import settings as _s
+            gemini_key = getattr(_s, "gemini_api_key", "")
+        except Exception:
+            pass
+    result = validate_ai_keys_present(ANTHROPIC_API_KEY, gemini_key)
+    if not result.valid:
+        logger.warning("CONTRACT [%s]: %s, AI reasoning will be degraded", result.code, result.error)
+
+_check_ai_keys_at_load()
+
 
 @dataclass
 class TradeReasoning:
