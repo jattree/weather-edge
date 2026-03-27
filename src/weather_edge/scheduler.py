@@ -101,6 +101,13 @@ async def run_cycle(
     if is_golden_window():
         logger.info("*** GOLDEN WINDOW: Fresh model data, market may be stale ***")
 
+    # Refresh ENSO regime state (cached 24h, affects bias correction shrinkage)
+    try:
+        from weather_edge.analysis.enso_regime import fetch_enso_state
+        await fetch_enso_state()
+    except Exception:
+        logger.debug("ENSO state fetch skipped", exc_info=True)
+
     # Step 1: Discover active weather markets (prices included from Gamma API)
     logger.info("=== Discovering Polymarket weather markets ===")
     markets = await discover_weather_markets()
