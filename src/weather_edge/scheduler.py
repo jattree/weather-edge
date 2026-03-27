@@ -241,9 +241,36 @@ async def run_cycle(
                 # Apply Claude's confidence adjustment to position size
                 signal.recommended_size = round(signal.recommended_size * reasoning.confidence_adjustment, 2)
 
-    # Place trades for all signals
+    # Place trades for all signals + generate spread capture orders
+    from weather_edge.trading.market_maker import MarketMaker
+    market_maker = MarketMaker()
+
+    # Build market prices dict from discovered markets for spread detection
+    market_prices: dict[str, dict] = {}
+    for m in markets:
+        market_prices[m.market_id] = {
+            "yes_price": m.yes_price,
+            "no_price": 1.0 - m.yes_price,
+            "bid": m.yes_price - 0.01,
+            "ask": m.yes_price + 0.01,
+        }
+
     for signal in all_signals:
-        paper_trader.place_trade(signal)
+        trade = paper_trader.place_trade(signal)
+        # Generate hedge/spread order for each placed trade
+        if trade:
+            hedge = market_maker.generate_hedge_orders(signal, market_prices, settings.bankroll)
+            if hedge:
+                # Paper-trade the hedge side too
+                paper_trader.place_spread_trade(signal, hedge)
+
+    # Log spread capture summary
+    spread_summary = market_maker.simulate_spread_pnl()
+    if spread_summary["spread_orders"] > 0:
+        logger.info(
+            "SPREAD CAPTURE: %d orders, est. guaranteed P&L=$%.2f",
+            spread_summary["spread_orders"], spread_summary["estimated_guaranteed_pnl"],
+        )
 
     # Also fetch forecasts for cities without active markets (monitoring)
     # But only for tomorrow (not all dates) to save API calls
