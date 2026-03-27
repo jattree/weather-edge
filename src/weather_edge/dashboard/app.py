@@ -329,7 +329,7 @@ async def sniper_loop() -> None:
             await run_dashboard_cycle()
 
     sniper.set_callback(snipe_trigger)
-    await sniper.run_sniper_loop(poll_interval_seconds=60)
+    await sniper.run_sniper_loop(poll_interval_seconds=30)
 
 
 @app.on_event("startup")
