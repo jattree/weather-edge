@@ -4,7 +4,16 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import sys
 from datetime import date, datetime, timedelta, timezone
+
+# Ensure all loggers output to stdout so systemd/journald captures them
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(name)s: %(message)s",
+    stream=sys.stdout,
+    force=True,
+)
 from pathlib import Path
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
