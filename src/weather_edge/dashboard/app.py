@@ -152,8 +152,12 @@ async def broadcast(data: dict) -> None:
         connected_websockets.remove(ws)
 
 
-async def run_dashboard_cycle() -> None:
-    """Run one data cycle and update global state."""
+async def run_dashboard_cycle(run_ai: bool = True) -> None:
+    """Run one data cycle and update global state.
+
+    Args:
+        run_ai: If True, run Claude + Gemini reasoning. False for sniper-triggered cycles.
+    """
     global latest_state
 
     from weather_edge.analysis.consensus import compute_consensus
@@ -166,7 +170,7 @@ async def run_dashboard_cycle() -> None:
     await competitor_tracker.update_all()
 
     # Run the core cycle (fetches markets, forecasts, computes signals, places paper trades)
-    all_signals, forecast_cache = await run_cycle(paper_trader, target_dates)
+    all_signals, forecast_cache = await run_cycle(paper_trader, target_dates, run_ai_reasoning=run_ai)
 
     # Build city data from the forecast cache (no re-fetching!)
     city_data = {}
@@ -333,18 +337,18 @@ async def background_loop() -> None:
 
 
 async def sniper_loop() -> None:
-    """Sniper runs independently, lightweight metadata probes every 60s."""
-    # Wire the sniper callback to trigger a full dashboard cycle
+    """Sniper runs independently, lightweight metadata probes every 3 min."""
+    # Wire the sniper callback to trigger a full dashboard cycle (no AI on sniper)
     async def snipe_trigger():
         if trading_active:
-            logger.warning("SNIPER TRIGGERED, running immediate cycle")
+            logger.warning("SNIPER TRIGGERED, running immediate cycle (no AI reasoning)")
             try:
-                await run_dashboard_cycle()
+                await run_dashboard_cycle(run_ai=False)
             except Exception:
                 logger.exception("Sniper-triggered cycle failed")
 
     sniper.set_callback(snipe_trigger)
-    await sniper.run_sniper_loop(poll_interval_seconds=30)
+    await sniper.run_sniper_loop(poll_interval_seconds=180)
 
 
 @app.on_event("startup")
