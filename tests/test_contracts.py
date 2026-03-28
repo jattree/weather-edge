@@ -12,6 +12,7 @@ from weather_edge.analysis.contracts import (
     validate_ai_keys_present,
     validate_emos_active,
     validate_fee_alpha_ratio,
+    validate_leverage_cap,
     validate_model_count,
     validate_penny_no_exit,
     validate_pool_budget,
@@ -24,7 +25,6 @@ from weather_edge.trading.fees import (
     fee_eats_alpha,
     net_cost_after_fees,
 )
-
 
 # ---------------------------------------------------------------------------
 # validate_emos_active
@@ -524,3 +524,69 @@ class TestValidateFeeAlphaRatio:
         result_20 = validate_fee_alpha_ratio(0.05, 0.50, 100.0, max_fee_pct=0.20)
         assert result_50.valid is True
         assert result_20.valid is False
+
+
+# ---------------------------------------------------------------------------
+# validate_leverage_cap
+# The Dallas incident: NO at market_prob=0.9885, effective 1.15¢, $72 → 6,261
+# shares (87x leverage). Bad API quotes create absurd positions.
+# ---------------------------------------------------------------------------
+
+class TestValidateLeverageCap:
+
+    def test_dallas_incident_caught(self):
+        """The exact Dallas trade: NO at 0.9885 = 1.15¢ effective = 87x leverage."""
+        result = validate_leverage_cap(0.9885, "NO", 72.0, is_penny=False)
+        assert result.valid is False
+        assert result.code == "LEVERAGE_EXCEEDED"
+        assert "87x" in result.error
+
+    def test_normal_yes_trade_ok(self):
+        """YES at 50¢ = 2x leverage, well within limits."""
+        result = validate_leverage_cap(0.50, "YES", 100.0)
+        assert result.valid is True
+
+    def test_normal_no_trade_ok(self):
+        """NO at 0.30 = effective 70¢ = 1.4x leverage."""
+        result = validate_leverage_cap(0.30, "NO", 100.0)
+        assert result.valid is True
+
+    def test_core_boundary_5pct(self):
+        """Core trade at exactly 5¢ effective = 20x leverage, right at limit."""
+        result = validate_leverage_cap(0.05, "YES", 50.0, is_penny=False)
+        assert result.valid is True
+
+    def test_core_below_5pct_rejected(self):
+        """Core trade at 4¢ effective = 25x > 20x limit."""
+        result = validate_leverage_cap(0.04, "YES", 50.0, is_penny=False)
+        assert result.valid is False
+        assert result.code == "LEVERAGE_EXCEEDED"
+
+    def test_penny_at_3pct_ok(self):
+        """Penny trade at 3¢ effective = 33x, within 50x penny limit."""
+        result = validate_leverage_cap(0.03, "YES", 15.0, is_penny=True)
+        assert result.valid is True
+
+    def test_penny_at_1pct_rejected(self):
+        """Penny trade at 1¢ effective = 100x > 50x penny limit."""
+        result = validate_leverage_cap(0.01, "YES", 15.0, is_penny=True)
+        assert result.valid is False
+        assert result.code == "LEVERAGE_EXCEEDED"
+
+    def test_no_side_high_yes_price(self):
+        """NO at YES_price=0.97 → effective 3¢ = 33x. Core rejected, penny ok."""
+        core = validate_leverage_cap(0.97, "NO", 50.0, is_penny=False)
+        penny = validate_leverage_cap(0.97, "NO", 15.0, is_penny=True)
+        assert core.valid is False
+        assert penny.valid is True
+
+    def test_zero_effective_price(self):
+        """Edge case: YES at 0.0 or NO at 1.0, effective price is zero."""
+        result = validate_leverage_cap(0.0, "YES", 50.0)
+        assert result.valid is False
+        assert result.code == "LEVERAGE_EXCEEDED"
+
+    def test_penny_boundary_2pct(self):
+        """Penny trade at exactly 2¢ = 50x, right at the limit."""
+        result = validate_leverage_cap(0.02, "YES", 15.0, is_penny=True)
+        assert result.valid is True
