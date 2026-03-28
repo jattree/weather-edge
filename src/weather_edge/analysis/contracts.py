@@ -3,7 +3,7 @@
 Pure functions, no side effects, no API calls, no file I/O.
 Each returns a ContractResult indicating whether a business invariant holds.
 
-These catch the 8 dangerous silent failures that would cost real money:
+These catch the 9 dangerous silent failures that would cost real money:
 1. EMOS calibration disabled (edges go from 5% to 86%)
 2. Pool budget exceeded (betting more than the bankroll)
 3. Reserve pot breached (no capital left for high-conviction trades)
@@ -12,6 +12,7 @@ These catch the 8 dangerous silent failures that would cost real money:
 6. Insufficient models for consensus (garbage in, garbage out)
 7. Spread profit calculated from midpoints instead of asks (phantom edge)
 8. Taker fee eats too much of projected alpha (fees > 40% of edge)
+9. Leverage too high from bad API quote (tiny effective price → huge share count)
 """
 from __future__ import annotations
 
@@ -279,5 +280,54 @@ def validate_fee_alpha_ratio(
                 f"(max allowed: {max_fee_pct:.0%})"
             ),
             code="FEE_EATS_ALPHA",
+        )
+    return ContractResult(valid=True)
+
+
+def validate_leverage_cap(
+    market_prob: float,
+    side: str,
+    size_usd: float,
+    is_penny: bool = False,
+) -> ContractResult:
+    """Verify trade doesn't create excessive leverage from a bad API quote.
+
+    The Dallas incident: NO at market_prob=0.9885 meant effective NO cost was
+    1.15¢, turning $72 into 6,261 shares, an 87x leverage ratio. This was a
+    stale/bad Gamma API quote (98.85% on a single 2°F temperature bucket is
+    nonsensical).
+
+    Core trades capped at 20x (effective price > 5¢).
+    Penny trades capped at 50x (effective price > 2¢).
+
+    Args:
+        market_prob: Market probability from signal (YES price equivalent).
+        side: "YES" or "NO".
+        size_usd: Position size in USD.
+        is_penny: Whether this is a penny strategy trade.
+    """
+    if side == "NO":
+        effective_price = 1.0 - market_prob
+    else:
+        effective_price = market_prob
+
+    max_leverage = 50 if is_penny else 20
+
+    if effective_price <= 0:
+        return ContractResult(
+            valid=False,
+            error=f"Effective price is {effective_price:.4f} (non-positive)",
+            code="LEVERAGE_EXCEEDED",
+        )
+
+    leverage = 1.0 / effective_price
+    if leverage > max_leverage:
+        return ContractResult(
+            valid=False,
+            error=(
+                f"Effective price {effective_price:.4f} creates {leverage:.0f}x leverage "
+                f"(max {max_leverage}x for {'penny' if is_penny else 'core'} trades)"
+            ),
+            code="LEVERAGE_EXCEEDED",
         )
     return ContractResult(valid=True)

@@ -76,7 +76,10 @@ class PaperTrader:
 
     @property
     def available_capital(self) -> float:
-        """Capital remaining to deploy. Capped at bankroll, profits don't inflate deployment capacity."""
+        """Capital remaining to deploy.
+
+        Capped at bankroll, profits don't inflate deployment capacity.
+        """
         raw = self.bankroll - self.capital_at_risk + self.total_pnl
         return min(raw, self.bankroll - self.capital_at_risk)
 
@@ -155,7 +158,9 @@ class PaperTrader:
 
         # Dedup: don't place same market+side twice in same session
         for existing in self.open_trades:
-            if existing.market_id == signal.market_id and existing.side == signal.recommended_side.value:
+            same_market = existing.market_id == signal.market_id
+            same_side = existing.side == signal.recommended_side.value
+            if same_market and same_side:
                 return None  # Already have this position
 
         strategy = getattr(signal, "strategy", "core")
@@ -183,6 +188,23 @@ class PaperTrader:
             size = min(size, remaining)  # Re-check after clamping
             if size < settings.penny_min_position:
                 return None
+
+        # Leverage cap: reject trades where effective cost per share is too low
+        # The Dallas incident: NO at market_prob=0.9885 → effective 1.15¢ → 6,261 shares from $72
+        # For penny strategy trades, low prices are expected so use a looser cap
+        entry = signal.market_prob
+        if signal.recommended_side.value == "NO":
+            effective_price = 1.0 - entry
+        else:
+            effective_price = entry
+        max_leverage = 50 if strategy == "tail" else 20  # penny: 50x, core: 20x
+        if effective_price > 0 and (1.0 / effective_price) > max_leverage:
+            logger.warning(
+                "LEVERAGE CAP: %s %s, eff price %.4f = %.0fx (max %dx)",
+                signal.recommended_side.value, signal.city_id,
+                effective_price, 1.0 / effective_price, max_leverage,
+            )
+            return None
 
         desc = f"{pool_tag} {signal.description}"
 
@@ -250,7 +272,10 @@ class PaperTrader:
             # Find the directional trade on the same market
             paired = None
             for t in self.trades:
-                if t.market_id == trade.market_id and t.trade_id != trade.trade_id and "[SPREAD]" not in (t.description or ""):
+                same_mkt = t.market_id == trade.market_id
+                diff_id = t.trade_id != trade.trade_id
+                not_spread = "[SPREAD]" not in (t.description or "")
+                if same_mkt and diff_id and not_spread:
                     paired = t
                     break
 
@@ -260,8 +285,9 @@ class PaperTrader:
                 total_cost = trade.entry_price + paired.entry_price
                 if total_cost < 1.0:
                     # Guaranteed spread profit, split evenly between both legs
-                    shares = min(trade.size_usd / trade.entry_price if trade.entry_price > 0 else 0,
-                                 paired.size_usd / paired.entry_price if paired.entry_price > 0 else 0)
+                    t_shares = trade.size_usd / trade.entry_price if trade.entry_price > 0 else 0
+                    p_shares = paired.size_usd / paired.entry_price if paired.entry_price > 0 else 0
+                    shares = min(t_shares, p_shares)
                     total_profit = (1.0 - total_cost) * shares
                     half_profit = total_profit / 2
 
