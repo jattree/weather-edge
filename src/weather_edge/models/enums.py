@@ -67,3 +67,4 @@ class TradeStatus(str, Enum):
     OPEN = "open"
     WON = "won"
     LOST = "lost"
+    INVALID = "invalid"
