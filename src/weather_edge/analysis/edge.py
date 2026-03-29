@@ -138,11 +138,25 @@ def calculate_edge(
     fee_kills_alpha = fee_eats_alpha(edge, market_prob, bet_size)
 
     # Detect if this is a penny sweep opportunity
-    # Penny bet: market prices YES at <$0.05 but our model says 3x+ higher probability
+    # Penny bet: effective entry price is cheap (YES at <5¢ OR NO where YES > 95¢)
+    # ColdMath's edge: cheap NO trades on high-YES markets are functionally
+    # identical to cheap YES bets, both have tiny cost and huge upside
+    if side == TradeSide.NO:
+        effective_entry = 1.0 - market_prob
+    else:
+        effective_entry = market_prob
+    penny_threshold = settings.penny_max_entry_price  # 5¢
+    # For YES: model says 3x more likely than market price
+    # For NO: edge relative to effective cost is substantial
+    if side == TradeSide.YES:
+        has_penny_edge = model_prob >= market_prob * settings.penny_min_edge_multiplier
+    else:
+        # NO edge: model says event less likely than market thinks
+        # Check that edge is at least 2x the effective NO cost
+        has_penny_edge = edge >= effective_entry * 2.0
     is_penny = (
-        side == TradeSide.YES
-        and market_prob <= 0.05
-        and model_prob >= market_prob * settings.penny_min_edge_multiplier
+        effective_entry <= penny_threshold
+        and has_penny_edge
         and adjusted_confidence >= 0.5
     )
 
