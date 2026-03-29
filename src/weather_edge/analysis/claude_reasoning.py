@@ -1,14 +1,17 @@
-"""Claude API reasoning layer for trade decisions.
+"""Claude reasoning layer, the Meteorologist.
 
-Uses Claude to analyze weather model data, market conditions, and edge signals
-before placing trades. Claude provides:
-1. Natural language interpretation of model disagreement
-2. Assessment of whether the edge is real or a data artifact
-3. Identification of weather patterns that models might miss
-4. Trade confidence adjustment based on qualitative factors
-5. Human-readable trade rationale for the dashboard
+Claude is MARKET-BLIND. It assesses the atmosphere, not the trade.
+Its job is to answer: "Is this forecast trustworthy?"
 
-This is what makes "Claude Trader" actually use Claude, not just branding.
+Claude provides:
+1. Physical plausibility assessment of model consensus
+2. Outlier diagnosis (real mesoscale feature vs model error)
+3. Forecast confidence based on meteorological factors
+4. Risk factors: specific physical bust mechanisms
+5. Weather insight for the dashboard
+
+Gemini (the Quant) handles market skepticism, sizing, and risk management.
+The two AIs must have UNCORRELATED errors to maximize signal quality.
 """
 from __future__ import annotations
 
@@ -99,31 +102,31 @@ class TradeReasoning:
     weather_insight: str  # What Claude sees in the pattern
 
 
-SYSTEM_PROMPT = """You are a weather trading analyst. You assess whether a weather prediction market trade has genuine edge.
+SYSTEM_PROMPT = """You are a forensic meteorologist. Your ONLY job is to assess what the atmosphere will do. You are MARKET-BLIND, you do not care about prices, edges, or whether a trade "looks too good." That is someone else's job.
 
-You receive:
-- Model forecasts from 6-8 weather models for a specific city/date
-- The computed consensus (mean, std, confidence)
-- A Polymarket market with current price
-- The calculated edge (model probability vs market price)
+You receive model forecasts from 6-8 weather models for a specific city/date. Assess:
 
-Your job:
-1. Assess if the edge is REAL or an artifact of bad data/timing
-2. Identify weather patterns that models might agree on for the wrong reason
-3. Flag risks (frontal boundaries, lake effects, inversions, etc.)
-4. Recommend a confidence adjustment (0.5 = halve position, 1.0 = keep as-is, 1.5 = increase)
-5. Give a one-sentence trade rationale
+1. PHYSICAL PLAUSIBILITY: Do the models agree for the right physical reasons? Or are they clustering on a shared bias (e.g., all using the same SST boundary condition)?
+2. MODEL TRUST: Which models should be weighted more for THIS city? (HRRR for US short-range, UKV for UK, ECMWF for 3+ day global)
+3. OUTLIER DIAGNOSIS: If one model disagrees, is it seeing a real mesoscale feature (frontal boundary, sea breeze, orographic effect) or is it just wrong?
+4. FORECAST CONFIDENCE: How confident are you in the consensus temperature? Consider: time of year, city microclimate, synoptic pattern.
+5. RISKS: What specific physical mechanisms could bust this forecast? (fronts, inversions, lake effect, marine layer, convective initiation)
 
-Respond in JSON format:
+CRITICAL RULES:
+- NEVER say "the edge looks too large" or "massive edge suggests market error." You don't know market prices.
+- NEVER skip a trade because "the market knows something." You are the weather expert.
+- If models tightly agree and you see no physical bust mechanism, should_trade MUST be true.
+- Only set should_trade=false if you have a SPECIFIC meteorological reason (not market skepticism).
+- confidence_adjustment reflects YOUR forecast confidence, not market confidence.
+
+Respond in JSON:
 {
   "should_trade": true/false,
   "confidence_adjustment": 0.5-1.5,
-  "rationale": "one sentence",
-  "risk_factors": ["risk1", "risk2"],
-  "weather_insight": "what you see in the pattern"
-}
-
-Be concise. Focus on whether the MODEL CONSENSUS is trustworthy for this specific forecast."""
+  "rationale": "one sentence about the WEATHER, not the market",
+  "risk_factors": ["specific physical mechanism 1", "mechanism 2"],
+  "weather_insight": "what the atmosphere is doing"
+}"""
 
 
 async def analyze_trade(
@@ -146,23 +149,23 @@ async def analyze_trade(
         f"  {name}: {val:.1f}°C" for name, val in sorted(model_values.items())
     )
 
-    user_prompt = f"""Analyze this weather trade:
+    # Extract threshold from description for Claude's context
+    desc = signal.description[:120] if signal.description else ""
+
+    user_prompt = f"""Assess this weather forecast:
 
 CITY: {signal.city_id.upper()}
 VARIABLE: {variable}
 DATE: tomorrow
+QUESTION: {desc}
 
 MODEL FORECASTS:
 {model_summary}
 
-CONSENSUS: mean={consensus_mean:.1f}°C, std={consensus_std:.1f}°C, confidence={signal.model_confidence:.0%}
-MODEL PROBABILITY: {signal.model_prob:.1%}
-MARKET PRICE: {signal.market_prob:.1%}
-EDGE: {signal.edge:+.1%} ({signal.edge_pct:+.0%} relative)
-RECOMMENDED: {signal.recommended_side.value} x${signal.recommended_size:.0f}
-MARKET: {signal.description[:100]}
+CONSENSUS: mean={consensus_mean:.1f}°C, std={consensus_std:.1f}°C
+MODEL SPREAD: {max(model_values.values()) - min(model_values.values()):.1f}°C range across {len(model_values)} models
 
-Should I take this trade? What weather risks should I watch for?"""
+Is this consensus trustworthy? What physical mechanisms could bust it?"""
 
     try:
         async with httpx.AsyncClient() as client:
