@@ -202,12 +202,14 @@ class PaperTrader:
         if not self.should_trade(signal):
             return None
 
-        # Dedup: don't place same market+side twice in same session
-        for existing in self.open_trades:
+        # Dedup: don't place same market+side twice ever (survives restarts)
+        for existing in self.trades:
+            if existing.status == "invalid":
+                continue
             same_market = existing.market_id == signal.market_id
             same_side = existing.side == signal.recommended_side.value
             if same_market and same_side:
-                return None  # Already have this position
+                return None  # Already traded this position
 
         strategy = getattr(signal, "strategy", "core")
         if strategy == "tail":
@@ -386,45 +388,30 @@ class PaperTrader:
         )
 
     def close_position(self, trade: PaperTrade, current_price: float) -> None:
-        """Close an open position at current market price (sell back on Polymarket).
+        """Close an open position at current market price.
 
-        Smart close logic: only sell if we'd lock in a profit or break even.
-        On small-probability bets (entry < $0.10), hold to resolution,
-        selling a $0.05 token at $0.02 locks in a 60% loss, but holding
-        gives you a shot at the $1.00 payout. The downside is already capped.
+        In paper trading mode, early exits create phantom P&L because
+        there's no real counterparty to sell to. We log the signal but
+        DON'T actually close, all paper trades resolve against actual
+        observations via resolve_trade(). This will change for live mode.
         """
         if trade.status != TradeStatus.OPEN:
             return
 
-        # Calculate what P&L would be if we close now
+        # Calculate hypothetical P&L for logging
         if trade.side == "YES":
-            # Shares = size / entry_price. Sell at current_price.
             shares = trade.size_usd / trade.entry_price if trade.entry_price > 0 else 0
             potential_pnl = (current_price - trade.entry_price) * shares
         else:
-            # NO shares = size / (1 - entry_price). Sell at (1 - current_price).
             entry_no_price = 1.0 - trade.entry_price
             exit_no_price = 1.0 - current_price
             shares = trade.size_usd / entry_no_price if entry_no_price > 0 else 0
             potential_pnl = (exit_no_price - entry_no_price) * shares
 
-        # Only close if profitable or breakeven.
-        # On losing positions, hold to resolution, downside is capped on binary markets.
-        if potential_pnl < 0:
-            logger.info(
-                "HOLD: %s %s, would lose $%.2f closing now. Holding to resolution.",
-                trade.side, trade.city_id, abs(potential_pnl),
-            )
-            return
-
-        trade.resolved_at = datetime.now(timezone.utc)
-        trade.exit_price = current_price
-        trade.pnl = potential_pnl
-        trade.status = TradeStatus.WON if trade.pnl >= 0 else TradeStatus.LOST
-
+        # Paper mode: log but don't close, wait for actual resolution
         logger.info(
-            "CLOSED: %s %s @ %.3f -> %.3f P&L=$%.2f",
-            trade.side, trade.city_id, trade.entry_price, current_price, trade.pnl,
+            "EXIT SIGNAL (paper mode, holding): %s %s @ %.3f -> %.3f hypothetical P&L=$%.2f",
+            trade.side, trade.city_id, trade.entry_price, current_price, potential_pnl,
         )
 
     def close_all_positions(self, current_prices: dict[str, float] | None = None) -> float:
