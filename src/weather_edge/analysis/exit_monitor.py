@@ -13,11 +13,8 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timezone
 
-from weather_edge.analysis.consensus import compute_consensus, get_probability_for_threshold
 from weather_edge.analysis.contracts import validate_penny_no_exit
-from weather_edge.analysis.edge import Signal
 from weather_edge.trading.paper import PaperTrade
 
 logger = logging.getLogger(__name__)
@@ -100,10 +97,14 @@ def scan_for_exits(
             urgency = "high" if current_edge < -0.15 else "medium"
 
         # 2. Profit cap: price ran up, lock in gains on core bets
-        elif trade.side == "YES" and market_price >= PROFIT_CAP_PRICE and model_prob < PROFIT_CAP_MODEL_MAX:
+        elif (trade.side == "YES"
+              and market_price >= PROFIT_CAP_PRICE
+              and model_prob < PROFIT_CAP_MODEL_MAX):
             reason = "profit_cap"
             urgency = "low"
-        elif trade.side == "NO" and (1.0 - market_price) >= PROFIT_CAP_PRICE and (1.0 - model_prob) < PROFIT_CAP_MODEL_MAX:
+        elif (trade.side == "NO"
+              and (1.0 - market_price) >= PROFIT_CAP_PRICE
+              and (1.0 - model_prob) < PROFIT_CAP_MODEL_MAX):
             reason = "profit_cap"
             urgency = "low"
 
@@ -112,7 +113,8 @@ def scan_for_exits(
                 trade=trade,
                 reason=reason,
                 current_model_prob=model_prob,
-                current_market_price=raw_market_price,  # Always YES price, close_position handles NO flip
+                # Always YES price, close_position handles NO flip
+                current_market_price=raw_market_price,
                 original_edge=round(original_edge, 4),
                 current_edge=round(current_edge, 4),
                 urgency=urgency,
@@ -192,20 +194,35 @@ Respond JSON only: {{"verdict": "EXIT" or "HOLD", "rationale": "brief reason"}}"
     except Exception:
         logger.debug("Claude exit review failed", exc_info=True)
 
-    # Gemini red team: argue for holding
+    # Gemini review: can you provide a SPECIFIC catalyst to hold?
+    # Default: Claude's EXIT stands. Gemini must earn the hold.
     if candidate.claude_verdict == "EXIT":
         try:
-            from weather_edge.analysis.gemini_reasoning import GEMINI_API_KEY, GEMINI_MODEL, GEMINI_API_URL
+            from weather_edge.analysis.gemini_reasoning import (
+                GEMINI_API_KEY,
+                GEMINI_API_URL,
+                GEMINI_MODEL,
+            )
             if GEMINI_API_KEY:
-                import httpx, json, re
-                prompt = f"""HOLD ARGUMENT: Another analyst says we should EXIT this position. Find reasons to HOLD.
+                import json
+                import re
+
+                import httpx
+                prompt = f"""EXIT CHALLENGE: Claude recommends exiting this position. You may argue to HOLD, but ONLY if you can provide:
+1. A SPECIFIC meteorological catalyst that will occur before resolution
+2. A SPECIFIC timeframe for when the edge will recover
+3. Evidence from the model data that the thesis is still valid
+
+Generic arguments like "edge is still positive" or "market might overreact" are NOT sufficient to override an exit.
 
 Position: {trade.side} {trade.city_id} ${trade.size_usd:.0f}
-Exit reason: {candidate.reason} (edge went from {candidate.original_edge:.1%} to {candidate.current_edge:.1%})
+Exit reason: {candidate.reason} (edge: {candidate.original_edge:.1%} → {candidate.current_edge:.1%})
 Claude says: EXIT, {candidate.claude_rationale}
 
-Argue for HOLDING this position. Respond JSON only:
-{{"verdict": "AGREE_EXIT" or "HOLD", "rationale": "brief counter-argument"}}"""
+If you cannot provide a specific catalyst with timeframe, you MUST agree with the exit.
+
+Respond JSON only:
+{{"verdict": "AGREE_EXIT" or "HOLD", "catalyst": "specific event or null", "timeframe": "hours until catalyst or null", "rationale": "brief reason"}}"""
 
                 url = f"{GEMINI_API_URL}/{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
                 async with httpx.AsyncClient() as client:
@@ -220,21 +237,31 @@ Argue for HOLDING this position. Respond JSON only:
                         match = re.search(r"\{.*\}", text.strip(), re.DOTALL)
                         if match:
                             result = json.loads(match.group())
-                            candidate.gemini_verdict = result.get("verdict", "HOLD")
+                            candidate.gemini_verdict = result.get("verdict", "AGREE_EXIT")
                             candidate.gemini_rationale = result.get("rationale", "")
-                            logger.info("GEMINI EXIT: %s, %s: %s",
-                                        trade.city_id, candidate.gemini_verdict, candidate.gemini_rationale)
+                            catalyst = result.get("catalyst")
+                            logger.info("GEMINI EXIT: %s, %s (catalyst: %s): %s",
+                                        trade.city_id, candidate.gemini_verdict,
+                                        catalyst or "none", candidate.gemini_rationale)
         except Exception:
             logger.debug("Gemini exit review failed", exc_info=True)
 
-    # Final decision
+    # Final decision: Claude's EXIT is the default
+    # Gemini can only override with a specific catalyst + non-high urgency
     if candidate.claude_verdict == "EXIT":
-        if candidate.gemini_verdict == "AGREE_EXIT" or candidate.urgency == "high":
+        if candidate.urgency == "high":
+            # High urgency exits always go through
             candidate.final_decision = "EXIT"
-        else:
-            # Gemini says hold or didn't respond, reduce urgency
+        elif candidate.gemini_verdict == "HOLD":
+            # Gemini earned a hold with specific catalyst
             candidate.final_decision = "HOLD"
-            logger.info("EXIT OVERRULED by Gemini: %s %s, holding", trade.city_id, candidate.reason)
+            logger.info(
+                "EXIT HELD by Gemini (with catalyst): %s %s",
+                trade.city_id, candidate.reason,
+            )
+        else:
+            # Gemini agrees, didn't respond, or no specific catalyst
+            candidate.final_decision = "EXIT"
     else:
         candidate.final_decision = "HOLD"
 
