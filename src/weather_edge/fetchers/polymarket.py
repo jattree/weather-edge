@@ -80,6 +80,12 @@ BUCKET_ABOVE_PATTERN = re.compile(
     r"(?:highest|high)\s+temperature\s+in\s+(.+?)\s+be\s+(\d+)\s*°?\s*(F|C)\s+or\s+above",
     re.IGNORECASE,
 )
+# "Will the highest temperature in Seoul be 8°C on March 29?"
+# Celsius cities use exact single-value buckets instead of ranges
+BUCKET_EXACT_PATTERN = re.compile(
+    r"(?:highest|high)\s+temperature\s+in\s+(.+?)\s+be\s+(\d+)\s*°\s*(C|F)\s+on\s+",
+    re.IGNORECASE,
+)
 # Snow pattern
 SNOW_PATTERN = re.compile(
     r"(?:will\s+it\s+)?snow\s+in\s+(.+?)\s+(?:on|tomorrow)",
@@ -242,6 +248,36 @@ def parse_market_question(
             threshold_unit="fahrenheit" if unit.upper() == "F" else "celsius",
         )
 
+    # Try exact single-value: "be 8°C on March 29?"
+    # Celsius cities use 1°C-wide buckets instead of 2°F ranges
+    m = BUCKET_EXACT_PATTERN.search(question)
+    if m:
+        city_id, city_name = parse_city_from_text(m.group(1))
+        if city_id is None:
+            city_id, city_name = parse_city_from_text(event_title)
+        val = float(m.group(2))
+        unit = m.group(3)
+        if unit.upper() == "F":
+            val_c = f_to_c(val)
+        else:
+            val_c = val
+        # Treat as a 1-degree range: [val, val+1)
+        return MarketInfo(
+            market_id=condition_id,
+            condition_id=condition_id,
+            city_id=city_id,
+            city_name=city_name,
+            market_type=MarketType.TEMP_HIGH,
+            question=question,
+            event_title=event_title,
+            target_date=target_date,
+            threshold_value=val_c,
+            threshold_dir="range",
+            threshold_low_c=val_c,
+            threshold_high_c=val_c + 1.0,
+            threshold_unit="fahrenheit" if unit.upper() == "F" else "celsius",
+        )
+
     # Try "X°F or above" pattern
     m = BUCKET_ABOVE_PATTERN.search(question)
     if m:
@@ -366,7 +402,8 @@ async def discover_weather_markets(
 
                     # Get prices directly from Gamma (avoids CLOB rate limits)
                     outcome_prices = mkt.get("outcomePrices")
-                    if outcome_prices and isinstance(outcome_prices, list) and len(outcome_prices) >= 2:
+                    is_list = isinstance(outcome_prices, list)
+                    if outcome_prices and is_list and len(outcome_prices) >= 2:
                         try:
                             parsed.yes_price = float(outcome_prices[0])
                             parsed.no_price = float(outcome_prices[1])
@@ -391,12 +428,16 @@ async def discover_weather_markets(
                     except (ValueError, TypeError):
                         pass
                     try:
-                        parsed.liquidity = float(mkt.get("liquidityNum") or mkt.get("liquidity") or 0)
+                        liq = mkt.get("liquidityNum") or mkt.get("liquidity") or 0
+                        parsed.liquidity = float(liq)
                     except (ValueError, TypeError):
                         pass
                     markets.append(parsed)
 
-            logger.info("Fetched %d events at offset %d, %d markets so far", len(events), offset, len(markets))
+            logger.info(
+                "Fetched %d events at offset %d, %d markets so far",
+                len(events), offset, len(markets),
+            )
 
             if len(events) < 100:
                 break
@@ -534,7 +575,8 @@ async def fetch_book_prices(market: "MarketInfo") -> dict | None:
     if result["yes_ask"] and result["no_ask"]:
         result["spread_cost"] = result["yes_ask"] + result["no_ask"]
         result["spread_profit"] = 1.0 - result["spread_cost"]
-        result["profitable"] = result["spread_cost"] < 0.97  # 3% buffer to absorb round-trip taker fees
+        # 3% buffer to absorb round-trip taker fees
+        result["profitable"] = result["spread_cost"] < 0.97
     else:
         result["spread_cost"] = None
         result["spread_profit"] = None
