@@ -389,10 +389,34 @@ async def sniper_loop() -> None:
     await sniper.run_sniper_loop(poll_interval_seconds=180)
 
 
+async def daily_report_loop() -> None:
+    """Save a daily report at midnight UTC."""
+    from weather_edge.analysis.daily_report import save_daily_report
+    while True:
+        now = datetime.now(timezone.utc)
+        # Next midnight UTC
+        tomorrow = (now + timedelta(days=1)).replace(
+            hour=0, minute=0, second=5, microsecond=0
+        )
+        wait_seconds = (tomorrow - now).total_seconds()
+        await asyncio.sleep(wait_seconds)
+        try:
+            save_daily_report(paper_trader, paper_trader.store)
+        except Exception:
+            logger.exception("Daily report failed")
+
+
 @app.on_event("startup")
 async def startup():
     asyncio.create_task(background_loop())
     asyncio.create_task(sniper_loop())
+    asyncio.create_task(daily_report_loop())
+    # Save initial report on startup
+    try:
+        from weather_edge.analysis.daily_report import save_daily_report
+        save_daily_report(paper_trader, paper_trader.store)
+    except Exception:
+        pass
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -552,6 +576,28 @@ async def api_system_status():
     """Return health status of all external services and API keys."""
     from weather_edge.analysis.service_health import get_service_status
     return get_service_status()
+
+
+@app.get("/api/daily-report")
+async def api_daily_report(date: str | None = None):
+    """Get daily report for a specific date (or today)."""
+    from weather_edge.analysis.daily_report import generate_daily_report
+    return generate_daily_report(paper_trader, report_date=date)
+
+
+@app.post("/api/daily-report/save")
+async def api_save_daily_report():
+    """Manually trigger daily report save."""
+    from weather_edge.analysis.daily_report import save_daily_report
+    report = save_daily_report(paper_trader, paper_trader.store)
+    return report
+
+
+@app.get("/api/daily-reports")
+async def api_daily_reports(limit: int = 30):
+    """Get historical daily reports."""
+    from weather_edge.analysis.daily_report import load_daily_reports
+    return load_daily_reports(paper_trader.store, limit=limit)
 
 
 @app.get("/api/settings")
