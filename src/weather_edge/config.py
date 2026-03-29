@@ -286,7 +286,28 @@ def get_models_for_city(city_id: City) -> list[WeatherModel]:
 
 
 def get_model_weights(city_id: City) -> dict[WeatherModel, float]:
-    """Return normalized model weights for a city."""
+    """Return normalized model weights for a city.
+
+    Uses adaptive Brier-weighted scores when available (30+ forecasts
+    per model). Falls back to static MODEL_BASE_WEIGHT otherwise.
+    """
+    # Try adaptive weights from self-learning module
+    try:
+        from weather_edge.analysis.learner import get_adaptive_weights
+        from weather_edge.persistence import PersistentStore
+        store = PersistentStore()
+        adaptive = get_adaptive_weights(store, city_id.value)
+        store.close()
+        if adaptive:
+            models = get_models_for_city(city_id)
+            return {
+                m: adaptive.get(m.value, 1.0 / len(models))
+                for m in models
+            }
+    except Exception:
+        pass
+
+    # Fall back to static weights
     models = get_models_for_city(city_id)
     raw = {m: MODEL_BASE_WEIGHT.get(m, 1.0) for m in models}
     total = sum(raw.values())
