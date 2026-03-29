@@ -80,6 +80,7 @@ def fetch_historical_forecast(
                 "models": model_id,
             },
             timeout=15,
+            follow_redirects=True,
         )
         if resp.status_code != 200:
             return None
@@ -107,6 +108,7 @@ def fetch_actual_observation(
                 "end_date": str(target_date),
             },
             timeout=15,
+            follow_redirects=True,
         )
         if resp.status_code != 200:
             return None
@@ -134,6 +136,7 @@ def fetch_batch_observations(
                 "end_date": str(end),
             },
             timeout=30,
+            follow_redirects=True,
         )
         if resp.status_code != 200:
             return {}
@@ -168,6 +171,7 @@ def fetch_batch_forecasts(
             HIST_FORECAST_URL,
             params=params,
             timeout=30,
+            follow_redirects=True,
         )
         if resp.status_code != 200:
             return {}
