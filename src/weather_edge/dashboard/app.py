@@ -247,14 +247,23 @@ async def _run_dashboard_cycle_inner(run_ai: bool = True) -> None:
     trade_log = []
     for t in sorted(paper_trader.trades, key=lambda x: x.placed_at, reverse=True)[:100]:
         resolves_at, resolves_in = _compute_resolution_time(t)
+        # Derive tier from description tag
+        desc = t.description or ""
+        if "[PENNY]" in desc:
+            tier = "tail"
+        elif "[TODAY]" in desc or "[TOMORROW]" in desc:
+            tier = "core"
+        else:
+            tier = "core"
         trade_log.append({
             "side": t.side,
             "city": t.city_id.upper() if isinstance(t.city_id, str) else t.city_id,
-            "description": t.description if t.description else "",
+            "description": desc,
             "size": t.size_usd,
             "pnl": t.pnl,
             "time": t.placed_at.strftime("%H:%M:%S"),
             "status": t.status.value,
+            "tier": tier,
             "resolves_at": resolves_at,
             "resolves_in": resolves_in,
         })
