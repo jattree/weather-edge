@@ -123,6 +123,52 @@ class PaperTrader:
             logger.warning("CONTRACT [%s]: %s", budget_check.code, budget_check.error)
             return False
 
+        # Portfolio-level risk controls
+        from weather_edge.analysis.risk_controls import (
+            _circuit_breaker,
+            check_correlation_limit,
+            check_gross_exposure,
+            get_active_profile,
+        )
+        profile = get_active_profile()
+        nav = self.bankroll + self.total_pnl
+
+        # Circuit breaker
+        _circuit_breaker.update(nav, profile)
+        cb_mult = _circuit_breaker.get_size_multiplier(profile)
+        if cb_mult <= 0:
+            logger.warning("CIRCUIT BREAKER: trading killed, %s",
+                           _circuit_breaker.kill_reason)
+            return False
+        if cb_mult < 1.0:
+            signal.recommended_size = round(
+                signal.recommended_size * cb_mult, 2
+            )
+
+        # Correlation limit
+        allowed, max_size, reason = check_correlation_limit(
+            signal.city_id, signal.recommended_size,
+            self.trades, nav, profile,
+        )
+        if not allowed:
+            logger.warning(reason)
+            return False
+        if max_size < signal.recommended_size:
+            logger.info(reason)
+            signal.recommended_size = round(max_size, 2)
+
+        # Gross exposure cap
+        allowed, max_size, reason = check_gross_exposure(
+            signal.recommended_size, self.capital_at_risk,
+            nav, profile,
+        )
+        if not allowed:
+            logger.warning(reason)
+            return False
+        if max_size < signal.recommended_size:
+            logger.info(reason)
+            signal.recommended_size = round(max_size, 2)
+
         # Enforce three-pool budgets
         strategy = getattr(signal, "strategy", "core")
         if strategy == "tail":
@@ -131,19 +177,19 @@ class PaperTrader:
             # Core bets: check today + tomorrow combined budget
             remaining = self.core_budget - self.core_at_risk
 
-        # Contract: reserve pot check (replaces ad-hoc reserve logic)
+        # Contract: reserve pot check, uses active risk profile
         tier_name = signal.confidence_tier.value
+        effective_reserve = profile.reserve_pct
         reserve_check = validate_reserve_pot(
-            self.available_capital, self.bankroll, self.RESERVE_PCT, tier_name
+            self.available_capital, self.bankroll, effective_reserve, tier_name
         )
         available = self.available_capital
         if not reserve_check.valid:
             logger.warning("CONTRACT [%s]: %s", reserve_check.code, reserve_check.error)
             available = 0
 
-        # Reserve: keep 10% of bankroll uncommitted unless this is HIGH tier
         if signal.confidence_tier != SignalTier.HIGH:
-            reserve = self.bankroll * self.RESERVE_PCT
+            reserve = self.bankroll * effective_reserve
             available = max(0, available - reserve)
 
         remaining = min(remaining, available)

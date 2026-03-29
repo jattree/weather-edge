@@ -2068,6 +2068,44 @@
 
         <!-- Tab 11: System Status -->
         <div class="tab-content" id="tabSystemStatus" style="padding: 16px; flex-direction: column; overflow-y: auto;"></div>
+
+        <!-- Tab: Settings -->
+        <div class="tab-content" id="tabSettings" style="padding: 16px; flex-direction: column; overflow-y: auto;">
+            <div style="max-width: 700px;">
+                <div class="panel-header" style="margin-bottom: 16px;">
+                    <div class="panel-title">Risk Profile</div>
+                    <div id="settingsStatus" class="panel-badge">loading...</div>
+                </div>
+
+                <!-- Risk Slider -->
+                <div style="background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; padding: 16px; margin-bottom: 16px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                        <span style="color: var(--green); font-size: 11px; font-weight: 600;">CONSERVATIVE</span>
+                        <span style="color: var(--yellow); font-size: 11px; font-weight: 600;">BALANCED</span>
+                        <span style="color: var(--red); font-size: 11px; font-weight: 600;">AGGRESSIVE</span>
+                    </div>
+                    <input type="range" id="riskSlider" min="0" max="2" step="1" value="2"
+                        style="width: 100%; accent-color: var(--cyan); cursor: pointer;">
+                    <div id="riskDescription" style="color: var(--text-muted); font-size: 11px; margin-top: 8px; text-align: center;"></div>
+                </div>
+
+                <!-- Settings Grid -->
+                <div id="settingsGrid" style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 16px;"></div>
+
+                <!-- Circuit Breaker Status -->
+                <div style="background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; padding: 16px; margin-bottom: 16px;">
+                    <div class="panel-title" style="margin-bottom: 8px;">Circuit Breaker</div>
+                    <div id="circuitBreakerStatus" style="font-size: 12px;"></div>
+                    <button id="resetCircuitBtn" onclick="resetCircuitBreaker()" style="margin-top: 8px; background: var(--bg-hover); border: 1px solid var(--border); color: var(--text); padding: 4px 12px; border-radius: 4px; cursor: pointer; font-size: 11px;">Reset Circuit Breaker</button>
+                </div>
+
+                <!-- API Keys Status -->
+                <div style="background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; padding: 16px;">
+                    <div class="panel-title" style="margin-bottom: 8px;">API Credentials</div>
+                    <div id="credentialsList" style="font-size: 12px;"></div>
+                </div>
+            </div>
+        </div>
     </div>
 
     <!-- ======== TRADE DRILL-DOWN MODAL ======== -->
@@ -2271,7 +2309,8 @@
             { id: 'tabCorrelation', label: 'Correlation', badge: null },
             { id: 'tabExecution', label: 'Execution', badge: null },
             { id: 'tabAIDecisions', label: 'AI Decisions', badge: '0' },
-            { id: 'tabSystemStatus', label: 'System', badge: null }
+            { id: 'tabSystemStatus', label: 'System', badge: null },
+            { id: 'tabSettings', label: 'Settings', badge: null }
         ];
         var activeTab = 'tabTradeLog';
 
@@ -5024,6 +5063,147 @@
         renderCorrelation();
         renderExecution();
         renderSystemStatus();
+
+        /* ================================================================
+         *  SETTINGS TAB
+         * ================================================================ */
+        var SETTINGS_META = {
+            drawdown_scale_back_pct: { label: 'Circuit Breaker: Scale Back', desc: 'Halve position sizes when portfolio drops this % from peak', fmt: 'pct' },
+            drawdown_kill_pct: { label: 'Circuit Breaker: Kill Switch', desc: 'Stop all trading when portfolio drops this % from peak', fmt: 'pct' },
+            max_group_exposure_pct: { label: 'Correlation Limit', desc: 'Max % of NAV exposed to one weather system (e.g. all US Northeast cities)', fmt: 'pct' },
+            max_gross_exposure_multiple: { label: 'Gross Exposure Cap', desc: 'Max total capital deployed as multiple of NAV (e.g. 2x = $4K deployed on $2K)', fmt: 'x' },
+            kelly_fraction: { label: 'Kelly Fraction', desc: 'Position sizing aggressiveness. 0.5 = half-Kelly (aggressive), 0.25 = quarter (balanced)', fmt: 'dec' },
+            max_position_pct: { label: 'Max Position Size', desc: 'Maximum single trade as % of bankroll', fmt: 'pct' },
+            reserve_pct: { label: 'Reserve Pot', desc: 'Keep this % of bankroll uncommitted for high-conviction opportunities', fmt: 'pct' },
+            penny_max_position: { label: 'Penny Max Position', desc: 'Maximum $ per penny bet', fmt: 'usd' },
+            min_edge: { label: 'Minimum Edge', desc: 'Only trade when model edge exceeds this threshold', fmt: 'pct' },
+            fee_alpha_max: { label: 'Fee/Alpha Max', desc: 'Skip trade if taker fee exceeds this % of projected profit', fmt: 'pct' }
+        };
+        var PROFILE_NAMES = ['conservative', 'balanced', 'aggressive'];
+        var PROFILE_DESCRIPTIONS = {
+            conservative: 'Small bets, thick safety net, capital preservation. Eighth-Kelly sizing.',
+            balanced: 'Moderate risk, solid protection. Quarter-Kelly sizing. Recommended for real money.',
+            aggressive: 'Full deployment, thin safety net. Half-Kelly sizing. Current paper trading mode.'
+        };
+        var CRED_LABELS = {
+            anthropic_api_key: 'Claude (Anthropic)',
+            gemini_api_key: 'Gemini (Google)',
+            openmeteo_api_key: 'Open-Meteo (Paid)',
+            gribstream_api_key: 'GribStream (GraphCast)',
+            polymarket_api_key: 'Polymarket CLOB',
+            polymarket_private_key: 'Polygon Wallet'
+        };
+
+        function loadSettings() {
+            fetch('/api/settings')
+                .then(function(r) { return r.json(); })
+                .then(function(data) { renderSettings(data); })
+                .catch(function() {
+                    document.getElementById('settingsStatus').textContent = 'Failed to load';
+                });
+        }
+
+        function renderSettings(data) {
+            var profileIdx = PROFILE_NAMES.indexOf(data.profile);
+            if (profileIdx < 0) profileIdx = 2;
+            var slider = document.getElementById('riskSlider');
+            slider.value = profileIdx;
+            document.getElementById('settingsStatus').textContent = data.profile.toUpperCase();
+            document.getElementById('settingsStatus').style.color =
+                data.profile === 'aggressive' ? 'var(--red)' :
+                data.profile === 'balanced' ? 'var(--yellow)' : 'var(--green)';
+            document.getElementById('riskDescription').textContent = PROFILE_DESCRIPTIONS[data.profile] || '';
+
+            // Settings grid
+            var grid = document.getElementById('settingsGrid');
+            while (grid.firstChild) grid.removeChild(grid.firstChild);
+            var s = data.settings || {};
+            Object.keys(SETTINGS_META).forEach(function(key) {
+                var meta = SETTINGS_META[key];
+                var val = s[key];
+                var card = el('div');
+                setStyle(card, { background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: '6px', padding: '10px' });
+                var label = el('div', null, meta.label);
+                setStyle(label, { color: 'var(--cyan)', fontSize: '11px', fontWeight: '600', marginBottom: '4px' });
+                var valStr = '';
+                if (meta.fmt === 'pct') valStr = (val * 100).toFixed(0) + '%';
+                else if (meta.fmt === 'x') valStr = val.toFixed(1) + 'x';
+                else if (meta.fmt === 'usd') valStr = '$' + val.toFixed(0);
+                else valStr = val.toFixed(3);
+                var valDiv = el('div', 'mono', valStr);
+                setStyle(valDiv, { color: 'var(--text)', fontSize: '16px', fontWeight: '700', marginBottom: '4px' });
+                var desc = el('div', null, meta.desc);
+                setStyle(desc, { color: 'var(--text-muted)', fontSize: '10px', lineHeight: '1.3' });
+                card.appendChild(label);
+                card.appendChild(valDiv);
+                card.appendChild(desc);
+                grid.appendChild(card);
+            });
+
+            // Circuit breaker
+            var cb = data.circuit_breaker || {};
+            var cbDiv = document.getElementById('circuitBreakerStatus');
+            var hwm = cb.high_water_mark || 0;
+            var statusText = '';
+            if (cb.is_killed) {
+                statusText = '<span style="color:var(--red)">KILLED</span>, ' + (cb.kill_reason || 'Drawdown limit hit');
+            } else if (cb.is_scaled_back) {
+                statusText = '<span style="color:var(--orange)">SCALED BACK</span>, positions halved';
+            } else {
+                statusText = '<span style="color:var(--green)">NORMAL</span>';
+            }
+            cbDiv.innerHTML = 'Status: ' + statusText + '<br>High Water Mark: $' + hwm.toFixed(0);
+
+            // Credentials
+            var creds = data.credentials || {};
+            var credDiv = document.getElementById('credentialsList');
+            while (credDiv.firstChild) credDiv.removeChild(credDiv.firstChild);
+            Object.keys(CRED_LABELS).forEach(function(key) {
+                var row = el('div');
+                setStyle(row, { display: 'flex', justifyContent: 'space-between', padding: '3px 0', borderBottom: '1px solid var(--border)' });
+                var name = el('span', null, CRED_LABELS[key]);
+                setStyle(name, { color: 'var(--text-muted)' });
+                var status = el('span', 'mono');
+                if (creds[key]) {
+                    status.textContent = 'CONFIGURED';
+                    status.style.color = 'var(--green)';
+                } else {
+                    status.textContent = 'MISSING';
+                    status.style.color = 'var(--red)';
+                }
+                row.appendChild(name);
+                row.appendChild(status);
+                credDiv.appendChild(row);
+            });
+        }
+
+        document.getElementById('riskSlider').addEventListener('input', function() {
+            var idx = parseInt(this.value);
+            var profile = PROFILE_NAMES[idx];
+            document.getElementById('settingsStatus').textContent = 'Saving...';
+            fetch('/api/settings', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ profile: profile })
+            })
+            .then(function(r) { return r.json(); })
+            .then(function() { loadSettings(); })
+            .catch(function() {
+                document.getElementById('settingsStatus').textContent = 'Save failed';
+            });
+        });
+
+        function resetCircuitBreaker() {
+            if (!confirm('Reset circuit breaker? This re-enables full trading.')) return;
+            fetch('/api/settings', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ reset_circuit_breaker: true })
+            })
+            .then(function() { loadSettings(); });
+        }
+
+        loadSettings();
     </script>
 </body>
 </html>

@@ -20,16 +20,15 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
-from weather_edge.analysis.claude_reasoning import get_decisions, clear_decisions
-from weather_edge.analysis.regret_tracker import compute_adherence
+from weather_edge.analysis.claude_reasoning import clear_decisions, get_decisions
 from weather_edge.analysis.competitor_tracker import CompetitorTracker
 from weather_edge.analysis.correlation_matrix import compute_correlation_matrix
 from weather_edge.analysis.execution_analytics import compute_execution_analytics
+from weather_edge.analysis.regret_tracker import compute_adherence
 from weather_edge.analysis.resolver import _extract_target_date_from_trade
 from weather_edge.analysis.sniper import ModelSniper
 from weather_edge.analysis.weather_alerts import fetch_all_alerts
 from weather_edge.config import CITIES, settings
-
 from weather_edge.models.enums import City
 from weather_edge.persistence import PersistentPaperTrader
 from weather_edge.scheduler import run_cycle
@@ -48,6 +47,20 @@ paper_trader = PersistentPaperTrader(bankroll=settings.bankroll)
 sniper = ModelSniper()
 competitor_tracker = CompetitorTracker()
 trading_active = False  # Must click START to begin
+
+# Load saved risk profile
+from weather_edge.analysis.risk_controls import (
+    _circuit_breaker,
+    set_active_profile,
+)
+
+_saved_profile = paper_trader.store.get_state("risk_profile", "aggressive")
+try:
+    set_active_profile(_saved_profile)
+except ValueError:
+    set_active_profile("aggressive")
+# Init circuit breaker high-water mark from current NAV
+_circuit_breaker.high_water_mark = paper_trader.bankroll + paper_trader.total_pnl
 _cycle_lock = asyncio.Lock()  # Prevent concurrent cycles from corrupting state
 latest_state: dict = {
     "cities": {},
@@ -539,6 +552,82 @@ async def api_system_status():
     """Return health status of all external services and API keys."""
     from weather_edge.analysis.service_health import get_service_status
     return get_service_status()
+
+
+@app.get("/api/settings")
+async def api_get_settings():
+    """Return current risk profile and all settings."""
+    from weather_edge.analysis.risk_controls import (
+        RISK_PROFILES,
+        _active_profile_name,
+        _circuit_breaker,
+    )
+    profile = RISK_PROFILES[_active_profile_name]
+    return {
+        "profile": _active_profile_name,
+        "profiles_available": list(RISK_PROFILES.keys()),
+        "settings": {
+            "drawdown_scale_back_pct": profile.drawdown_scale_back_pct,
+            "drawdown_kill_pct": profile.drawdown_kill_pct,
+            "scale_back_factor": profile.scale_back_factor,
+            "max_group_exposure_pct": profile.max_group_exposure_pct,
+            "max_gross_exposure_multiple": profile.max_gross_exposure_multiple,
+            "kelly_fraction": profile.kelly_fraction,
+            "max_position_pct": profile.max_position_pct,
+            "reserve_pct": profile.reserve_pct,
+            "penny_max_position": profile.penny_max_position,
+            "min_edge": profile.min_edge,
+            "fee_alpha_max": profile.fee_alpha_max,
+        },
+        "circuit_breaker": {
+            "high_water_mark": _circuit_breaker.high_water_mark,
+            "is_scaled_back": _circuit_breaker.is_scaled_back,
+            "is_killed": _circuit_breaker.is_killed,
+            "kill_reason": _circuit_breaker.kill_reason,
+        },
+        "credentials": {
+            "anthropic_api_key": bool(settings.anthropic_api_key),
+            "gemini_api_key": bool(settings.gemini_api_key),
+            "openmeteo_api_key": bool(settings.openmeteo_api_key),
+            "gribstream_api_key": bool(settings.gribstream_api_key),
+            "polymarket_api_key": bool(settings.polymarket_api_key),
+            "polymarket_private_key": bool(settings.polymarket_private_key),
+        },
+    }
+
+
+@app.post("/api/settings")
+async def api_update_settings(body: dict):
+    """Update risk profile or individual settings."""
+    from weather_edge.analysis.risk_controls import (
+        RISK_PROFILES,
+        _circuit_breaker,
+        get_active_profile,
+        set_active_profile,
+    )
+
+    profile_name = body.get("profile")
+    if profile_name and profile_name in RISK_PROFILES:
+        set_active_profile(profile_name)
+        # Persist to SQLite
+        try:
+            paper_trader.store.set_state(
+                "risk_profile", profile_name
+            )
+        except Exception:
+            pass
+        logger.info("SETTINGS: Risk profile changed to %s", profile_name)
+
+    # Reset circuit breaker if requested
+    if body.get("reset_circuit_breaker"):
+        _circuit_breaker.is_scaled_back = False
+        _circuit_breaker.is_killed = False
+        _circuit_breaker.kill_reason = ""
+        nav = paper_trader.bankroll + paper_trader.total_pnl
+        _circuit_breaker.high_water_mark = nav
+        logger.info("SETTINGS: Circuit breaker reset, HWM=$%.0f", nav)
+
+    return {"status": "ok", "profile": get_active_profile().name}
 
 
 @app.websocket("/ws")
