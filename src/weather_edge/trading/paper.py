@@ -387,31 +387,68 @@ class PaperTrader:
             trade.side, trade.city_id, trade.status.value, trade.pnl,
         )
 
-    def close_position(self, trade: PaperTrade, current_price: float) -> None:
-        """Close an open position at current market price.
+    # Conservative exit pricing for paper mode
+    PAPER_EXIT_HAIRCUT = 0.03  # 3¢ worse than midpoint (simulates bid)
+    PAPER_EXIT_SLIPPAGE = 0.05  # 5% slippage on top
+    PAPER_MIN_VOLUME = 5000  # Only exit if market has $5K+ 24h volume
 
-        In paper trading mode, early exits create phantom P&L because
-        there's no real counterparty to sell to. We log the signal but
-        DON'T actually close, all paper trades resolve against actual
-        observations via resolve_trade(). This will change for live mode.
+    def close_position(
+        self,
+        trade: PaperTrade,
+        current_price: float,
+        volume_24h: float = 0,
+    ) -> None:
+        """Close an open position with conservative paper pricing.
+
+        Simulates realistic exit by using pessimistic bid pricing:
+        - 3¢ haircut from midpoint (approximates bid vs mid spread)
+        - 5% additional slippage
+        - Only exits if 24h volume > $5K (no ghost prices)
         """
         if trade.status != TradeStatus.OPEN:
             return
 
-        # Calculate hypothetical P&L for logging
-        if trade.side == "YES":
-            shares = trade.size_usd / trade.entry_price if trade.entry_price > 0 else 0
-            potential_pnl = (current_price - trade.entry_price) * shares
-        else:
-            entry_no_price = 1.0 - trade.entry_price
-            exit_no_price = 1.0 - current_price
-            shares = trade.size_usd / entry_no_price if entry_no_price > 0 else 0
-            potential_pnl = (exit_no_price - entry_no_price) * shares
+        # Volume gate: don't exit illiquid markets
+        if volume_24h < self.PAPER_MIN_VOLUME:
+            logger.info(
+                "EXIT BLOCKED (low volume $%.0f): %s %s, holding",
+                volume_24h, trade.side, trade.city_id,
+            )
+            return
 
-        # Paper mode: log but don't close, wait for actual resolution
+        # Apply conservative pricing: haircut + slippage
+        if trade.side == "YES":
+            # Selling YES: bid is below midpoint
+            exit_price = max(0.01, current_price - self.PAPER_EXIT_HAIRCUT)
+            exit_price = exit_price * (1.0 - self.PAPER_EXIT_SLIPPAGE)
+            shares = trade.size_usd / trade.entry_price if trade.entry_price > 0 else 0
+            pnl = (exit_price - trade.entry_price) * shares
+        else:
+            # Selling NO: bid for NO is worse than midpoint
+            exit_no_mid = 1.0 - current_price
+            exit_no_bid = max(0.01, exit_no_mid - self.PAPER_EXIT_HAIRCUT)
+            exit_no_bid = exit_no_bid * (1.0 - self.PAPER_EXIT_SLIPPAGE)
+            entry_no = 1.0 - trade.entry_price
+            shares = trade.size_usd / entry_no if entry_no > 0 else 0
+            pnl = (exit_no_bid - entry_no) * shares
+
+        # Only close if still profitable after conservative pricing
+        if pnl <= 0:
+            logger.info(
+                "EXIT UNPROFITABLE after slippage: %s %s, P&L $%.2f, holding",
+                trade.side, trade.city_id, pnl,
+            )
+            return
+
+        trade.resolved_at = datetime.now(timezone.utc)
+        trade.exit_price = exit_price if trade.side == "YES" else (1.0 - exit_no_bid)
+        trade.pnl = round(pnl, 2)
+        trade.status = TradeStatus.WON
+
         logger.info(
-            "EXIT SIGNAL (paper mode, holding): %s %s @ %.3f -> %.3f hypothetical P&L=$%.2f",
-            trade.side, trade.city_id, trade.entry_price, current_price, potential_pnl,
+            "EARLY EXIT (conservative): %s %s @ %.3f -> %.3f (mid was %.3f) P&L=$%.2f",
+            trade.side, trade.city_id, trade.entry_price,
+            trade.exit_price, current_price, trade.pnl,
         )
 
     def close_all_positions(self, current_prices: dict[str, float] | None = None) -> float:
