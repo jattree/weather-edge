@@ -195,6 +195,18 @@ async def run_cycle(
         # Fetch multi-model forecasts
         forecasts = await fetch_city_forecasts(city_id, target_date)
         _forecast_cache[(city_id, target_date)] = forecasts
+
+        # Persist forecast snapshot for self-learning
+        try:
+            from weather_edge.dashboard.app import paper_trader
+            m_vals = {f.model_name: f.temp_max_c for f in forecasts if f.temp_max_c is not None}
+            if m_vals:
+                paper_trader.store.save_forecast_snapshot(
+                    city_id.value, str(target_date), m_vals,
+                )
+        except Exception:
+            pass  # Don't break pipeline if persistence fails
+
         if not forecasts:
             logger.warning("No forecasts for %s on %s", city_id.value, target_date)
             continue
@@ -353,6 +365,20 @@ async def run_cycle(
                 # Record every decision for the AI Decisions dashboard tab
                 record_decision(reasoning)
 
+                # Persist AI decision for self-learning
+                try:
+                    from weather_edge.dashboard.app import paper_trader
+                    paper_trader.store.save_ai_decision(
+                        source="claude",
+                        decision="TRADE" if reasoning.should_trade else "SKIP",
+                        city_id=signal.city_id,
+                        market_id=signal.market_id,
+                        rationale=reasoning.rationale[:500],
+                        confidence_adj=reasoning.confidence_adjustment,
+                    )
+                except Exception:
+                    pass
+
                 if not reasoning.should_trade:
                     logger.info("CLAUDE SKIP: %s %s, %s", signal.city_id, signal.description[:40], reasoning.rationale)
                     signal.confidence_tier = signal.confidence_tier  # Keep as-is but don't trade
@@ -382,6 +408,18 @@ async def run_cycle(
                             "risk_factors": [gemini_result.get("risk_the_bull_missed", "")],
                             "source": "gemini",
                         })
+                        # Persist Gemini decision for self-learning
+                        try:
+                            paper_trader.store.save_ai_decision(
+                                source="gemini",
+                                decision=verdict,
+                                city_id=signal.city_id,
+                                market_id=signal.market_id,
+                                rationale="; ".join(gemini_result.get("counter_arguments", [])[:2]),
+                                dissent_strength=dissent,
+                            )
+                        except Exception:
+                            pass
                         # Variable dissent sizing based on strength
                         sizing = gemini_result.get("sizing_recommendation", "full")
                         if dissent >= 0.7 or sizing in ("half", "skip"):

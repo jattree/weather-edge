@@ -180,6 +180,17 @@ async def check_nws_observations(city_id: str, target_date: date) -> float | Non
             "Observed high for %s on %s: %.1f°C (%.1f°F)",
             city_id, target_date, temp_c, c_to_f(temp_c),
         )
+        # Backfill actual value in forecast snapshots for self-learning
+        try:
+            from weather_edge.dashboard.app import paper_trader
+            updated = paper_trader.store.backfill_actual(
+                city_id, str(target_date), temp_c,
+            )
+            if updated:
+                logger.info("Backfilled %d forecast snapshots for %s %s",
+                           updated, city_id, target_date)
+        except Exception:
+            pass
         return temp_c
 
     return None

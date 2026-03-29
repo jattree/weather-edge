@@ -4,7 +4,6 @@ Survives server restarts. No Docker needed, just a file on disk.
 """
 from __future__ import annotations
 
-import json
 import logging
 import sqlite3
 from datetime import datetime, timezone
@@ -50,6 +49,39 @@ def _ensure_tables(conn: sqlite3.Connection) -> None:
             key TEXT PRIMARY KEY,
             value TEXT NOT NULL
         );
+
+        CREATE TABLE IF NOT EXISTS forecast_snapshots (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            trade_id INTEGER,
+            city_id TEXT NOT NULL,
+            target_date TEXT NOT NULL,
+            model_name TEXT NOT NULL,
+            forecast_value REAL,
+            actual_value REAL,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (trade_id) REFERENCES paper_trades(trade_id)
+        );
+
+        CREATE TABLE IF NOT EXISTS ai_decisions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            trade_id INTEGER,
+            market_id TEXT,
+            city_id TEXT,
+            source TEXT NOT NULL,
+            decision TEXT NOT NULL,
+            rationale TEXT,
+            confidence_adj REAL,
+            dissent_strength REAL,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (trade_id) REFERENCES paper_trades(trade_id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_forecast_city_model
+            ON forecast_snapshots(city_id, model_name);
+        CREATE INDEX IF NOT EXISTS idx_forecast_date
+            ON forecast_snapshots(target_date);
+        CREATE INDEX IF NOT EXISTS idx_ai_decisions_trade
+            ON ai_decisions(trade_id);
     """)
 
 
@@ -167,6 +199,83 @@ class PersistentStore:
             (key, value),
         )
         self.conn.commit()
+
+    # --- Forecast Snapshots (for self-learning) ---
+
+    def save_forecast_snapshot(
+        self, city_id: str, target_date: str,
+        model_values: dict[str, float], trade_id: int | None = None,
+    ) -> None:
+        """Save per-model forecast values for later Brier scoring."""
+        now = datetime.now(timezone.utc).isoformat()
+        for model_name, value in model_values.items():
+            self.conn.execute(
+                """INSERT INTO forecast_snapshots
+                   (trade_id, city_id, target_date, model_name,
+                    forecast_value, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (trade_id, city_id, target_date, model_name, value, now),
+            )
+        self.conn.commit()
+
+    def backfill_actual(self, city_id: str, target_date: str, actual: float) -> int:
+        """Fill in actual observed value for forecast snapshots."""
+        cur = self.conn.execute(
+            """UPDATE forecast_snapshots SET actual_value = ?
+               WHERE city_id = ? AND target_date = ? AND actual_value IS NULL""",
+            (actual, city_id, target_date),
+        )
+        self.conn.commit()
+        return cur.rowcount
+
+    def get_forecast_history(
+        self, model_name: str | None = None, city_id: str | None = None,
+        limit: int = 500,
+    ) -> list[dict]:
+        """Get resolved forecast snapshots for Brier scoring."""
+        query = """SELECT * FROM forecast_snapshots
+                   WHERE actual_value IS NOT NULL"""
+        params: list = []
+        if model_name:
+            query += " AND model_name = ?"
+            params.append(model_name)
+        if city_id:
+            query += " AND city_id = ?"
+            params.append(city_id)
+        query += " ORDER BY target_date DESC LIMIT ?"
+        params.append(limit)
+        return [dict(r) for r in self.conn.execute(query, params).fetchall()]
+
+    # --- AI Decisions (for self-learning) ---
+
+    def save_ai_decision(
+        self, source: str, decision: str, city_id: str = "",
+        market_id: str = "", trade_id: int | None = None,
+        rationale: str = "", confidence_adj: float | None = None,
+        dissent_strength: float | None = None,
+    ) -> None:
+        """Save an AI decision for later accuracy analysis."""
+        self.conn.execute(
+            """INSERT INTO ai_decisions
+               (trade_id, market_id, city_id, source, decision,
+                rationale, confidence_adj, dissent_strength, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (trade_id, market_id, city_id, source, decision,
+             rationale, confidence_adj, dissent_strength,
+             datetime.now(timezone.utc).isoformat()),
+        )
+        self.conn.commit()
+
+    def get_ai_decisions(self, source: str | None = None, limit: int = 200) -> list[dict]:
+        """Get AI decisions for accuracy analysis."""
+        query = "SELECT * FROM ai_decisions"
+        params: list = []
+        if source:
+            query += " WHERE source = ?"
+            params.append(source)
+        query += " ORDER BY created_at DESC LIMIT ?"
+        params.append(limit)
+        return [dict(r) for r in self.conn.execute(query, params).fetchall()]
 
     def get_cycle_count(self) -> int:
         return int(self.get_state("cycle_count", "0"))
