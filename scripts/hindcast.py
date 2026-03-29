@@ -157,19 +157,18 @@ def fetch_batch_forecasts(
 ) -> dict[str, float]:
     """Fetch historical model forecasts for a date range."""
     try:
-        params = {
-            "latitude": lat,
-            "longitude": lon,
-            "daily": "temperature_2m_max",
-            "start_date": str(start),
-            "end_date": str(end),
-            "models": model_id,
-        }
-        if OPENMETEO_API_KEY:
-            params["apikey"] = OPENMETEO_API_KEY
+        # No API key for historical, paid tier doesn't cover it
+        # Free tier: 5K req/day (we need ~216 total)
         resp = httpx.get(
             HIST_FORECAST_URL,
-            params=params,
+            params={
+                "latitude": lat,
+                "longitude": lon,
+                "daily": "temperature_2m_max",
+                "start_date": str(start),
+                "end_date": str(end),
+                "models": model_id,
+            },
             timeout=30,
             follow_redirects=True,
         )
