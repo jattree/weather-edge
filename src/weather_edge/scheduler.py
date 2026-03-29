@@ -22,7 +22,7 @@ from weather_edge.analysis.model_timing import is_golden_window
 from weather_edge.analysis.resolver import resolve_open_trades
 from weather_edge.config import CITIES, settings
 from weather_edge.fetchers.openmeteo import fetch_city_forecasts
-from weather_edge.fetchers.polymarket import MarketInfo, discover_weather_markets, get_price_snapshot
+from weather_edge.fetchers.polymarket import MarketInfo, discover_weather_markets
 from weather_edge.models.enums import City
 from weather_edge.trading.paper import PaperTrader
 
@@ -331,7 +331,7 @@ async def run_cycle(
             reverse=True,
         )[:3]
 
-        golden = is_golden_window()
+        _golden = is_golden_window()  # used for future timing logic
         for signal in tradeable:
             # Build model context for Claude from cached forecasts
             model_vals = {}
@@ -382,12 +382,31 @@ async def run_cycle(
                             "risk_factors": [gemini_result.get("risk_the_bull_missed", "")],
                             "source": "gemini",
                         })
-                        # High dissent = reduce size
-                        if dissent >= 0.7:
+                        # Variable dissent sizing based on strength
+                        sizing = gemini_result.get("sizing_recommendation", "full")
+                        if dissent >= 0.7 or sizing in ("half", "skip"):
+                            if sizing == "skip" and dissent >= 0.9:
+                                multiplier = 0.0
+                            elif sizing == "half" or dissent >= 0.7:
+                                multiplier = 0.5
+                            else:
+                                multiplier = 1.0 - (dissent * 0.5)
                             old_size = signal.recommended_size
-                            signal.recommended_size = round(signal.recommended_size * 0.5, 2)
+                            signal.recommended_size = round(
+                                signal.recommended_size * multiplier, 2
+                            )
                             logger.info(
-                                "GEMINI DISSENT: %s, reducing $%.0f -> $%.0f (dissent=%.1f)",
+                                "GEMINI DISSENT: %s, %.0f%% cut $%.0f->$%.0f (d=%.1f %s)",
+                                signal.city_id, (1 - multiplier) * 100,
+                                old_size, signal.recommended_size, dissent, sizing,
+                            )
+                        elif dissent >= 0.3 and sizing == "reduce_20pct":
+                            old_size = signal.recommended_size
+                            signal.recommended_size = round(
+                                signal.recommended_size * 0.8, 2
+                            )
+                            logger.info(
+                                "GEMINI MILD DISSENT: %s, 20%% trim $%.0f -> $%.0f (dissent=%.1f)",
                                 signal.city_id, old_size, signal.recommended_size, dissent,
                             )
                 except Exception:

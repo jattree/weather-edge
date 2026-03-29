@@ -10,9 +10,9 @@ Uses Gemini Flash for speed and low cost (~$0.10/day).
 """
 from __future__ import annotations
 
+import json
 import logging
 import os
-import json
 
 import httpx
 
@@ -55,29 +55,41 @@ _check_ai_keys_at_load()
 
 COASTAL_CITIES = {"sf", "la", "seattle", "nyc", "miami", "boston", "san_diego", "portland_or"}
 
-RED_TEAM_PROMPT = """You are a Lead Forensic Meteorologist. Your mission is to find the thermodynamic kill-switch for this proposed weather trade. Ignore the crowd; find why the math fails.
+RED_TEAM_PROMPT = """You are a Lead Forensic Meteorologist. Your mission is to find a SPECIFIC, FALSIFIABLE thermodynamic kill-switch for this proposed weather trade.
 
-Analyze these failure vectors:
+STRICT RULES:
+- You MUST cite a specific model by name and its forecast value in your argument.
+- You MUST identify a specific physical mechanism (not "weather is uncertain").
+- If you cannot find a concrete failure mode backed by the model data provided, you MUST return dissent_strength=0 and verdict=AGREE.
+- Generic warnings without model evidence get dissent_strength=0.
 
-1. CIN Cap: If the bull case relies on convective cooling (storms), check for Convective Inhibition. If CIN is likely high, the cap won't break, expect +3-5F temperature overshoot from uninterrupted solar heating.
+Failure vectors to check (only if evidence exists in the model data):
 
-2. Marine Layer Trap: For coastal cities (SF, LA, Seattle, NYC), if a strong inversion is present, global models burn off fog 2-4 hours too early. Argue for lower max temps.
+1. CIN Cap: If bull case relies on convective cooling, check for Convective Inhibition. High CIN = +3-5F overshoot.
 
-3. Soil-Moisture Feedback: In Dallas, Chicago, Houston, Atlanta, if conditions are dry, GFS has a documented 4-8F warm bias. Discount GFS-led heat spikes.
+2. Marine Layer Trap: For coastal cities, if strong inversion present, global models burn off fog 2-4h early.
 
-4. Multimodal Ensemble Dissent: If the model forecasts show two distinct clusters (not one peak), the ensemble is bimodal. Assign high dissent, averaging two different weather regimes produces a number that matches neither.
+3. Soil-Moisture Feedback: In dry conditions, GFS has documented 4-8F warm bias. Only cite if GFS is an outlier in the provided data.
 
-5. Diurnal Timing Error: Models predict daily max temp but the actual peak depends on cloud timing. If afternoon clouds are likely (convective initiation), max temp occurs earlier and lower than models suggest.
+4. Bimodal Ensemble: If model forecasts show TWO DISTINCT CLUSTERS (>3°C gap between groups), not one peak. Cite the specific models in each cluster.
 
-Be specific to this city and date. Generic warnings like "weather is uncertain" get a dissent score of 0.
+5. Diurnal Timing Error: If afternoon convective initiation is likely, max temp occurs earlier and lower.
+
+DISSENT STRENGTH CALIBRATION:
+- 0.0: No specific failure mode found, or models tightly clustered
+- 0.3: Minor concern, one model outlier but consensus strong
+- 0.5: Genuine risk, bimodal split or known model bias applies
+- 0.8: Critical, multiple failure modes compound, or models diverge >4°C
+- 1.0: Fatal flaw, trade thesis is wrong
 
 Respond in JSON only:
 {
     "dissent_strength": 0.0-1.0,
-    "primary_failure_mode": "specific mechanism",
-    "counter_arguments": ["specific reason 1", "specific reason 2"],
+    "primary_failure_mode": "specific mechanism with model evidence",
+    "falsifiable_claim": "If X happens, this trade fails because Y",
+    "counter_arguments": ["specific reason citing model data"],
     "risk_the_bull_missed": "one key risk",
-    "sizing_recommendation": "full" or "half" or "skip",
+    "sizing_recommendation": "full" or "reduce_20pct" or "half" or "skip",
     "verdict": "AGREE" or "DISSENT"
 }"""
 
