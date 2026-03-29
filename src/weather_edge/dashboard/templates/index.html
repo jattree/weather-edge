@@ -1972,6 +1972,12 @@
                 <div style="display: flex; flex-direction: column; overflow: hidden;">
                     <div class="panel-header">
                         <div class="panel-title">Trade Log</div>
+                        <div style="display:flex; gap:4px; align-items:center;">
+                            <button class="blotter-filter-btn active" onclick="setTradeFilter('all',this)">All</button>
+                            <button class="blotter-filter-btn" onclick="setTradeFilter('open',this)">Open</button>
+                            <button class="blotter-filter-btn" onclick="setTradeFilter('won',this)">Won</button>
+                            <button class="blotter-filter-btn" onclick="setTradeFilter('lost',this)">Lost</button>
+                        </div>
                         <div class="panel-badge" id="tradeCount">0 trades</div>
                     </div>
                     <div class="trade-log-scroll" id="tradeLog"></div>
@@ -2920,7 +2926,17 @@
         /* ================================================================
          *  TRADE LOG
          * ================================================================ */
+        var tradeLogFilter = 'all';
+        var _lastTrades = [];
+        function setTradeFilter(f, btnEl) {
+            tradeLogFilter = f;
+            var btns = btnEl.parentElement.querySelectorAll('.blotter-filter-btn');
+            btns.forEach(function(b) { b.classList.remove('active'); });
+            btnEl.classList.add('active');
+            updateTradeLog(_lastTrades);
+        }
         function updateTradeLog(trades) {
+            _lastTrades = trades || [];
             var logEl = document.getElementById('tradeLog');
             while (logEl.firstChild) logEl.removeChild(logEl.firstChild);
 
@@ -2931,7 +2947,13 @@
                 return;
             }
 
-            var sorted = trades.slice().reverse();
+            var sorted = trades.slice().reverse().filter(function(t) {
+                if (tradeLogFilter === 'all') return true;
+                if (tradeLogFilter === 'open') return t.status === 'open';
+                if (tradeLogFilter === 'won') return t.status === 'won';
+                if (tradeLogFilter === 'lost') return t.status === 'lost';
+                return true;
+            });
             sorted.forEach(function(t, idx) {
                 var row = el('div', 'trade-entry');
 
