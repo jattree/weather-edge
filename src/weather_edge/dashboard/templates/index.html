@@ -3202,10 +3202,21 @@
 
             /* Sort */
             var sortKey = blotterSortCol;
+            function parseResolvesMinutes(s) {
+                if (!s || s === 'OVERDUE') return -1;
+                var h = 0, m = 0;
+                var hm = s.match(/(\d+)h/); if (hm) h = parseInt(hm[1]);
+                var mm = s.match(/(\d+)m/); if (mm) m = parseInt(mm[1]);
+                return h * 60 + m;
+            }
             filtered.sort(function(a, b) {
                 var va = a[sortKey], vb = b[sortKey];
                 if (va == null) va = '';
                 if (vb == null) vb = '';
+                if (sortKey === 'resolves_in') {
+                    var ma = parseResolvesMinutes(va), mb = parseResolvesMinutes(vb);
+                    return blotterSortAsc ? ma - mb : mb - ma;
+                }
                 if (typeof va === 'number' && typeof vb === 'number') {
                     return blotterSortAsc ? va - vb : vb - va;
                 }
