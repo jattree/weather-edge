@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 import re
-from datetime import date, datetime, timedelta, timezone
+from datetime import date
 
 import httpx
 
@@ -20,12 +20,16 @@ from weather_edge.trading.paper import PaperTrade, PaperTrader
 logger = logging.getLogger(__name__)
 
 # Regex to parse temperature ranges from trade descriptions
-# Matches patterns like "between 62-63°F", "62-63°F", "between 62-63 °F"
+# Fahrenheit patterns
 RANGE_PATTERN = re.compile(r"(\d+)\s*[-–]\s*(\d+)\s*°?\s*F", re.IGNORECASE)
-# Matches "49°F or below" / "49 °F or below"
 BELOW_PATTERN = re.compile(r"(\d+)\s*°?\s*F\s+or\s+below", re.IGNORECASE)
-# Matches "60°F or above" / "60 °F or above"
 ABOVE_PATTERN = re.compile(r"(\d+)\s*°?\s*F\s+or\s+above", re.IGNORECASE)
+# Celsius patterns (Asian/international cities)
+RANGE_PATTERN_C = re.compile(r"(\d+)\s*[-–]\s*(\d+)\s*°\s*C", re.IGNORECASE)
+BELOW_PATTERN_C = re.compile(r"(\d+)\s*°?\s*C\s+or\s+below", re.IGNORECASE)
+ABOVE_PATTERN_C = re.compile(r"(\d+)\s*°?\s*C\s+or\s+above", re.IGNORECASE)
+# Exact Celsius: "be 8°C on" (single-value buckets)
+EXACT_PATTERN_C = re.compile(r"be\s+(\d+)\s*°\s*C\s+on\s+", re.IGNORECASE)
 
 # Open-Meteo archive API, always use free tier (customer archive needs Professional plan)
 ARCHIVE_API_URL = "https://archive-api.open-meteo.com/v1/archive"
@@ -137,7 +141,6 @@ async def check_nws_observations(city_id: str, target_date: date) -> float | Non
 
     async with httpx.AsyncClient() as client:
         try:
-            from weather_edge.config import settings
             _params = {
                     "latitude": city_config.latitude,
                     "longitude": city_config.longitude,
@@ -182,7 +185,14 @@ async def check_nws_observations(city_id: str, target_date: date) -> float | Non
     return None
 
 
-def parse_bucket_from_description(description: str) -> tuple[float | None, float | None] | None:
+def _c_to_f(c: float) -> float:
+    """Convert Celsius to Fahrenheit."""
+    return c * 9.0 / 5.0 + 32.0
+
+
+def parse_bucket_from_description(
+    description: str,
+) -> tuple[float | None, float | None] | None:
     """Parse temperature bucket boundaries (in °F) from a trade description.
 
     Returns:
@@ -190,21 +200,39 @@ def parse_bucket_from_description(description: str) -> tuple[float | None, float
         For "X or below": (None, X)
         For "between X-Y": (X, Y)
         For "X or above": (X, None)
+        For exact "be X°C": (X_f, X_f+1.8), 1°C-wide bucket
     """
-    # Try "X°F or below"
+    # --- Fahrenheit patterns ---
     m = BELOW_PATTERN.search(description)
     if m:
         return (None, float(m.group(1)))
 
-    # Try "between X-Y°F" or "X-Y°F"
     m = RANGE_PATTERN.search(description)
     if m:
         return (float(m.group(1)), float(m.group(2)))
 
-    # Try "X°F or above"
     m = ABOVE_PATTERN.search(description)
     if m:
         return (float(m.group(1)), None)
+
+    # --- Celsius patterns (convert to °F for consistent comparison) ---
+    m = BELOW_PATTERN_C.search(description)
+    if m:
+        return (None, _c_to_f(float(m.group(1))))
+
+    m = RANGE_PATTERN_C.search(description)
+    if m:
+        return (_c_to_f(float(m.group(1))), _c_to_f(float(m.group(2))))
+
+    m = ABOVE_PATTERN_C.search(description)
+    if m:
+        return (_c_to_f(float(m.group(1))), None)
+
+    # Exact Celsius: "be 8°C on" → 1°C-wide bucket [8°C, 9°C)
+    m = EXACT_PATTERN_C.search(description)
+    if m:
+        val_c = float(m.group(1))
+        return (_c_to_f(val_c), _c_to_f(val_c + 1.0))
 
     return None
 
