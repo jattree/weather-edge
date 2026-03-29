@@ -7,22 +7,24 @@ Inspired by [@ColdMath's Claude Trader](https://polymarket.com/profile/@ColdMath
 ## How It Works
 
 1. Fetches forecasts from 6-8 weather models per city in **one batched API call** via Open-Meteo customer API (1M calls/month)
-2. Applies EMOS calibration (2x spread inflation, 50% bias shrinkage, 70% bucket cap, 1.2C variance floor) to prevent overconfident edges
-3. Applies data-driven NWS station bias corrections (30-day rolling calibration)
-4. Computes weighted consensus with KDE distribution fitting
-5. Detects bust-causing weather patterns (Chinook, Foehn, marine layer, etc.) and adjusts confidence
-6. Discovers active Polymarket weather markets via Gamma API (130+ temperature markets daily)
-7. **Claude API** analyzes top 3 signals per cycle, approves or skips with rationale
-8. **Gemini 2.5 Flash** red-teams Claude-approved trades, finds counter-arguments and dissent. High dissent (>=0.7) halves position size
+2. Applies **dynamic bias corrections** computed from 60K+ hindcast snapshots (365-day rolling, per-model per-city)
+3. Applies EMOS calibration (2x spread inflation, 50% bias shrinkage, 70% bucket cap, 1.2°C variance floor)
+4. Computes **adaptive Brier-weighted consensus**, models that predict well get more influence automatically
+5. Detects bust-causing weather patterns (13 patterns: Chinook, Foehn, marine layer, PRD haze, Asian cold front, etc.)
+6. Discovers active Polymarket weather markets via Gamma API (Fahrenheit ranges + Celsius single-value buckets)
+7. **Claude API (Meteorologist, market-blind)**, assesses physical plausibility of forecasts, not market prices
+8. **Gemini 2.5 Flash (Quant/Red Team)**, requires falsifiable claims citing specific models, variable dissent (0.0-0.8)
 9. Fetches real order book ask prices via CLOB `/book` endpoint for spread capture detection
-10. Calculates edge (model probability vs market price) with quarter-Kelly sizing
-11. Runs three-pool strategy: 60% today / 30% tomorrow / 10% penny (Gemini-validated allocation)
-12. Generates spread capture hedge orders (buy opposite side for merge profit)
-13. **Early exit monitor**, scans open positions each cycle for edge inversion (>7%), profit cap (88%+), pattern bust. Claude + Gemini review before closing. Penny bets never exit.
-14. Snipes model drops, 3-minute hash-based probes detect ECMWF/GFS/HRRR updates, trades before market adjusts
-15. Auto-resolves trades against Polymarket outcomes and Open-Meteo archive observations (free tier)
-16. Persists all trades to SQLite (survives restarts)
-17. **Contract-first runtime validation**, 7 pure validation functions catch silent failures before capital deploys
+10. Calculates edge with **penny-first strategy**: 35% today / 25% tomorrow / 40% penny pool
+11. **Risk controls**: circuit breaker (drawdown kill-switch), correlation limits per weather system, gross exposure cap
+12. **Risk slider**: Conservative/Balanced/Aggressive profiles auto-configure 10 parameters via Settings tab
+13. **Early exit monitor** with conservative paper pricing (3¢ haircut + 5% slippage + volume gate)
+14. Snipes model drops, 3-minute hash-based probes detect ECMWF/GFS/HRRR updates
+15. Auto-resolves trades against observations (Fahrenheit + Celsius bucket parsing)
+16. **Self-learning engine**: forecast ledger (60K snapshots), AI decision persistence, inverse Brier weighting
+17. **Daily reports**: auto-generated at midnight UTC with portfolio, AI stats, API health, city breakdown
+18. **Contract-first runtime validation**, 9 pure validation functions (including leverage cap)
+19. Persists everything to SQLite, trades, forecasts, AI decisions, settings (survives restarts)
 
 ## Production Deployment
 
@@ -111,42 +113,39 @@ API keys needed for full functionality (set in `.env`):
 ```
 Open-Meteo (6-8 physics models/city) + GribStream (GraphCast AI model)
         |
-        v
-  Bias Correction (30-day calibrated, ENSO regime-aware shrinkage)
+  Dynamic Bias Correction (60K hindcast snapshots, per-model per-city)
         |
-        v
-  Pattern Detector (Chinook, Foehn, marine layer, lake breeze, etc.)
+  Pattern Detector (13 patterns: Chinook, Foehn, marine layer, PRD haze, etc.)
         |
-        v
   EMOS Calibration (spread inflation, bias shrinkage, variance floor)
         |
-  KDE Consensus Engine (weighted by model skill)
-        |                              Polymarket Gamma API
+  Adaptive Brier-Weighted Consensus (models scored by hindcast accuracy)
+        |                              Polymarket Gamma API (F° + C° parsing)
         v                                      |
-  Edge Detection + Kelly Sizing  <---  Market Prices + Order Book Asks + AI/Physics Divergence
+  Edge Detection + Kelly Sizing  <---  Market Prices + Order Book Asks
         |                    |
-        |              Claude API (top 3 signals, bull case)
+        |              Claude (Meteorologist, market-blind, physical plausibility)
         |                    |
-        |              Gemini 2.5 Flash (red team, bear case)
+        |              Gemini (Quant, falsifiable dissent, variable sizing)
         |                    |
-        +-- Today pool (60% bankroll, quarter-Kelly)
-        +-- Tomorrow pool (30% bankroll, conviction bets)
-        +-- Penny pool (10% bankroll, ColdMath-style sniping)
-        +-- Spread capture (hedge orders on opposite side, 3% fee buffer)
+        +-- Risk Controls: circuit breaker, correlation limits, exposure cap
+        +-- Today pool (35%) / Tomorrow pool (25%) / Penny pool (40%)
         +-- Fee gate (skip if taker fee > 40% of edge)
+        +-- Leverage cap (core 20x, penny 50x)
         |
         v
-  Paper Trader / Live Executor (post_only maker)  --->  SQLite (cold) + Redis (hot)
-        |                                    |
-  Auto-Resolver (settles trades       Trade History
-   against NWS observations)          (survives restarts)
+  Paper Trader (conservative exit pricing)  --->  SQLite (trades + forecasts + AI decisions)
+        |                                               |
+  Auto-Resolver (F° + C° bucket parsing)    Self-Learning Engine
+        |                                     (Brier scores → adaptive weights)
+        v                                               |
+  Web Dashboard (FastAPI + WebSocket + 12 tabs)   Hindcast Bootstrap
+        |                                         (365 days, 60K snapshots)
+  Model-Drop Sniper (3min probes)
         |
-        v
-  Web Dashboard (FastAPI + WebSocket + 10 Bloomberg tabs)
+  Early Exit Monitor (AI-reviewed, conservative paper pricing)
         |
-  Model-Drop Sniper (probes every 3min, hash-based dedup)
-        |
-  Early Exit Monitor (edge inversion, profit cap, AI-reviewed)
+  Daily Report (midnight UTC auto-save)
         |
   Contract Validation (7 runtime checks, EMOS, budgets, model count)
 ```
