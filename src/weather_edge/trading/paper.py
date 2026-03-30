@@ -78,10 +78,19 @@ class PaperTrader:
     def available_capital(self) -> float:
         """Capital remaining to deploy.
 
-        Capped at bankroll, profits don't inflate deployment capacity.
+        Uses stepped compounding: deployment base = bankroll + (profits * compound_factor).
+        Factor 0.0 = original bankroll only (conservative)
+        Factor 0.5 = reinvest 50% of profits (balanced)
+        Factor 1.0 = full NAV compounding (aggressive)
         """
-        raw = self.bankroll - self.capital_at_risk + self.total_pnl
-        return min(raw, self.bankroll - self.capital_at_risk)
+        try:
+            from weather_edge.analysis.risk_controls import get_active_profile
+            compound_factor = get_active_profile().compound_factor
+        except Exception:
+            compound_factor = 0.5
+        profit = max(0, self.total_pnl)
+        deployment_base = self.bankroll + (profit * compound_factor)
+        return max(0, deployment_base - self.capital_at_risk)
 
     @property
     def today_budget(self) -> float:

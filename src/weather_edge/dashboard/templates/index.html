@@ -5077,7 +5077,8 @@
             reserve_pct: { label: 'Reserve Pot', desc: 'Keep this % of bankroll uncommitted for high-conviction opportunities', fmt: 'pct' },
             penny_max_position: { label: 'Penny Max Position', desc: 'Maximum $ per penny bet', fmt: 'usd' },
             min_edge: { label: 'Minimum Edge', desc: 'Only trade when model edge exceeds this threshold', fmt: 'pct' },
-            fee_alpha_max: { label: 'Fee/Alpha Max', desc: 'Skip trade if taker fee exceeds this % of projected profit', fmt: 'pct' }
+            fee_alpha_max: { label: 'Fee/Alpha Max', desc: 'Skip trade if taker fee exceeds this % of projected profit', fmt: 'pct' },
+            compound_factor: { label: 'Profit Compounding', desc: '0% = deploy original bankroll only. 50% = reinvest half of profits. 100% = full NAV compounding', fmt: 'pct' }
         };
         var PROFILE_NAMES = ['conservative', 'balanced', 'aggressive'];
         var PROFILE_DESCRIPTIONS = {
