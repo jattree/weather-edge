@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import re
+from dataclasses import dataclass
 from datetime import date
 
 import httpx
@@ -201,74 +202,95 @@ def _c_to_f(c: float) -> float:
     return c * 9.0 / 5.0 + 32.0
 
 
+@dataclass
+class BucketInfo:
+    """Parsed temperature bucket with native unit tracking."""
+    low: float | None   # Lower bound (None = unbounded)
+    high: float | None  # Upper bound (None = unbounded)
+    unit: str           # "fahrenheit" or "celsius"
+    exclusive_upper: bool = False  # True for exact C buckets [X, X+1)
+
+
 def parse_bucket_from_description(
     description: str,
-) -> tuple[float | None, float | None] | None:
-    """Parse temperature bucket boundaries (in °F) from a trade description.
+) -> BucketInfo | None:
+    """Parse temperature bucket boundaries from a trade description.
 
-    Returns:
-        (low_f, high_f) tuple where None means unbounded, or None if unparseable.
-        For "X or below": (None, X)
-        For "between X-Y": (X, Y)
-        For "X or above": (X, None)
-        For exact "be X°C": (X_f, X_f+1.8), 1°C-wide bucket
+    Returns BucketInfo in native units (no conversion).
+    Fahrenheit ranges: inclusive both bounds [76, 78)
+    Celsius exact: exclusive upper [20, 21)
     """
     # --- Fahrenheit patterns ---
     m = BELOW_PATTERN.search(description)
     if m:
-        return (None, float(m.group(1)))
+        return BucketInfo(None, float(m.group(1)), "fahrenheit")
 
     m = RANGE_PATTERN.search(description)
     if m:
-        return (float(m.group(1)), float(m.group(2)))
+        # "76-77°F" means [76, 78) per Polymarket rules
+        return BucketInfo(float(m.group(1)), float(m.group(2)) + 1.0,
+                          "fahrenheit", exclusive_upper=True)
 
     m = ABOVE_PATTERN.search(description)
     if m:
-        return (float(m.group(1)), None)
+        return BucketInfo(float(m.group(1)), None, "fahrenheit")
 
-    # --- Celsius patterns (convert to °F for consistent comparison) ---
+    # --- Celsius patterns (keep in native °C) ---
     m = BELOW_PATTERN_C.search(description)
     if m:
-        return (None, _c_to_f(float(m.group(1))))
+        return BucketInfo(None, float(m.group(1)), "celsius")
 
     m = RANGE_PATTERN_C.search(description)
     if m:
-        return (_c_to_f(float(m.group(1))), _c_to_f(float(m.group(2))))
+        return BucketInfo(float(m.group(1)), float(m.group(2)) + 1.0,
+                          "celsius", exclusive_upper=True)
 
     m = ABOVE_PATTERN_C.search(description)
     if m:
-        return (_c_to_f(float(m.group(1))), None)
+        return BucketInfo(float(m.group(1)), None, "celsius")
 
-    # Exact Celsius: "be 8°C on" → 1°C-wide bucket [8°C, 9°C)
+    # Exact Celsius: "be 8°C on" → [8, 9)
     m = EXACT_PATTERN_C.search(description)
     if m:
         val_c = float(m.group(1))
-        return (_c_to_f(val_c), _c_to_f(val_c + 1.0))
+        return BucketInfo(val_c, val_c + 1.0, "celsius", exclusive_upper=True)
 
     return None
 
 
-def actual_falls_in_bucket(actual_temp_f: float, bucket: tuple[float | None, float | None]) -> bool:
+def actual_falls_in_bucket(actual_temp_c: float, bucket: BucketInfo) -> bool:
     """Check if an actual temperature falls within a bucket's range.
 
+    Compares in native units to avoid floating-point conversion errors.
+
     Args:
-        actual_temp_f: Actual observed temperature in Fahrenheit.
-        bucket: (low_f, high_f) from parse_bucket_from_description.
+        actual_temp_c: Actual observed temperature in Celsius.
+        bucket: BucketInfo from parse_bucket_from_description.
 
     Returns:
         True if the actual temperature falls in this bucket.
     """
-    low_f, high_f = bucket
+    # Convert actual to bucket's native unit
+    if bucket.unit == "fahrenheit":
+        actual = _c_to_f(actual_temp_c)
+    else:
+        actual = actual_temp_c
 
-    if low_f is None and high_f is not None:
+    low, high = bucket.low, bucket.high
+
+    if low is None and high is not None:
         # "X or below", actual <= high
-        return actual_temp_f <= high_f
-    elif low_f is not None and high_f is None:
+        return actual <= high
+    elif low is not None and high is None:
         # "X or above", actual >= low
-        return actual_temp_f >= low_f
-    elif low_f is not None and high_f is not None:
-        # "between X-Y", low <= actual <= high
-        return low_f <= actual_temp_f <= high_f
+        return actual >= low
+    elif low is not None and high is not None:
+        if bucket.exclusive_upper:
+            # Range/exact: low <= actual < high
+            return low <= actual < high
+        else:
+            # Inclusive: low <= actual <= high
+            return low <= actual <= high
 
     return False
 
@@ -355,16 +377,23 @@ async def resolve_open_trades(paper_trader: PaperTrader) -> int:
         # --- Fallback: check if target date has passed and use observations ---
         target_date = _extract_target_date_from_trade(trade)
         if target_date is None:
-            # Can't determine target date, skip
             continue
 
-        # Only use fallback if the target date has fully passed
-        # (we need the day to end for the observation to be available)
-        if target_date >= today:
-            continue
+        # Use city's local timezone to determine if the day is over
+        # Wellington (UTC+13) finishes 13h before UTC midnight
+        city_id = trade.city_id
+        try:
+            city_enum = City(city_id)
+            city_tz_name = CITIES[city_enum].timezone
+            from zoneinfo import ZoneInfo
+            from datetime import datetime
+            city_now = datetime.now(ZoneInfo(city_tz_name))
+            city_today = city_now.date()
+        except Exception:
+            city_today = today
 
-        # Wait at least 1 day after target for archive data to be available
-        if (today - target_date).days < 1:
+        # Resolve if the target date has passed in the city's timezone
+        if target_date >= city_today:
             continue
 
         # Fetch actual observation
@@ -377,8 +406,7 @@ async def resolve_open_trades(paper_trader: PaperTrader) -> int:
             )
             continue
 
-        # Convert to Fahrenheit and check bucket
-        actual_temp_f = c_to_f(actual_temp_c)
+        # Check bucket, compare in native units (no unnecessary conversion)
         bucket = parse_bucket_from_description(trade.description or "")
         if bucket is None:
             logger.warning(
@@ -388,24 +416,25 @@ async def resolve_open_trades(paper_trader: PaperTrader) -> int:
             continue
 
         # Determine if YES won (actual temp falls in this bucket)
-        yes_won = actual_falls_in_bucket(actual_temp_f, bucket)
+        yes_won = actual_falls_in_bucket(actual_temp_c, bucket)
         paper_trader.resolve_trade(trade, outcome_yes=yes_won)
         resolved_count += 1
 
-        bucket_low, bucket_high = bucket
+        unit = bucket.unit
+        unit_sym = "°C" if unit == "celsius" else "°F"
         bucket_str = (
-            f"{bucket_low}-{bucket_high}°F" if bucket_low and bucket_high
-            else f"<={bucket_high}°F" if bucket_high
-            else f">={bucket_low}°F" if bucket_low
+            f"[{bucket.low}-{bucket.high}){unit_sym}"
+            if bucket.low is not None and bucket.high is not None
+            else f"<={bucket.high}{unit_sym}" if bucket.high is not None
+            else f">={bucket.low}{unit_sym}" if bucket.low is not None
             else "unknown"
         )
         logger.info(
-            "RESOLVED (observation): %s %s | bucket=%s | actual=%.0f°F (%.1f°C) | "
+            "RESOLVED (observation): %s %s | bucket=%s | actual=%.1f°C | "
             "YES_won=%s | P&L=$%.2f | %s",
             trade.side,
             trade.city_id.upper() if isinstance(trade.city_id, str) else trade.city_id,
             bucket_str,
-            actual_temp_f,
             actual_temp_c,
             yes_won,
             trade.pnl or 0.0,
