@@ -64,6 +64,9 @@ class RiskProfile:
     min_edge: float
     fee_alpha_max: float
 
+    # Compounding
+    compound_factor: float  # 0.0=original bankroll, 0.5=half profits, 1.0=full NAV
+
 
 RISK_PROFILES: dict[str, RiskProfile] = {
     "aggressive": RiskProfile(
@@ -79,6 +82,7 @@ RISK_PROFILES: dict[str, RiskProfile] = {
         penny_max_position=50.0,
         min_edge=0.03,
         fee_alpha_max=0.50,
+        compound_factor=1.0,
     ),
     "balanced": RiskProfile(
         name="balanced",
@@ -93,6 +97,7 @@ RISK_PROFILES: dict[str, RiskProfile] = {
         penny_max_position=30.0,
         min_edge=0.05,
         fee_alpha_max=0.40,
+        compound_factor=0.5,
     ),
     "conservative": RiskProfile(
         name="conservative",
@@ -107,6 +112,7 @@ RISK_PROFILES: dict[str, RiskProfile] = {
         penny_max_position=15.0,
         min_edge=0.08,
         fee_alpha_max=0.30,
+        compound_factor=0.0,
     ),
 }
 

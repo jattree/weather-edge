@@ -633,6 +633,7 @@ async def api_get_settings():
             "penny_max_position": profile.penny_max_position,
             "min_edge": profile.min_edge,
             "fee_alpha_max": profile.fee_alpha_max,
+            "compound_factor": profile.compound_factor,
         },
         "circuit_breaker": {
             "high_water_mark": _circuit_breaker.high_water_mark,
