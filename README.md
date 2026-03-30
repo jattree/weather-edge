@@ -13,11 +13,11 @@ Inspired by [@ColdMath's Claude Trader](https://polymarket.com/profile/@ColdMath
 5. Detects bust-causing weather patterns (13 patterns: Chinook, Foehn, marine layer, PRD haze, Asian cold front, etc.)
 6. Discovers active Polymarket weather markets via Gamma API (Fahrenheit ranges + Celsius single-value buckets)
 7. **Claude API (Meteorologist, market-blind)**, assesses physical plausibility of forecasts, not market prices
-8. **Gemini 2.5 Flash (Quant/Red Team)**, requires falsifiable claims citing specific models, variable dissent (0.0-0.8)
+8. **Gemini 2.5 Flash (Quant/Red Team, weather-blind)**, fee efficiency analysis, liquidity checks, concentration risk, variable dissent (0.0-0.8)
 9. Fetches real order book ask prices via CLOB `/book` endpoint for spread capture detection
-10. Calculates edge with **penny-first strategy**: 35% today / 25% tomorrow / 40% penny pool
+10. Calculates edge with **penny-first strategy**: 35% today / 25% tomorrow / 40% penny pool. Post-fee-cliff: fee gate blocks mid-range trades where fees > 40% of edge. Barbell pivot (tails-only) under evaluation.
 11. **Risk controls**: circuit breaker (drawdown kill-switch), correlation limits per weather system, gross exposure cap
-12. **Risk slider**: Conservative/Balanced/Aggressive profiles auto-configure 10 parameters via Settings tab
+12. **Risk slider**: Conservative/Balanced/Aggressive profiles auto-configure 11 parameters (including profit compounding) via Settings tab
 13. **Early exit monitor** with conservative paper pricing (3¢ haircut + 5% slippage + volume gate)
 14. Snipes model drops, 3-minute hash-based probes detect ECMWF/GFS/HRRR updates
 15. Auto-resolves trades against observations (Fahrenheit + Celsius bucket parsing)
