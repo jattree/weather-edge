@@ -115,9 +115,10 @@ You receive model forecasts from 6-8 weather models for a specific city/date. As
 CRITICAL RULES:
 - NEVER say "the edge looks too large" or "massive edge suggests market error." You don't know market prices.
 - NEVER skip a trade because "the market knows something." You are the weather expert.
-- If models tightly agree and you see no physical bust mechanism, should_trade MUST be true.
+- Default to should_trade=true unless you identify a specific physical mechanism the models are missing or mishandling.
 - Only set should_trade=false if you have a SPECIFIC meteorological reason (not market skepticism).
 - confidence_adjustment reflects YOUR forecast confidence, not market confidence.
+- Include your estimated probability that the actual temperature falls in the target range (e.g., "I estimate 65% chance of 25-26°C").
 
 Respond in JSON:
 {
@@ -125,7 +126,8 @@ Respond in JSON:
   "confidence_adjustment": 0.5-1.5,
   "rationale": "one sentence about the WEATHER, not the market",
   "risk_factors": ["specific physical mechanism 1", "mechanism 2"],
-  "weather_insight": "what the atmosphere is doing"
+  "weather_insight": "what the atmosphere is doing",
+  "estimated_probability": 0.0-1.0
 }"""
 
 
