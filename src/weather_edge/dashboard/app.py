@@ -16,6 +16,7 @@ logging.basicConfig(
 )
 from pathlib import Path
 
+import httpx
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
@@ -65,6 +66,8 @@ except ValueError:
 # Init circuit breaker high-water mark from current NAV
 _circuit_breaker.high_water_mark = paper_trader.bankroll + paper_trader.total_pnl
 _cycle_lock = asyncio.Lock()  # Prevent concurrent cycles from corrupting state
+# Cached model probs from last full cycle, used by fast exit loop
+_cached_model_probs: dict[str, float] = {}
 latest_state: dict = {
     "cities": {},
     "signals": [],
@@ -214,6 +217,11 @@ async def _run_dashboard_cycle_inner(run_ai: bool = True) -> None:
         live_executor=live_executor,
         store=paper_trader.store,
     )
+
+    # Cache model probs for fast exit loop
+    global _cached_model_probs
+    for sig in all_signals:
+        _cached_model_probs[sig.market_id] = sig.model_prob
 
     # Build city data from the forecast cache (no re-fetching!)
     city_data = {}
@@ -628,6 +636,116 @@ async def stale_order_loop() -> None:
                 logger.debug("Stale order cleanup failed", exc_info=True)
 
 
+EMERGENCY_EDGE_THRESHOLD = -0.15  # Exit immediately if edge < -15%
+FAST_EXIT_INTERVAL = 300  # Check every 5 minutes
+
+
+async def fast_exit_loop() -> None:
+    """Lightweight 5-minute loop: price-only check for emergency exits.
+
+    Uses cached model probs from the last full cycle. No weather fetching,
+    no AI review. If edge has inverted past -15%, sell immediately as taker.
+    """
+    await asyncio.sleep(60)  # Let first full cycle run
+
+    while True:
+        await asyncio.sleep(FAST_EXIT_INTERVAL)
+        if not trading_active or not live_executor or live_executor.dry_run:
+            continue
+        if not _cached_model_probs:
+            continue
+
+        try:
+            positions = paper_trader.store.get_positions()
+            if not positions:
+                continue
+
+            # Fetch current prices for our positions from Gamma API
+            condition_ids = [p["condition_id"] for p in positions]
+            current_prices = await _fetch_position_prices(condition_ids)
+            if not current_prices:
+                continue
+
+            for pos in positions:
+                cid = pos["condition_id"]
+                model_prob = _cached_model_probs.get(cid)
+                market_price = current_prices.get(cid)
+                if model_prob is None or market_price is None:
+                    continue
+
+                shares = pos.get("total_shares", 0)
+                if shares < 5:  # Below Polymarket minimum
+                    continue
+
+                # Calculate edge based on position side
+                outcome = pos.get("outcome", "Yes")
+                if outcome == "No":
+                    # NO position: we profit when event doesn't happen
+                    edge = (1 - model_prob) - (1 - market_price)
+                else:
+                    edge = model_prob - market_price
+
+                if edge < EMERGENCY_EDGE_THRESHOLD:
+                    city = pos.get("city_id", "???")
+                    asset_id = pos.get("asset_id", "")
+                    if not asset_id:
+                        continue
+
+                    logger.warning(
+                        "EMERGENCY EXIT: %s edge=%.1f%% (threshold=%.0f%%), "
+                        "selling %d shares as taker",
+                        city, edge * 100, EMERGENCY_EDGE_THRESHOLD * 100, shares,
+                    )
+
+                    try:
+                        sell_result = await live_executor.place_sell_order(
+                            token_id=asset_id,
+                            shares=shares,
+                            price=market_price,
+                            market_id=cid,
+                            city_id=city,
+                            description=f"EMERGENCY: edge={edge:.1%}",
+                            reference_price=market_price,
+                            force_taker=True,
+                        )
+                        if sell_result:
+                            logger.warning(
+                                "EMERGENCY SELL PLACED: %s %.0f shares @ %.3f, %s",
+                                city, shares, market_price, sell_result.order_id,
+                            )
+                    except Exception as e:
+                        logger.error("EMERGENCY SELL FAILED: %s, %s", city, e)
+
+        except Exception:
+            logger.error("Fast exit loop failed", exc_info=True)
+
+
+async def _fetch_position_prices(condition_ids: list[str]) -> dict[str, float]:
+    """Fetch current YES prices for a list of condition IDs from Gamma API."""
+    prices = {}
+    async with httpx.AsyncClient() as client:
+        for cid in condition_ids:
+            try:
+                resp = await client.get(
+                    f"{settings.polymarket_gamma_url}/markets",
+                    params={"condition_id": cid},
+                    timeout=10.0,
+                )
+                resp.raise_for_status()
+                markets = resp.json()
+                if markets and isinstance(markets, list):
+                    mkt = markets[0]
+                    outcome_prices = mkt.get("outcomePrices")
+                    if isinstance(outcome_prices, str):
+                        import json
+                        outcome_prices = json.loads(outcome_prices)
+                    if isinstance(outcome_prices, list) and len(outcome_prices) >= 1:
+                        prices[cid] = float(outcome_prices[0])
+            except (httpx.HTTPError, ValueError, KeyError):
+                continue
+    return prices
+
+
 @app.on_event("startup")
 async def startup():
     global live_executor
@@ -670,6 +788,7 @@ async def startup():
             }
             asyncio.create_task(heartbeat_loop())
             asyncio.create_task(stale_order_loop())
+            asyncio.create_task(fast_exit_loop())
             # Fill tracker, poll every 15s for order status updates
             from weather_edge.trading.fill_tracker import poll_fills
             asyncio.create_task(poll_fills(live_executor, interval=15))
