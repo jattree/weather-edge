@@ -157,11 +157,14 @@ class TradeExecutor:
             return None
 
         try:
+            from py_clob_client.clob_types import AssetType, BalanceAllowanceParams
+
+            params = BalanceAllowanceParams(asset_type=AssetType.COLLATERAL)
             loop = asyncio.get_running_loop()
             result = await loop.run_in_executor(
                 None,
                 self._client.get_balance_allowance,
-                {"asset_type": "COLLATERAL"},
+                params,
             )
             balance = float(result.get("balance", 0)) / 1e6  # USDC has 6 decimals
             logger.info("USDC balance: $%.2f", balance)
