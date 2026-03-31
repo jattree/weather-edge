@@ -28,6 +28,8 @@ from weather_edge.trading.paper import PaperTrader
 
 logger = logging.getLogger(__name__)
 
+MIN_SELL_SHARES = 5.0  # Polymarket minimum order size
+
 
 def compute_model_prob_for_market(market: MarketInfo, consensus) -> float | None:
     """Compute model probability for a market bucket.
@@ -725,8 +727,33 @@ async def run_cycle(
                         candidate.trade.size_usd, candidate.reason,
                         candidate.claude_verdict, candidate.gemini_verdict,
                     )
-                    # In paper mode: close at current market price
+                    # Paper mode: close at current market price
                     paper_trader.close_position(candidate.trade, candidate.current_market_price)
+
+                    # === LIVE EXIT: place sell order on exchange ===
+                    if live_executor and not live_executor.dry_run:
+                        city_id_str = candidate.trade.city_id if isinstance(candidate.trade.city_id, str) else candidate.trade.city_id.value
+                        # Find the position and token_id for this market
+                        position = paper_trader.store.get_position_for_market(candidate.trade.market_id)
+                        if position and position.get("total_shares", 0) >= MIN_SELL_SHARES:
+                            asset_id = position.get("asset_id", "")
+                            if asset_id:
+                                try:
+                                    sell_result = await live_executor.place_sell_order(
+                                        token_id=asset_id,
+                                        shares=position["total_shares"],
+                                        price=candidate.current_market_price,
+                                        city_id=city_id_str,
+                                        description=f"EXIT: {candidate.reason}",
+                                    )
+                                    if sell_result:
+                                        logger.info(
+                                            "LIVE EXIT PLACED: %s %.0f shares @ %.3f, %s",
+                                            city_id_str, position["total_shares"],
+                                            candidate.current_market_price, sell_result.order_id,
+                                        )
+                                except Exception as e:
+                                    logger.error("LIVE EXIT FAILED: %s, %s", city_id_str, e)
 
                 # Record exit decision to AI Decisions tab
                 from weather_edge.analysis.claude_reasoning import _decision_history
