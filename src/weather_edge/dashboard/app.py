@@ -561,10 +561,60 @@ async def api_state():
         from weather_edge.live_state import get_cached_dashboard_state
         cached = get_cached_dashboard_state()
         if cached:
-            return cached
+            state = cached
+        else:
+            state = latest_state
     except Exception:
-        pass
-    return latest_state
+        state = latest_state
+
+    # Always refresh live trade data from SQLite (fill tracker updates between cycles)
+    if live_executor and not live_executor.dry_run:
+        try:
+            state = dict(state) if not isinstance(state, dict) else state.copy()
+            live_stats = paper_trader.store.get_live_stats()
+            live_trades_db = paper_trader.store.get_live_trades(limit=100)
+            live_trade_log = []
+            for lt in live_trades_db:
+                placed = lt.get("placed_at", "")
+                try:
+                    time_str = placed.split("T")[1][:8] if "T" in placed else placed[-8:]
+                except Exception:
+                    time_str = placed
+                live_trade_log.append({
+                    "side": lt.get("side", ""),
+                    "city": (lt.get("city_id") or "").upper(),
+                    "description": lt.get("description", ""),
+                    "size": lt.get("size_usd", 0),
+                    "pnl": lt.get("pnl"),
+                    "time": time_str,
+                    "status": lt.get("status", "open"),
+                    "tier": lt.get("strategy", "core"),
+                    "order_id": lt.get("order_id", ""),
+                    "price": lt.get("limit_price", 0),
+                    "shares": lt.get("size_shares", 0),
+                    "filled": lt.get("filled_shares", 0),
+                    "fee": lt.get("fee_usd", 0),
+                })
+            state["live"] = {
+                "enabled": True,
+                "balance": state.get("live", {}).get("balance", 0),
+                "open_orders": live_stats.get("open_trades", 0),
+                "trade_log": live_trade_log,
+                "trade_count": live_stats.get("total_trades", 0),
+                "capital_at_risk": round(live_stats.get("capital_at_risk", 0), 2),
+                "pnl": round(live_stats.get("total_pnl", 0), 2),
+                "total_fees": round(live_stats.get("total_fees", 0), 2),
+                "win_rate": round(live_stats.get("win_rate", 0), 1),
+                "wins": live_stats.get("wins", 0),
+                "losses": live_stats.get("losses", 0),
+                "best_trade": live_stats.get("best_trade", 0),
+                "worst_trade": live_stats.get("worst_trade", 0),
+                "max_shares": live_executor.max_shares,
+            }
+        except Exception:
+            pass
+
+    return state
 
 
 @app.post("/api/refresh")
