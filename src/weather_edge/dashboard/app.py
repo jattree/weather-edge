@@ -455,6 +455,26 @@ async def sniper_loop() -> None:
     async def snipe_trigger():
         if trading_active:
             logger.warning("SNIPER TRIGGERED, running immediate cycle (no AI reasoning)")
+
+            # === GOLDEN WINDOW FLUSH ===
+            # Model just dropped, cancel all resting orders priced on old data
+            if live_executor and not live_executor.dry_run:
+                try:
+                    cancelled = await live_executor.cancel_all_orders()
+                    if cancelled:
+                        # Mark cancelled orders in SQLite
+                        open_trades = paper_trader.store.get_open_live_trades()
+                        for t in open_trades:
+                            oid = t.get("order_id")
+                            if oid:
+                                paper_trader.store.cancel_live_trade(oid)
+                        logger.warning(
+                            "GOLDEN WINDOW FLUSH: cancelled %d stale orders, fresh model data incoming",
+                            cancelled,
+                        )
+                except Exception:
+                    logger.warning("Golden window flush failed", exc_info=True)
+
             try:
                 await run_dashboard_cycle(run_ai=False)
             except Exception:
@@ -490,14 +510,24 @@ async def heartbeat_loop() -> None:
 
 
 async def stale_order_loop() -> None:
-    """Check for and cancel stale orders every 5 minutes."""
+    """Safety net: cancel truly abandoned orders (4 hour hard cap).
+
+    Smart cleanup happens via cancel-and-replace each cycle + golden window flush.
+    This is the backstop for orders that somehow survive both.
+    """
     while True:
-        await asyncio.sleep(300)
+        await asyncio.sleep(1800)  # Check every 30 minutes
         if trading_active and live_executor and not live_executor.dry_run:
             try:
-                cancelled = await live_executor.cancel_stale_orders(max_age_seconds=300)
+                cancelled = await live_executor.cancel_stale_orders(max_age_seconds=14400)  # 4 hours
                 if cancelled:
-                    logger.info("Cleaned up %d stale orders", cancelled)
+                    # Also mark them cancelled in SQLite
+                    open_trades = paper_trader.store.get_open_live_trades()
+                    for t in open_trades:
+                        oid = t.get("order_id")
+                        if oid:
+                            paper_trader.store.cancel_live_trade(oid)
+                    logger.info("STALE CLEANUP: cancelled %d orders (>4h old)", cancelled)
             except Exception:
                 logger.debug("Stale order cleanup failed", exc_info=True)
 

@@ -549,13 +549,84 @@ async def run_cycle(
             if can_live:
                 m = market_by_id.get(signal.market_id)
                 if m:
-                    # Pick the right token: YES token for YES side, NO token for NO side
+                    # Pick the right token
                     if signal.recommended_side.value == "YES":
                         token_id = m.token_id_yes
                     else:
                         token_id = m.token_id_no
 
                     if token_id:
+                        # === DUPLICATE PREVENTION + CANCEL-AND-REPLACE + PRICE CHASE ===
+                        existing = paper_trader.store.get_open_order_for_market(signal.market_id)
+                        if existing:
+                            old_price = existing.get("limit_price", 0)
+                            filled = existing.get("filled_shares", 0) or 0
+                            # Calculate what our new limit price would be
+                            if signal.recommended_side.value == "YES":
+                                new_price = round(max(0.01, min(0.99, signal.market_prob - 0.005)), 2)
+                            else:
+                                new_price = round(max(0.01, min(0.99, (1.0 - signal.market_prob) - 0.005)), 2)
+
+                            # Check order age for price chase
+                            order_age_minutes = 0
+                            placed_str = existing.get("placed_at", "")
+                            if placed_str:
+                                try:
+                                    placed_dt = datetime.fromisoformat(placed_str)
+                                    order_age_minutes = (datetime.now(timezone.utc) - placed_dt).total_seconds() / 60
+                                except (ValueError, TypeError):
+                                    pass
+
+                            price_drift = abs(new_price - old_price)
+                            should_chase = (
+                                order_age_minutes > 60
+                                and filled == 0
+                                and signal.edge >= 0.02
+                            )
+
+                            if should_chase:
+                                # Price chase: improve by 0.1c toward midpoint
+                                chase_price = round(old_price + 0.001, 3)
+                                chase_price = max(0.01, min(0.99, chase_price))
+                                old_id = existing.get("order_id")
+                                if old_id:
+                                    try:
+                                        await live_executor.cancel_order(old_id)
+                                        paper_trader.store.cancel_live_trade(old_id)
+                                        logger.info(
+                                            "PRICE CHASE: %s improving %.3f→%.3f after %dm unfilled",
+                                            signal.city_id, old_price, chase_price, int(order_age_minutes),
+                                        )
+                                    except Exception as e:
+                                        logger.warning("Price chase cancel failed %s: %s", old_id[:16], e)
+                                # Fall through to place new order at chased price
+                                # Override the signal's market_prob to get the chased price
+                                if signal.recommended_side.value == "YES":
+                                    signal.market_prob = chase_price + 0.005
+                                else:
+                                    signal.market_prob = 1.0 - (chase_price + 0.005)
+
+                            elif price_drift <= 0.001:
+                                # Price unchanged, keep existing order, preserve queue priority
+                                logger.info(
+                                    "LIVE KEEP: %s @ %.3f (age=%dm, drift=%.4f, filled=%.0f)",
+                                    signal.city_id, old_price, int(order_age_minutes), price_drift, filled,
+                                )
+                                continue
+                            else:
+                                # Price drifted, cancel old, place new
+                                old_id = existing.get("order_id")
+                                if old_id:
+                                    try:
+                                        await live_executor.cancel_order(old_id)
+                                        paper_trader.store.cancel_live_trade(old_id)
+                                        logger.info(
+                                            "LIVE REPLACE: %s cancelled %s (price %.3f→%.3f, drift=%.3f)",
+                                            signal.city_id, old_id[:16], old_price, new_price, price_drift,
+                                        )
+                                    except Exception as e:
+                                        logger.warning("Failed to cancel old order %s: %s", old_id[:16], e)
+
                         try:
                             result = await live_executor.place_limit_order(
                                 signal, token_id,
