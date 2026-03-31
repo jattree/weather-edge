@@ -2545,8 +2545,8 @@
                 mergeTradesIntoBlotter(state.trade_log);
             }
 
-            /* Session P&L */
-            var sp = state.session_pnl || 0;
+            /* Session P&L, switches with view mode */
+            var sp = isLiveView ? (live.pnl || 0) : (state.session_pnl || 0);
             var spEl = document.getElementById('sessionPnl');
             flashNumber(spEl, sp, prevState.session_pnl || 0);
             spEl.textContent = fmtPnl(sp);
