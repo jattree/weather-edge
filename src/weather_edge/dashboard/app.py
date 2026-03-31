@@ -642,11 +642,15 @@ async def api_state():
 
             deployed = portfolio.get("total_deployed", 0)
             live_balance = state.get("live", {}).get("balance", 0)
+            # Portfolio value = cash in wallet + cost basis of all positions
+            # (positions settle at $1 or $0, but cost basis is what we spent)
+            portfolio_value = round(live_balance + deployed, 2)
 
             state["live"] = {
                 "enabled": True,
                 "balance": live_balance,
-                "available_cash": round(live_balance - deployed, 2) if live_balance else 0,
+                "portfolio_value": portfolio_value,
+                "available_cash": round(live_balance, 2),
                 "positions": position_list,
                 "position_count": portfolio.get("position_count", 0),
                 "trade_log": live_trade_log,
