@@ -637,7 +637,7 @@ async def stale_order_loop() -> None:
 
 
 EMERGENCY_EDGE_THRESHOLD = -0.15  # Exit immediately if edge < -15%
-FAST_EXIT_INTERVAL = 300  # Check every 5 minutes
+FAST_EXIT_INTERVAL = 120  # Check every 2 minutes
 
 
 async def fast_exit_loop() -> None:
