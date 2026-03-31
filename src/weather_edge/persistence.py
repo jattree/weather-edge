@@ -108,6 +108,59 @@ def _ensure_tables(conn: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_live_trades_placed
             ON live_trades(placed_at);
 
+        -- Immutable ledger: every fill from get_trades() (source of truth)
+        CREATE TABLE IF NOT EXISTS fills (
+            id TEXT PRIMARY KEY,
+            order_id TEXT,
+            asset_id TEXT NOT NULL,
+            condition_id TEXT NOT NULL,
+            city_id TEXT,
+            side TEXT NOT NULL,
+            size REAL NOT NULL,
+            price REAL NOT NULL,
+            fee_rate_bps INTEGER DEFAULT 0,
+            is_maker INTEGER DEFAULT 1,
+            filled_at TEXT NOT NULL,
+            tx_hash TEXT,
+            is_settled INTEGER DEFAULT 0,
+            outcome TEXT,
+            description TEXT
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_fills_asset
+            ON fills(asset_id);
+        CREATE INDEX IF NOT EXISTS idx_fills_condition
+            ON fills(condition_id);
+        CREATE INDEX IF NOT EXISTS idx_fills_settled
+            ON fills(is_settled);
+
+        -- Aggregated view: current net holdings per token
+        CREATE TABLE IF NOT EXISTS positions (
+            asset_id TEXT PRIMARY KEY,
+            condition_id TEXT NOT NULL,
+            city_id TEXT,
+            side TEXT,
+            outcome TEXT,
+            total_shares REAL DEFAULT 0,
+            avg_price REAL DEFAULT 0,
+            cost_basis REAL DEFAULT 0,
+            current_price REAL,
+            current_value REAL,
+            unrealized_pnl REAL,
+            description TEXT,
+            last_updated TEXT
+        );
+
+        -- Map asset_id to city/market for dashboard display
+        CREATE TABLE IF NOT EXISTS market_map (
+            asset_id TEXT PRIMARY KEY,
+            condition_id TEXT NOT NULL,
+            city_id TEXT,
+            outcome TEXT,
+            description TEXT,
+            token_side TEXT
+        );
+
         CREATE INDEX IF NOT EXISTS idx_forecast_city_model
             ON forecast_snapshots(city_id, model_name);
         CREATE INDEX IF NOT EXISTS idx_forecast_date
@@ -337,6 +390,103 @@ class PersistentStore:
         total_resolved = (r["wins"] or 0) + (r["losses"] or 0)
         r["win_rate"] = (r["wins"] or 0) / total_resolved * 100 if total_resolved > 0 else 0
         return r
+
+    # --- Fills & Positions (exchange truth) ---
+
+    def upsert_fill(
+        self, fill_id: str, order_id: str, asset_id: str, condition_id: str,
+        city_id: str, side: str, size: float, price: float,
+        filled_at: str, tx_hash: str = "", is_maker: int = 1,
+        fee_rate_bps: int = 0, outcome: str = "", description: str = "",
+    ) -> None:
+        self.conn.execute(
+            """INSERT OR IGNORE INTO fills
+               (id, order_id, asset_id, condition_id, city_id, side, size, price,
+                filled_at, tx_hash, is_maker, fee_rate_bps, outcome, description)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (fill_id, order_id, asset_id, condition_id, city_id, side, size, price,
+             filled_at, tx_hash, is_maker, fee_rate_bps, outcome, description),
+        )
+
+    def upsert_market_map(
+        self, asset_id: str, condition_id: str, city_id: str = "",
+        outcome: str = "", description: str = "", token_side: str = "",
+    ) -> None:
+        self.conn.execute(
+            """INSERT OR REPLACE INTO market_map
+               (asset_id, condition_id, city_id, outcome, description, token_side)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (asset_id, condition_id, city_id, outcome, description, token_side),
+        )
+
+    def rebuild_positions(self) -> None:
+        """Rebuild positions table from fills (the truth)."""
+        self.conn.execute("DELETE FROM positions")
+        self.conn.execute("""
+            INSERT INTO positions (asset_id, condition_id, city_id, side, outcome,
+                                   total_shares, avg_price, cost_basis, last_updated, description)
+            SELECT
+                f.asset_id,
+                f.condition_id,
+                COALESCE(m.city_id, f.city_id, ''),
+                f.side,
+                COALESCE(m.outcome, f.outcome, ''),
+                SUM(CASE WHEN f.side = 'BUY' THEN f.size ELSE -f.size END),
+                CASE WHEN SUM(CASE WHEN f.side = 'BUY' THEN f.size ELSE 0 END) > 0
+                     THEN SUM(CASE WHEN f.side = 'BUY' THEN f.size * f.price ELSE 0 END)
+                          / SUM(CASE WHEN f.side = 'BUY' THEN f.size ELSE 0 END)
+                     ELSE 0 END,
+                SUM(CASE WHEN f.side = 'BUY' THEN f.size * f.price ELSE 0 END),
+                datetime('now'),
+                COALESCE(m.description, f.description, '')
+            FROM fills f
+            LEFT JOIN market_map m ON f.asset_id = m.asset_id
+            WHERE f.is_settled = 0
+            GROUP BY f.asset_id
+            HAVING SUM(CASE WHEN f.side = 'BUY' THEN f.size ELSE -f.size END) > 0
+        """)
+        self.conn.commit()
+
+    def get_positions(self) -> list[dict]:
+        rows = self.conn.execute(
+            "SELECT * FROM positions WHERE total_shares > 0 ORDER BY cost_basis DESC",
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_position_for_market(self, condition_id: str) -> dict | None:
+        row = self.conn.execute(
+            "SELECT * FROM positions WHERE condition_id = ? AND total_shares > 0 LIMIT 1",
+            (condition_id,),
+        ).fetchone()
+        return dict(row) if row else None
+
+    def get_portfolio_summary(self) -> dict:
+        row = self.conn.execute("""
+            SELECT
+                COUNT(*) as position_count,
+                COALESCE(SUM(cost_basis), 0) as total_deployed,
+                COALESCE(SUM(total_shares), 0) as total_shares
+            FROM positions
+            WHERE total_shares > 0
+        """).fetchone()
+        return dict(row)
+
+    def get_fills(self, limit: int = 100) -> list[dict]:
+        rows = self.conn.execute(
+            "SELECT * FROM fills ORDER BY filled_at DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def mark_fills_settled(self, condition_id: str) -> None:
+        self.conn.execute(
+            "UPDATE fills SET is_settled = 1 WHERE condition_id = ?",
+            (condition_id,),
+        )
+        self.conn.commit()
+
+    def commit(self) -> None:
+        self.conn.commit()
 
     # --- Forecast Snapshots (for self-learning) ---
 

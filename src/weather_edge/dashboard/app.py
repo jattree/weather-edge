@@ -597,52 +597,67 @@ async def api_state():
     except Exception:
         state = latest_state
 
-    # Always refresh live trade data from SQLite (fill tracker updates between cycles)
+    # Always refresh live data from positions + fills (exchange truth)
     if live_executor and not live_executor.dry_run:
         try:
             state = dict(state) if not isinstance(state, dict) else state.copy()
-            live_stats = paper_trader.store.get_live_stats()
-            live_trades_db = paper_trader.store.get_live_trades(limit=100)
+            positions = paper_trader.store.get_positions()
+            fills = paper_trader.store.get_fills(limit=100)
+            portfolio = paper_trader.store.get_portfolio_summary()
+
+            # Build trade log from fills (the truth)
             live_trade_log = []
-            for lt in live_trades_db:
-                placed = lt.get("placed_at", "")
+            for f in fills:
+                filled_at = f.get("filled_at", "")
                 try:
-                    time_str = placed.split("T")[1][:8] if "T" in placed else placed[-8:]
+                    time_str = filled_at.split("T")[1][:8] if "T" in filled_at else filled_at[-8:]
                 except Exception:
-                    time_str = placed
+                    time_str = filled_at
                 live_trade_log.append({
-                    "side": lt.get("side", ""),
-                    "city": (lt.get("city_id") or "").upper(),
-                    "description": lt.get("description", ""),
-                    "size": lt.get("size_usd", 0),
-                    "pnl": lt.get("pnl"),
+                    "side": f.get("side", ""),
+                    "city": (f.get("city_id") or "").upper(),
+                    "description": f.get("description", ""),
+                    "size": round(f.get("size", 0) * f.get("price", 0), 2),
+                    "pnl": None,  # Unrealized until market resolves
                     "time": time_str,
-                    "status": lt.get("status", "open"),
-                    "tier": lt.get("strategy", "core"),
-                    "order_id": lt.get("order_id", ""),
-                    "price": lt.get("limit_price", 0),
-                    "shares": lt.get("size_shares", 0),
-                    "filled": lt.get("filled_shares", 0),
-                    "fee": lt.get("fee_usd", 0),
+                    "status": "settled" if f.get("is_settled") else "open",
+                    "tier": "core",
+                    "price": f.get("price", 0),
+                    "shares": f.get("size", 0),
+                    "outcome": f.get("outcome", ""),
+                    "is_maker": f.get("is_maker", 1),
                 })
+
+            # Build positions list for dashboard
+            position_list = []
+            for p in positions:
+                position_list.append({
+                    "city": (p.get("city_id") or "").upper(),
+                    "side": p.get("outcome") or p.get("side", ""),
+                    "shares": round(p.get("total_shares", 0), 1),
+                    "avg_price": round(p.get("avg_price", 0), 3),
+                    "cost_basis": round(p.get("cost_basis", 0), 2),
+                    "description": p.get("description", ""),
+                })
+
+            deployed = portfolio.get("total_deployed", 0)
+            live_balance = state.get("live", {}).get("balance", 0)
+
             state["live"] = {
                 "enabled": True,
-                "balance": state.get("live", {}).get("balance", 0),
-                "open_orders": live_stats.get("open_trades", 0),
+                "balance": live_balance,
+                "available_cash": round(live_balance - deployed, 2) if live_balance else 0,
+                "positions": position_list,
+                "position_count": portfolio.get("position_count", 0),
                 "trade_log": live_trade_log,
-                "trade_count": live_stats.get("total_trades", 0),
-                "capital_at_risk": round(live_stats.get("capital_at_risk", 0), 2),
-                "pnl": round(live_stats.get("total_pnl", 0), 2),
-                "total_fees": round(live_stats.get("total_fees", 0), 2),
-                "win_rate": round(live_stats.get("win_rate", 0), 1),
-                "wins": live_stats.get("wins", 0),
-                "losses": live_stats.get("losses", 0),
-                "best_trade": live_stats.get("best_trade", 0),
-                "worst_trade": live_stats.get("worst_trade", 0),
+                "trade_count": len(fills),
+                "capital_at_risk": round(deployed, 2),
+                "pnl": 0,  # Will be populated when markets resolve
+                "total_fees": 0,  # Maker = $0
                 "max_shares": live_executor.max_shares,
             }
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("Live state refresh failed: %s", e)
 
     return state
 
