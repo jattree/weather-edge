@@ -161,6 +161,35 @@
             color: var(--text-dim);
             font-weight: 400;
         }
+        .view-toggle {
+            display: inline-flex;
+            background: var(--bg-card);
+            border-radius: 4px;
+            border: 1px solid var(--border);
+            overflow: hidden;
+            margin-top: 2px;
+        }
+        .toggle-btn {
+            padding: 3px 12px;
+            font-size: 11px;
+            font-family: var(--font-mono);
+            border: none;
+            background: transparent;
+            color: var(--text-dim);
+            cursor: pointer;
+            transition: all 0.2s;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        .toggle-btn.active {
+            background: var(--cyan);
+            color: var(--bg-main);
+            font-weight: 600;
+        }
+        .toggle-btn:hover:not(.active) {
+            color: var(--text-white);
+            background: rgba(255,255,255,0.05);
+        }
         .header-stats {
             display: flex;
             gap: 28px;
@@ -1867,7 +1896,10 @@
             </div>
             <div class="brand">
                 <span class="brand-name">WEATHER EDGE</span>
-                <span class="brand-sub" id="tradingStatus">paper trading</span>
+                <div class="view-toggle" id="viewToggle">
+                    <button class="toggle-btn" id="togglePaper" onclick="setViewMode('paper')">Paper</button>
+                    <button class="toggle-btn active" id="toggleLive" onclick="setViewMode('live')">Live</button>
+                </div>
             </div>
         </div>
         <div class="header-stats">
@@ -2155,6 +2187,7 @@
         var ws;
         var selectedCity = null;
         var prevState = {};
+        var latestState = null;
 
         /* ================================================================
          *  P&L TIME SERIES DATA
@@ -2364,6 +2397,15 @@
 
         buildTabBar();
 
+        /* View mode toggle: paper vs live */
+        var viewMode = 'live'; // default to live
+        function setViewMode(mode) {
+            viewMode = mode;
+            document.getElementById('togglePaper').className = 'toggle-btn' + (mode === 'paper' ? ' active' : '');
+            document.getElementById('toggleLive').className = 'toggle-btn' + (mode === 'live' ? ' active' : '');
+            if (latestState) updateDashboard(latestState);
+        }
+
         /* ================================================================
          *  WEBSOCKET
          * ================================================================ */
@@ -2399,17 +2441,28 @@
             if (active) {
                 badge.className = 'live-badge';
                 document.getElementById('liveBadgeText').textContent = 'LIVE';
-                statusEl.textContent = 'paper trading';
-                statusEl.style.color = '';
             } else {
                 badge.className = 'live-badge stopped';
                 document.getElementById('liveBadgeText').textContent = 'STOPPED';
-                statusEl.textContent = 'press START';
-                statusEl.style.color = 'var(--text-dim)';
             }
 
-            /* Header stats */
-            var pnl = state.total_pnl || 0;
+            /* Header stats, swap between paper and live view */
+            var live = state.live || {};
+            var isLiveView = viewMode === 'live' && live.enabled;
+
+            var pnl, bankroll, atRisk, openPos;
+            if (isLiveView) {
+                pnl = live.pnl || 0;
+                bankroll = live.balance || 0;
+                atRisk = (live.open_orders || 0) * 5; // rough estimate: max_shares * avg price
+                openPos = live.open_orders || 0;
+            } else {
+                pnl = state.total_pnl || 0;
+                bankroll = state.bankroll || 2000;
+                atRisk = state.capital_at_risk || 0;
+                openPos = state.open_positions || 0;
+            }
+
             var pnlEl = document.getElementById('totalPnl');
             flashNumber(pnlEl, pnl, prevState.total_pnl || 0);
             pnlEl.textContent = fmtPnl(pnl);
@@ -2420,12 +2473,10 @@
             wrEl.textContent = wr.toFixed(0) + '%';
             wrEl.className = 'stat-value mono' + (wr >= 60 ? ' green' : wr >= 40 ? '' : ' red');
 
-            document.getElementById('openPositions').textContent = String(state.open_positions || 0);
+            document.getElementById('openPositions').textContent = String(openPos);
             document.getElementById('cycleCount').textContent = String(state.cycle_count || 0);
 
-            var bankroll = state.bankroll || 2000;
-            var atRisk = state.capital_at_risk || 0;
-            var portfolioValue = bankroll + pnl;  // What you're worth = starting capital + P&L
+            var portfolioValue = isLiveView ? bankroll : bankroll + pnl;
             var freeCash = Math.max(0, portfolioValue - atRisk);
             var returnPct = bankroll > 0 ? ((pnl / bankroll) * 100) : 0;
 
@@ -2562,6 +2613,7 @@
             }
 
             prevState = state;
+            latestState = state;
         }
 
         /* ================================================================

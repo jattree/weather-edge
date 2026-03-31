@@ -374,6 +374,30 @@ async def _run_dashboard_cycle_inner(run_ai: bool = True) -> None:
     except Exception:
         pass
 
+    # Include live trading data if executor is active
+    if live_executor and not live_executor.dry_run:
+        try:
+            live_balance = await live_executor.check_balance()
+            from weather_edge.trading.fill_tracker import get_fill_log
+            from weather_edge.live_state import get_json
+            open_order_ids = get_json("live:open_orders") or []
+            fills = get_fill_log()
+            # Compute live P&L from fills (filled_shares * (1 - price) for wins, -price for losses)
+            live_pnl = sum(f.get("filled_shares", 0) * f.get("price", 0) for f in fills if f.get("status") == "filled")
+            latest_state["live"] = {
+                "enabled": True,
+                "balance": round(live_balance or 0, 2),
+                "open_orders": len(open_order_ids),
+                "open_order_ids": open_order_ids[:20],
+                "fills": fills[:20],
+                "pnl": round(live_pnl, 2),
+                "max_shares": live_executor.max_shares,
+            }
+        except Exception:
+            latest_state["live"] = {"enabled": True, "balance": 0, "open_orders": 0}
+    else:
+        latest_state["live"] = {"enabled": False}
+
     await broadcast(latest_state)
     logger.info("Dashboard cycle complete, next in %dm", settings.fetch_interval_minutes)
 
