@@ -164,19 +164,23 @@ async def ai_review_exit(
     consensus_mean: float,
     consensus_std: float,
 ) -> ExitCandidate:
-    """Run Claude + Gemini review on an exit candidate.
+    """Run Claude (Meteorologist) + Gemini (Risk Quant) in parallel.
 
-    Claude: confirms exit rationale
-    Gemini: argues for holding (red team)
+    Claude: Is the weather thesis still physically valid?
+    Gemini: Is exiting right now the best risk/reward move?
     Both agree exit → final_decision = EXIT
-    Gemini dissents → final_decision = HOLD (reduce urgency)
+    Gemini dissents (with cost justification) → HOLD on non-high urgency
     """
+    import asyncio
+
     trade = candidate.trade
 
-    # Claude review: should we exit?
-    try:
-        from weather_edge.analysis.claude_reasoning import ANTHROPIC_API_KEY
-        if ANTHROPIC_API_KEY:
+    async def _claude_review() -> tuple[str, str]:
+        """Claude = Meteorologist. Looks at physics only."""
+        try:
+            from weather_edge.analysis.claude_reasoning import ANTHROPIC_API_KEY
+            if not ANTHROPIC_API_KEY:
+                return "HOLD", ""
             import httpx
             prompt = f"""EXIT REVIEW: Should we close this position early?
 
@@ -193,7 +197,9 @@ Model forecasts:
 )}
 Consensus: {consensus_mean:.1f}°C (std={consensus_std:.1f})
 
-Should we EXIT this position or HOLD to resolution?
+Focus on the PHYSICS: Is the original weather thesis still valid \
+given the latest model data? Ignore market microstructure.
+
 Respond JSON only: \
 {{"verdict": "EXIT" or "HOLD", "rationale": "brief reason"}}"""
 
@@ -215,131 +221,135 @@ Respond JSON only: \
                 if resp.status_code == 200:
                     import json
                     import re
-
                     text = resp.json()["content"][0]["text"]
                     match = re.search(r"\{.*\}", text, re.DOTALL)
                     if match:
                         result = json.loads(match.group())
-                        candidate.claude_verdict = result.get("verdict", "HOLD")
-                        candidate.claude_rationale = result.get("rationale", "")
-                        logger.info(
-                            "CLAUDE EXIT: %s %s, %s: %s",
-                            trade.city_id, candidate.reason,
-                            candidate.claude_verdict,
-                            candidate.claude_rationale,
-                        )
-    except Exception:
-        logger.debug("Claude exit review failed", exc_info=True)
+                        return result.get("verdict", "HOLD"), result.get("rationale", "")
+        except Exception:
+            logger.error("Claude exit review failed", exc_info=True)
+        return "HOLD", ""
 
-    # Gemini review: can you provide a SPECIFIC catalyst to hold?
-    # Default: Claude's EXIT stands. Gemini must earn the hold.
-    if candidate.claude_verdict == "EXIT":
+    async def _gemini_review() -> tuple[str, str]:
+        """Gemini = Risk Quant. Looks at cost/liquidity only."""
         try:
             from weather_edge.analysis.gemini_reasoning import (
                 GEMINI_API_KEY,
                 GEMINI_API_URL,
                 GEMINI_MODEL,
             )
-            if GEMINI_API_KEY:
-                import json
-                import re
+            if not GEMINI_API_KEY:
+                return "AGREE_EXIT", ""
+            import json
+            import re
 
-                import httpx
+            import httpx
 
-                prompt = f"""EXIT CHALLENGE: Claude recommends \
-exiting this position. You may argue to HOLD, but ONLY if you \
-can provide:
-1. A SPECIFIC meteorological catalyst that will occur before \
-resolution
-2. A SPECIFIC timeframe for when the edge will recover
-3. Evidence from the model data that the thesis is still valid
+            cost_basis = trade.total_shares * trade.entry_price
+            current_value = trade.total_shares * candidate.current_market_price
+            unrealized_pnl = current_value - cost_basis
+            exit_fee_est = current_value * 0.02  # taker fee estimate
 
-Generic arguments like "edge is still positive" or \
-"market might overreact" are NOT sufficient to override an exit.
+            prompt = f"""RISK ASSESSMENT: Evaluate the cost of exiting this position NOW.
 
-Position: {trade.side} {trade.city_id} {trade.total_shares:.0f} shares (${trade.size_usd:.0f})
-Exit reason: {candidate.reason} \
-(edge: {candidate.original_edge:.1%} \
-\u2192 {candidate.current_edge:.1%})
-Claude says: EXIT \u2014 {candidate.claude_rationale}
+You are a Risk Quant. Do NOT evaluate weather or meteorology. \
+Focus ONLY on execution cost and portfolio impact.
 
-If you cannot provide a specific catalyst with timeframe, \
-you MUST agree with the exit.
+Position: {trade.side} {trade.city_id}
+Shares: {trade.total_shares:.0f}
+Entry price: ${trade.entry_price:.3f}
+Cost basis: ${cost_basis:.2f}
+Current market price: ${candidate.current_market_price:.3f}
+Current value: ${current_value:.2f}
+Unrealized P&L: ${unrealized_pnl:+.2f}
+Edge: {candidate.current_edge:+.1%}
+Estimated taker fee if we exit: ${exit_fee_est:.2f}
+Bankroll: $210
+
+Questions to answer:
+1. Is the exit cost (fees + slippage) small relative to the \
+potential loss from holding?
+2. At {trade.total_shares:.0f} shares, can we exit without \
+moving the market significantly?
+3. Should we exit NOW (taker) or place a maker sell and wait?
+
+If exit cost is <10% of potential loss, recommend EXIT.
+If exit would cost more than holding to resolution, recommend HOLD.
 
 Respond JSON only:
 {{"verdict": "AGREE_EXIT" or "HOLD", \
-"catalyst": "specific event or null", \
-"timeframe": "hours until catalyst or null", \
-"rationale": "brief reason"}}"""
+"rationale": "brief cost/risk justification"}}"""
 
-                url = (
-                    f"{GEMINI_API_URL}/{GEMINI_MODEL}"
-                    f":generateContent?key={GEMINI_API_KEY}"
-                )
-                async with httpx.AsyncClient() as client:
-                    resp = await client.post(
-                        url,
-                        json={
-                            "contents": [{
-                                "role": "user",
-                                "parts": [{"text": prompt}],
-                            }],
-                            "generationConfig": {
-                                "maxOutputTokens": 500,
-                                "temperature": 0.3,
-                                "thinkingConfig": {
-                                    "thinkingBudget": 0,
-                                },
+            url = (
+                f"{GEMINI_API_URL}/{GEMINI_MODEL}"
+                f":generateContent?key={GEMINI_API_KEY}"
+            )
+            async with httpx.AsyncClient() as client:
+                resp = await client.post(
+                    url,
+                    json={
+                        "contents": [{
+                            "role": "user",
+                            "parts": [{"text": prompt}],
+                        }],
+                        "generationConfig": {
+                            "maxOutputTokens": 500,
+                            "temperature": 0.3,
+                            "thinkingConfig": {
+                                "thinkingBudget": 0,
                             },
                         },
-                        timeout=20.0,
+                    },
+                    timeout=20.0,
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    text = (
+                        data["candidates"][0]
+                        ["content"]["parts"][-1]["text"]
                     )
-                    if resp.status_code == 200:
-                        data = resp.json()
-                        text = (
-                            data["candidates"][0]
-                            ["content"]["parts"][-1]["text"]
-                        )
-                        text = re.sub(r"```json\s*", "", text)
-                        text = re.sub(r"```\s*", "", text)
-                        match = re.search(
-                            r"\{.*\}", text.strip(), re.DOTALL,
-                        )
-                        if match:
-                            result = json.loads(match.group())
-                            candidate.gemini_verdict = result.get(
-                                "verdict", "AGREE_EXIT",
-                            )
-                            candidate.gemini_rationale = result.get(
-                                "rationale", "",
-                            )
-                            catalyst = result.get("catalyst")
-                            logger.info(
-                                "GEMINI EXIT: %s, %s "
-                                "(catalyst: %s): %s",
-                                trade.city_id,
-                                candidate.gemini_verdict,
-                                catalyst or "none",
-                                candidate.gemini_rationale,
-                            )
+                    text = re.sub(r"```json\s*", "", text)
+                    text = re.sub(r"```\s*", "", text)
+                    match = re.search(r"\{.*\}", text.strip(), re.DOTALL)
+                    if match:
+                        result = json.loads(match.group())
+                        return result.get("verdict", "AGREE_EXIT"), result.get("rationale", "")
         except Exception:
-            logger.debug("Gemini exit review failed", exc_info=True)
+            logger.error("Gemini exit review failed", exc_info=True)
+        return "AGREE_EXIT", ""
 
-    # Final decision: Claude's EXIT is the default
-    # Gemini can only override with a specific catalyst + non-high urgency
-    if candidate.claude_verdict == "EXIT":
+    # Run both in parallel
+    (claude_verdict, claude_rationale), (gemini_verdict, gemini_rationale) = (
+        await asyncio.gather(_claude_review(), _gemini_review())
+    )
+
+    candidate.claude_verdict = claude_verdict
+    candidate.claude_rationale = claude_rationale
+    candidate.gemini_verdict = gemini_verdict
+    candidate.gemini_rationale = gemini_rationale
+
+    logger.info(
+        "CLAUDE EXIT: %s %s, %s: %s",
+        trade.city_id, candidate.reason, claude_verdict, claude_rationale,
+    )
+    logger.info(
+        "GEMINI RISK: %s, %s: %s",
+        trade.city_id, gemini_verdict, gemini_rationale,
+    )
+
+    # Final decision logic
+    if claude_verdict == "EXIT":
         if candidate.urgency == "high":
-            # High urgency exits always go through
+            # High urgency: Claude says physics is dead, always exit
             candidate.final_decision = "EXIT"
-        elif candidate.gemini_verdict == "HOLD":
-            # Gemini earned a hold with specific catalyst
+        elif gemini_verdict == "HOLD":
+            # Gemini says exit is too expensive, respect on non-urgent
             candidate.final_decision = "HOLD"
             logger.info(
-                "EXIT HELD by Gemini (with catalyst): %s %s",
+                "EXIT HELD by Gemini (cost justification): %s %s",
                 trade.city_id, candidate.reason,
             )
         else:
-            # Gemini agrees, didn't respond, or no specific catalyst
             candidate.final_decision = "EXIT"
     else:
         candidate.final_decision = "HOLD"
