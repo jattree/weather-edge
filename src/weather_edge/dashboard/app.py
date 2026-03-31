@@ -511,8 +511,35 @@ async def _run_dashboard_cycle_inner(run_ai: bool = True) -> None:
                     "description": p.get("description", ""),
                 })
 
-            deployed = portfolio.get("total_deployed", 0)
-            portfolio_value = round((live_balance or 0) + deployed, 2)
+            cost_basis = portfolio.get("total_deployed", 0)
+
+            # Fetch current market prices to compute real portfolio value
+            position_cids = [p["condition_id"] for p in positions]
+            current_prices = {}
+            if position_cids:
+                try:
+                    current_prices = await _fetch_position_prices(position_cids)
+                except Exception:
+                    logger.debug("Failed to fetch position prices for portfolio value")
+
+            # Market value = sum(shares * current_price) for each position
+            market_value = 0.0
+            for p in positions:
+                cid = p.get("condition_id", "")
+                shares = p.get("total_shares", 0)
+                mkt_price = current_prices.get(cid)
+                outcome = p.get("outcome", "Yes")
+                if mkt_price is not None and shares > 0:
+                    # NO positions: value = shares * (1 - yes_price)
+                    pos_price = (1 - mkt_price) if outcome == "No" else mkt_price
+                    market_value += shares * pos_price
+                else:
+                    # Fallback to cost basis if price unavailable
+                    market_value += p.get("cost_basis", 0)
+
+            market_value = round(market_value, 2)
+            portfolio_value = round((live_balance or 0) + market_value, 2)
+            unrealized_pnl = round(market_value - cost_basis, 2)
 
             latest_state["live"] = {
                 "enabled": True,
@@ -523,8 +550,10 @@ async def _run_dashboard_cycle_inner(run_ai: bool = True) -> None:
                 "position_count": portfolio.get("position_count", 0),
                 "trade_log": live_trade_log,
                 "trade_count": len(fills),
-                "capital_at_risk": round(deployed, 2),
-                "pnl": 0,
+                "cost_basis": round(cost_basis, 2),
+                "market_value": market_value,
+                "capital_at_risk": round(cost_basis, 2),
+                "pnl": unrealized_pnl,
                 "total_fees": 0,
                 "max_shares": live_executor.max_shares,
             }
