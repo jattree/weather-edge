@@ -211,10 +211,11 @@ async def _run_dashboard_cycle_inner(run_ai: bool = True) -> None:
 
     # Run the core cycle, paper and live are independent systems
     # Either can be None/disabled and the other keeps working
-    _paper = paper_trader if settings.live_mode is False or not live_executor else paper_trader
+    _paper = paper_trader if settings.paper_mode else None
+    _live = live_executor if settings.live_mode else None
     all_signals, forecast_cache, city_volume = await run_cycle(
         _paper, target_dates, run_ai_reasoning=run_ai,
-        live_executor=live_executor,
+        live_executor=_live,
         store=paper_trader.store,
     )
 
@@ -263,46 +264,44 @@ async def _run_dashboard_cycle_inner(run_ai: bool = True) -> None:
 
         city_data[city_id.value] = city_info
 
-    # Build trade log entries (with resolution countdown for open trades)
+    # Build trade log and stats, from paper or live depending on mode
     trade_log = []
-    for t in sorted(paper_trader.trades, key=lambda x: x.placed_at, reverse=True)[:100]:
-        resolves_at, resolves_in = _compute_resolution_time(t)
-        # Derive tier from description tag
-        desc = t.description or ""
-        if "[PENNY]" in desc:
-            tier = "tail"
-        elif "[TODAY]" in desc or "[TOMORROW]" in desc:
-            tier = "core"
-        else:
-            tier = "core"
-        trade_log.append({
-            "side": t.side,
-            "city": t.city_id.upper() if isinstance(t.city_id, str) else t.city_id,
-            "description": desc,
-            "size": t.size_usd,
-            "pnl": t.pnl,
-            "time": t.placed_at.strftime("%H:%M:%S"),
-            "status": t.status.value,
-            "tier": tier,
-            "resolves_at": resolves_at,
-            "resolves_in": resolves_in,
-        })
-
-    # Calculate streak
     streak = 0
-    for t in sorted(paper_trader.closed_trades, key=lambda x: x.placed_at, reverse=True):
-        if t.status.value == "won":
-            streak += 1
-        else:
-            break
+    best_trade = 0.0
+    capital_at_risk = 0.0
 
-    best_trade = max(
-        (t.pnl for t in paper_trader.trades if t.pnl is not None),
-        default=0.0,
-    )
-
-    # Capital at risk = sum of all open position sizes
-    capital_at_risk = sum(t.size_usd for t in paper_trader.open_trades)
+    if settings.paper_mode:
+        for t in sorted(paper_trader.trades, key=lambda x: x.placed_at, reverse=True)[:100]:
+            resolves_at, resolves_in = _compute_resolution_time(t)
+            desc = t.description or ""
+            if "[PENNY]" in desc:
+                tier = "tail"
+            elif "[TODAY]" in desc or "[TOMORROW]" in desc:
+                tier = "core"
+            else:
+                tier = "core"
+            trade_log.append({
+                "side": t.side,
+                "city": t.city_id.upper() if isinstance(t.city_id, str) else t.city_id,
+                "description": desc,
+                "size": t.size_usd,
+                "pnl": t.pnl,
+                "time": t.placed_at.strftime("%H:%M:%S"),
+                "status": t.status.value,
+                "tier": tier,
+                "resolves_at": resolves_at,
+                "resolves_in": resolves_in,
+            })
+        for t in sorted(paper_trader.closed_trades, key=lambda x: x.placed_at, reverse=True):
+            if t.status.value == "won":
+                streak += 1
+            else:
+                break
+        best_trade = max(
+            (t.pnl for t in paper_trader.trades if t.pnl is not None),
+            default=0.0,
+        )
+        capital_at_risk = sum(t.size_usd for t in paper_trader.open_trades)
 
     # Build signal dicts for analytics
     signal_dicts = [
@@ -351,10 +350,10 @@ async def _run_dashboard_cycle_inner(run_ai: bool = True) -> None:
         "trade_log": trade_log,
         "bankroll": settings.bankroll,
         "capital_at_risk": round(capital_at_risk, 2),
-        "session_pnl": paper_trader.total_pnl,
-        "total_pnl": paper_trader.total_pnl,
-        "win_rate": paper_trader.win_rate * 100,
-        "open_positions": len(paper_trader.open_trades),
+        "session_pnl": paper_trader.total_pnl if settings.paper_mode else 0.0,
+        "total_pnl": paper_trader.total_pnl if settings.paper_mode else 0.0,
+        "win_rate": (paper_trader.win_rate * 100) if settings.paper_mode else 0.0,
+        "open_positions": len(paper_trader.open_trades) if settings.paper_mode else 0,
         "best_trade": best_trade,
         "streak": streak,
         "trading_active": trading_active,
@@ -368,7 +367,8 @@ async def _run_dashboard_cycle_inner(run_ai: bool = True) -> None:
             for e in sniper.recent_events
         ],
         "competitors": competitor_tracker.comparison_summary(
-            paper_trader.total_pnl, len(paper_trader.trades)
+            paper_trader.total_pnl if settings.paper_mode else 0,
+            len(paper_trader.trades) if settings.paper_mode else 0,
         ),
         "cycle_count": paper_trader.store.increment_cycle(),
         "last_update": datetime.now(timezone.utc).isoformat(),
@@ -376,25 +376,29 @@ async def _run_dashboard_cycle_inner(run_ai: bool = True) -> None:
         "correlation_matrix": correlation_data,
         "execution_analytics": exec_analytics,
         "claude_decisions": get_decisions(),
-        "ai_adherence": compute_adherence(paper_trader.closed_trades, get_decisions()).to_dict(),
+        "ai_adherence": compute_adherence(
+            paper_trader.closed_trades if settings.paper_mode else [], get_decisions(),
+        ).to_dict(),
     }
 
     # Pool breakdown calculation
     pools = {}
     for strat in ["core", "penny", "spread", "exit"]:
-        # Paper stats
-        p_trades = [t for t in paper_trader.trades if getattr(t, "strategy", "core") == strat]
-        p_won = [t for t in p_trades if t.status == TradeStatus.WON]
-        p_lost = [t for t in p_trades if t.status == TradeStatus.LOST]
-        p_pnl = sum(t.pnl or 0 for t in p_won + p_lost)
-        p_at_risk = sum(t.size_usd for t in p_trades if t.status == TradeStatus.OPEN)
-        
+        p_pnl, p_at_risk, p_count = 0.0, 0.0, 0
+        if settings.paper_mode:
+            p_trades = [t for t in paper_trader.trades if getattr(t, "strategy", "core") == strat]
+            p_won = [t for t in p_trades if t.status == TradeStatus.WON]
+            p_lost = [t for t in p_trades if t.status == TradeStatus.LOST]
+            p_pnl = sum(t.pnl or 0 for t in p_won + p_lost)
+            p_at_risk = sum(t.size_usd for t in p_trades if t.status == TradeStatus.OPEN)
+            p_count = len(p_trades)
+
         pools[strat] = {
             "paper_pnl": round(p_pnl, 2),
             "paper_at_risk": round(p_at_risk, 2),
             "live_pnl": 0.0,
             "live_at_risk": 0.0,
-            "total_trades": len(p_trades)
+            "total_trades": p_count,
         }
     
     latest_state["pools"] = pools
@@ -897,7 +901,8 @@ async def api_stop():
     logger.info("Trading STOPPED (positions remain open)")
     latest_state["trading_active"] = False
     await broadcast(latest_state)
-    return {"status": "stopped", "trading_active": False, "open_positions": len(paper_trader.open_trades)}
+    open_count = len(paper_trader.open_trades) if settings.paper_mode else 0
+    return {"status": "stopped", "trading_active": False, "open_positions": open_count}
 
 
 @app.post("/api/kill-switch")
@@ -954,8 +959,10 @@ async def api_close_all():
     markets = await discover_weather_markets()
     current_prices = {m.market_id: m.yes_price for m in markets if m.yes_price > 0}
 
-    closed_pnl = paper_trader.close_all_positions(current_prices)
-    logger.info("Closed all positions (paper). P&L from closes: $%.2f", closed_pnl)
+    closed_pnl = 0.0
+    if settings.paper_mode:
+        closed_pnl = paper_trader.close_all_positions(current_prices)
+        logger.info("Closed all positions (paper). P&L from closes: $%.2f", closed_pnl)
 
     # Also close all live positions on exchange
     live_sells = 0
@@ -978,8 +985,10 @@ async def api_close_all():
                             token_id=asset_id,
                             shares=shares,
                             price=sell_price,
+                            market_id=condition_id,
                             city_id=city,
                             description="CLOSE ALL",
+                            force_taker=True,
                         )
                         if result:
                             live_sells += 1
@@ -992,16 +1001,16 @@ async def api_close_all():
     latest_state["trading_active"] = False
     latest_state["open_positions"] = 0
     latest_state["capital_at_risk"] = 0.0
-    latest_state["total_pnl"] = paper_trader.total_pnl
-    latest_state["session_pnl"] = paper_trader.total_pnl
-    latest_state["win_rate"] = paper_trader.win_rate * 100
+    latest_state["total_pnl"] = paper_trader.total_pnl if settings.paper_mode else 0.0
+    latest_state["session_pnl"] = paper_trader.total_pnl if settings.paper_mode else 0.0
+    latest_state["win_rate"] = (paper_trader.win_rate * 100) if settings.paper_mode else 0.0
     await broadcast(latest_state)
 
     return {
         "status": "closed",
-        "positions_closed": len(paper_trader.closed_trades),
+        "positions_closed": len(paper_trader.closed_trades) if settings.paper_mode else live_sells,
         "close_pnl": round(closed_pnl, 2),
-        "total_pnl": round(paper_trader.total_pnl, 2),
+        "total_pnl": round(paper_trader.total_pnl, 2) if settings.paper_mode else 0.0,
     }
 
 
@@ -1166,7 +1175,7 @@ async def api_update_settings(body: dict):
         _circuit_breaker.is_scaled_back = False
         _circuit_breaker.is_killed = False
         _circuit_breaker.kill_reason = ""
-        nav = paper_trader.bankroll + paper_trader.total_pnl
+        nav = (paper_trader.bankroll + paper_trader.total_pnl) if settings.paper_mode else settings.bankroll
         _circuit_breaker.high_water_mark = nav
         logger.info("SETTINGS: Circuit breaker reset, HWM=$%.0f", nav)
 

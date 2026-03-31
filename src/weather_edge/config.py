@@ -366,8 +366,9 @@ class Settings(BaseSettings):
     polymarket_wallet: str = ""  # Polygon wallet address
     polymarket_signature_type: int = 2  # 2=EOA, 1=proxy/Magic Link
 
-    # Live execution
-    live_mode: bool = False  # Set True to enable real trades (paper always runs too)
+    # Trading modes, can run both, either, or neither
+    paper_mode: bool = True  # Run paper trading (simulated)
+    live_mode: bool = False  # Run live trading (real money)
     live_max_shares: float = 0  # 0=unlimited. Set to 5/20/50 for graduated testing
     polymarket_chain_id: int = 137  # Polygon mainnet
     max_slippage_pct: float = 0.02  # Max 2% price movement for exit orders
