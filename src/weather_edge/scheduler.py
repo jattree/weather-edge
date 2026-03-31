@@ -113,9 +113,19 @@ async def run_cycle(
     try:
         resolved_count = await resolve_open_trades(paper_trader)
         if resolved_count > 0:
-            logger.info("Resolved %d trades at cycle start", resolved_count)
+            logger.info("Resolved %d paper trades at cycle start", resolved_count)
     except Exception:
-        logger.exception("Trade resolution failed, continuing with cycle")
+        logger.exception("Paper trade resolution failed, continuing with cycle")
+
+    # Resolve live trades too
+    if live_executor and not live_executor.dry_run:
+        try:
+            from weather_edge.trading.fill_tracker import resolve_live_trades
+            live_resolved = await resolve_live_trades(live_executor)
+            if live_resolved > 0:
+                logger.info("Resolved %d LIVE trades at cycle start", live_resolved)
+        except Exception:
+            logger.exception("Live trade resolution failed, continuing with cycle")
 
     all_signals: list[Signal] = []
     _forecast_cache: dict[tuple, list] = {}  # (city_id, date) -> forecasts for Claude
