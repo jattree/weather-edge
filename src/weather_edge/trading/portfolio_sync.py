@@ -193,7 +193,58 @@ async def sync_portfolio(executor, store, market_lookup: dict | None = None) -> 
     # Step 2: Rebuild positions from fills
     store.rebuild_positions()
 
-    # Step 3: Update session cumulative gas
+    # Step 3: Reconcile live_trades against exchange order status
+    # Every "open" or "partial" order in our DB must be verified against
+    # what the exchange actually says. Prevents stale local state from
+    # driving bad decisions (duplicate orders, missed cancels).
+    try:
+        open_trades = store.get_open_live_trades()
+        reconciled = 0
+        for trade in open_trades:
+            order_id = trade.get("order_id")
+            if not order_id:
+                continue
+            try:
+                status = await executor.get_order_status(order_id)
+                if not status or not isinstance(status, dict):
+                    continue
+                exchange_status = status.get("status", "UNKNOWN")
+                size_matched = float(status.get("size_matched", 0))
+                original_size = float(status.get("original_size", 0))
+                local_status = trade.get("status", "open")
+
+                if exchange_status == "CANCELLED" and local_status != "cancelled":
+                    store.cancel_live_trade(order_id)
+                    logger.warning(
+                        "RECONCILE: %s was '%s' locally but CANCELLED on exchange",
+                        trade.get("city_id", "?"), local_status,
+                    )
+                    reconciled += 1
+                elif exchange_status in ("MATCHED",) and original_size > 0:
+                    is_full = size_matched >= original_size * 0.99
+                    if is_full and local_status != "filled":
+                        price = float(status.get("price", trade.get("limit_price", 0)))
+                        store.update_live_trade_fill(
+                            order_id=order_id,
+                            avg_fill_price=price,
+                            filled_shares=size_matched,
+                            fee_usd=0.0,
+                            status="filled",
+                        )
+                        logger.warning(
+                            "RECONCILE: %s was '%s' locally but FILLED on exchange (%.0f shares)",
+                            trade.get("city_id", "?"), local_status, size_matched,
+                        )
+                        reconciled += 1
+            except Exception:
+                pass  # Individual order check failure shouldn't block sync
+
+        if reconciled > 0:
+            logger.info("RECONCILE: fixed %d stale order statuses", reconciled)
+    except Exception:
+        logger.debug("Order reconciliation failed", exc_info=True)
+
+    # Step 4: Update session cumulative gas
     try:
         active = store.get_active_session()
         if active and total_gas > 0:
