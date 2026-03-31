@@ -310,6 +310,14 @@ class PersistentStore:
         ).fetchall()
         return [dict(r) for r in rows]
 
+    def get_open_order_for_market(self, market_id: str) -> dict | None:
+        """Check if there's already an open/partial order on this market."""
+        row = self.conn.execute(
+            "SELECT * FROM live_trades WHERE market_id = ? AND status IN ('open', 'partial') LIMIT 1",
+            (market_id,),
+        ).fetchone()
+        return dict(row) if row else None
+
     def get_live_stats(self) -> dict:
         """Summary stats for live trading dashboard."""
         row = self.conn.execute("""
