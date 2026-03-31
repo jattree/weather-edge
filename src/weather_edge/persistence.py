@@ -412,12 +412,39 @@ class PersistentStore:
         self, asset_id: str, condition_id: str, city_id: str = "",
         outcome: str = "", description: str = "", token_side: str = "",
     ) -> None:
-        self.conn.execute(
-            """INSERT OR REPLACE INTO market_map
-               (asset_id, condition_id, city_id, outcome, description, token_side)
-               VALUES (?, ?, ?, ?, ?, ?)""",
-            (asset_id, condition_id, city_id, outcome, description, token_side),
-        )
+        # Don't overwrite good data with empty values
+        existing = self.conn.execute(
+            "SELECT city_id FROM market_map WHERE asset_id = ?", (asset_id,),
+        ).fetchone()
+        if existing and existing[0] and not city_id:
+            # Keep existing city_id, only update non-empty fields
+            updates = []
+            params = []
+            if condition_id:
+                updates.append("condition_id = ?")
+                params.append(condition_id)
+            if outcome:
+                updates.append("outcome = ?")
+                params.append(outcome)
+            if description:
+                updates.append("description = ?")
+                params.append(description)
+            if token_side:
+                updates.append("token_side = ?")
+                params.append(token_side)
+            if updates:
+                params.append(asset_id)
+                self.conn.execute(
+                    f"UPDATE market_map SET {', '.join(updates)} WHERE asset_id = ?",
+                    params,
+                )
+        else:
+            self.conn.execute(
+                """INSERT OR REPLACE INTO market_map
+                   (asset_id, condition_id, city_id, outcome, description, token_side)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (asset_id, condition_id, city_id, outcome, description, token_side),
+            )
 
     def rebuild_positions(self) -> None:
         """Rebuild positions table from fills (the truth)."""
