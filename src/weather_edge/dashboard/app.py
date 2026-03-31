@@ -86,6 +86,7 @@ latest_state: dict = {
     "execution_analytics": {},
     "claude_decisions": [],
     "kill_switch": {"active": False, "reason": "", "triggered_by": "", "triggered_at": ""},
+    "live": {"enabled": False},
 }
 connected_websockets: list[WebSocket] = []
 
@@ -557,6 +558,21 @@ async def startup():
                 "LIVE MODE ACTIVE, wallet balance: $%.2f, max_shares: %s",
                 balance or 0, settings.live_max_shares or "unlimited",
             )
+            # Set initial live state so dashboard shows live view immediately
+            latest_state["live"] = {
+                "enabled": True,
+                "balance": round(balance or 0, 2),
+                "portfolio_value": round(balance or 0, 2),
+                "available_cash": round(balance or 0, 2),
+                "capital_at_risk": 0,
+                "positions": [],
+                "position_count": 0,
+                "trade_log": [],
+                "trade_count": 0,
+                "pnl": 0,
+                "total_fees": 0,
+                "max_shares": live_executor.max_shares,
+            }
             asyncio.create_task(heartbeat_loop())
             asyncio.create_task(stale_order_loop())
             # Fill tracker, poll every 15s for order status updates
