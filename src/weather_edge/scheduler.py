@@ -87,20 +87,27 @@ def compute_model_prob_for_market(market: MarketInfo, consensus) -> float | None
 
 
 async def run_cycle(
-    paper_trader: PaperTrader,
+    paper_trader: PaperTrader | None,
     target_dates: list[date] | None = None,
     run_ai_reasoning: bool = True,
     live_executor=None,
+    store=None,
 ) -> tuple[list[Signal], dict[tuple, list], dict[str, dict]]:
     """Run one full fetch → analyze → signal cycle.
 
     Args:
+        paper_trader: Paper trader instance (None if paper disabled).
         run_ai_reasoning: If False, skip Claude + Gemini calls (sniper-triggered cycles).
         live_executor: Optional TradeExecutor for real order placement.
+        store: PersistentStore instance (shared by both paper and live).
 
     Returns:
         (signals, forecast_cache) where forecast_cache maps (city_id, date) -> forecasts
     """
+    # Store can come from paper_trader or be passed directly
+    if store is None and paper_trader is not None:
+        store = paper_trader.store
+
     if target_dates is None:
         today = date.today()
         target_dates = [today, today + timedelta(days=1), today + timedelta(days=2)]
@@ -110,13 +117,14 @@ async def run_cycle(
     if not emos_check.valid:
         logger.warning("CONTRACT VIOLATION [%s]: %s", emos_check.code, emos_check.error)
 
-    # Resolve any open trades before placing new ones
-    try:
-        resolved_count = await resolve_open_trades(paper_trader)
-        if resolved_count > 0:
-            logger.info("Resolved %d paper trades at cycle start", resolved_count)
-    except Exception:
-        logger.exception("Paper trade resolution failed, continuing with cycle")
+    # Resolve any open paper trades before placing new ones
+    if paper_trader:
+        try:
+            resolved_count = await resolve_open_trades(paper_trader)
+            if resolved_count > 0:
+                logger.info("Resolved %d paper trades at cycle start", resolved_count)
+        except Exception:
+            logger.exception("Paper trade resolution failed, continuing with cycle")
 
     _portfolio_summary = {}
 
@@ -143,7 +151,7 @@ async def run_cycle(
     if live_executor and markets:
         try:
             from weather_edge.trading.portfolio_sync import sync_market_map_from_discovery
-            mapped = await sync_market_map_from_discovery(paper_trader.store, markets)
+            mapped = await sync_market_map_from_discovery(store, markets)
             if mapped:
                 logger.info("Market map updated: %d token mappings", mapped)
         except Exception:
@@ -156,12 +164,12 @@ async def run_cycle(
             from weather_edge.trading.portfolio_sync import sync_portfolio
             _portfolio_summary = await sync_portfolio(
                 executor=live_executor,
-                store=paper_trader.store,
+                store=store,
             )
             # Rebuild positions again to pick up market_map city_ids
             # (market_map was updated just before sync, but fills may have empty city_id)
-            paper_trader.store.rebuild_positions()
-            _portfolio_summary = paper_trader.store.get_portfolio_summary()
+            store.rebuild_positions()
+            _portfolio_summary = store.get_portfolio_summary()
         except Exception:
             logger.exception("Portfolio sync failed, continuing with stale positions")
 
@@ -229,10 +237,9 @@ async def run_cycle(
 
         # Persist forecast snapshot for self-learning
         try:
-            from weather_edge.dashboard.app import paper_trader
             m_vals = {f.model_name: f.temp_max_c for f in forecasts if f.temp_max_c is not None}
             if m_vals:
-                paper_trader.store.save_forecast_snapshot(
+                store.save_forecast_snapshot(
                     city_id.value, str(target_date), m_vals,
                 )
         except Exception:
@@ -398,8 +405,7 @@ async def run_cycle(
 
                 # Persist AI decision for self-learning
                 try:
-                    from weather_edge.dashboard.app import paper_trader
-                    paper_trader.store.save_ai_decision(
+                    store.save_ai_decision(
                         source="claude",
                         decision="TRADE" if reasoning.should_trade else "SKIP",
                         city_id=signal.city_id,
@@ -441,7 +447,7 @@ async def run_cycle(
                         })
                         # Persist Gemini decision for self-learning
                         try:
-                            paper_trader.store.save_ai_decision(
+                            store.save_ai_decision(
                                 source="gemini",
                                 decision=verdict,
                                 city_id=signal.city_id,
@@ -544,7 +550,7 @@ async def run_cycle(
                 signal.city_id, signal.description[:40],
             )
 
-        trade = paper_trader.place_trade(signal) if not fee_blocked else None
+        trade = paper_trader.place_trade(signal) if (paper_trader and not fee_blocked) else None
         # Generate hedge/spread order only for core trades (not penny bets)
         # Penny bets at 0.1-5c: max loss is the entry cost, hedging is wasteful
         if trade:
@@ -553,7 +559,7 @@ async def run_cycle(
                 prices = market_prices.get(signal.market_id, {})
                 if prices.get("spread_profitable"):
                     hedge = market_maker.generate_hedge_orders(signal, market_prices, settings.bankroll)
-                    if hedge:
+                    if hedge and paper_trader:
                         paper_trader.place_spread_trade(signal, hedge)
 
         # === LIVE EXECUTION (maker orders bypass fee gate, $0 maker fee) ===
@@ -588,7 +594,7 @@ async def run_cycle(
                     if token_id:
                         # === POSITION-AWARE DUPLICATE PREVENTION ===
                         # Check POSITIONS (what we actually hold) not orders
-                        existing_position = paper_trader.store.get_position_for_market(signal.market_id)
+                        existing_position = store.get_position_for_market(signal.market_id)
                         if existing_position and existing_position.get("total_shares", 0) > 0:
                             logger.info(
                                 "POSITION EXISTS: %s already hold %.0f shares ($%.2f), skipping",
@@ -599,7 +605,7 @@ async def run_cycle(
                             continue
 
                         # Also check open orders (not yet filled)
-                        existing = paper_trader.store.get_open_order_for_market(signal.market_id)
+                        existing = store.get_open_order_for_market(signal.market_id)
                         if existing:
                             old_price = existing.get("limit_price", 0)
                             filled = existing.get("filled_shares", 0) or 0
@@ -634,7 +640,7 @@ async def run_cycle(
                                 if old_id:
                                     try:
                                         await live_executor.cancel_order(old_id)
-                                        paper_trader.store.cancel_live_trade(old_id)
+                                        store.cancel_live_trade(old_id)
                                         logger.info(
                                             "PRICE CHASE: %s improving %.3f→%.3f after %dm unfilled",
                                             signal.city_id, old_price, chase_price, int(order_age_minutes),
@@ -661,7 +667,7 @@ async def run_cycle(
                                 if old_id:
                                     try:
                                         await live_executor.cancel_order(old_id)
-                                        paper_trader.store.cancel_live_trade(old_id)
+                                        store.cancel_live_trade(old_id)
                                         logger.info(
                                             "LIVE REPLACE: %s cancelled %s (price %.3f→%.3f, drift=%.3f)",
                                             signal.city_id, old_id[:16], old_price, new_price, price_drift,
@@ -693,67 +699,103 @@ async def run_cycle(
             spread_summary["spread_orders"], spread_summary["estimated_guaranteed_pnl"],
         )
 
-    # === Early exit monitor: check if open positions should be closed ===
+    # === Early exit monitor ===
+    # Paper and live scan independently, either can run alone
     try:
         from weather_edge.analysis.exit_monitor import scan_for_exits, ai_review_exit
-        # Build current market prices and model probs for open trades
         current_market_prices = {m.market_id: m.yes_price for m in markets}
         current_model_probs = {}
         for signal in all_signals:
             current_model_probs[signal.market_id] = signal.model_prob
 
-        exit_candidates = scan_for_exits(paper_trader.open_trades, current_market_prices, current_model_probs)
-        if exit_candidates:
-            logger.info("EXIT MONITOR: %d candidates found, reviewing top 3...", len(exit_candidates))
-            for candidate in exit_candidates[:3]:
-                # Get model context for AI review
-                model_vals = {}
-                c_mean, c_std = 0.0, 1.0
-                for (cid, td), f_list in _forecast_cache.items():
-                    if cid.value == candidate.trade.city_id:
-                        model_vals = {f.model_name: f.temp_max_c for f in f_list if f.temp_max_c is not None}
-                        if model_vals:
-                            vals = list(model_vals.values())
-                            c_mean = sum(vals) / len(vals)
-                            c_std = (max(vals) - min(vals)) / 2 if len(vals) > 1 else 0.5
-                        break
+        # --- PAPER EXIT SCANNING ---
+        if paper_trader:
+            paper_candidates = scan_for_exits(paper_trader.open_trades, current_market_prices, current_model_probs)
+            if paper_candidates:
+                logger.info("PAPER EXIT MONITOR: %d candidates", len(paper_candidates))
+                for candidate in paper_candidates[:3]:
+                    model_vals = {}
+                    c_mean, c_std = 0.0, 1.0
+                    for (cid, td), f_list in _forecast_cache.items():
+                        if cid.value == candidate.trade.city_id:
+                            model_vals = {f.model_name: f.temp_max_c for f in f_list if f.temp_max_c is not None}
+                            if model_vals:
+                                vals = list(model_vals.values())
+                                c_mean = sum(vals) / len(vals)
+                                c_std = (max(vals) - min(vals)) / 2 if len(vals) > 1 else 0.5
+                            break
+                    candidate = await ai_review_exit(candidate, model_vals, c_mean, c_std)
+                    if candidate.final_decision == "EXIT":
+                        logger.warning(
+                            "PAPER EXIT: %s %s $%.0f, %s",
+                            candidate.trade.side, candidate.trade.city_id,
+                            candidate.trade.size_usd, candidate.reason,
+                        )
+                        paper_trader.close_position(candidate.trade, candidate.current_market_price)
 
-                candidate = await ai_review_exit(candidate, model_vals, c_mean, c_std)
-
-                if candidate.final_decision == "EXIT":
-                    logger.warning(
-                        "EARLY EXIT: %s %s $%.0f, %s (Claude: %s, Gemini: %s)",
-                        candidate.trade.side, candidate.trade.city_id,
-                        candidate.trade.size_usd, candidate.reason,
-                        candidate.claude_verdict, candidate.gemini_verdict,
+        # --- LIVE EXIT SCANNING (from positions table, independent of paper) ---
+        if live_executor and not live_executor.dry_run and store:
+            from weather_edge.trading.paper import PaperTrade, TradeStatus
+            positions = store.get_positions()
+            # Convert positions to PaperTrade-compatible objects for exit scanner
+            live_pseudo_trades = []
+            for pos in positions:
+                condition_id = pos.get("condition_id", "")
+                city = pos.get("city_id", "")
+                shares = pos.get("total_shares", 0)
+                avg_price = pos.get("avg_price", 0)
+                if shares >= MIN_SELL_SHARES:
+                    pt = PaperTrade(
+                        market_id=condition_id,
+                        city_id=city,
+                        side=pos.get("outcome", pos.get("side", "")),
+                        size_usd=pos.get("cost_basis", 0),
+                        entry_price=avg_price,
+                        description=pos.get("description", ""),
+                        status=TradeStatus.OPEN,
                     )
-                    # Paper mode: close at current market price
-                    paper_trader.close_position(candidate.trade, candidate.current_market_price)
+                    live_pseudo_trades.append(pt)
 
-                    # === LIVE EXIT: place sell order on exchange ===
-                    if live_executor and not live_executor.dry_run:
-                        city_id_str = candidate.trade.city_id if isinstance(candidate.trade.city_id, str) else candidate.trade.city_id.value
-                        # Find the position and token_id for this market
-                        position = paper_trader.store.get_position_for_market(candidate.trade.market_id)
-                        if position and position.get("total_shares", 0) >= MIN_SELL_SHARES:
-                            asset_id = position.get("asset_id", "")
-                            if asset_id:
-                                try:
-                                    sell_result = await live_executor.place_sell_order(
-                                        token_id=asset_id,
-                                        shares=position["total_shares"],
-                                        price=candidate.current_market_price,
-                                        city_id=city_id_str,
-                                        description=f"EXIT: {candidate.reason}",
-                                    )
-                                    if sell_result:
-                                        logger.info(
-                                            "LIVE EXIT PLACED: %s %.0f shares @ %.3f, %s",
-                                            city_id_str, position["total_shares"],
-                                            candidate.current_market_price, sell_result.order_id,
+            if live_pseudo_trades:
+                live_candidates = scan_for_exits(live_pseudo_trades, current_market_prices, current_model_probs)
+                if live_candidates:
+                    logger.info("LIVE EXIT MONITOR: %d candidates", len(live_candidates))
+                    for candidate in live_candidates[:3]:
+                        model_vals = {}
+                        c_mean, c_std = 0.0, 1.0
+                        for (cid, td), f_list in _forecast_cache.items():
+                            if cid.value == candidate.trade.city_id:
+                                model_vals = {f.model_name: f.temp_max_c for f in f_list if f.temp_max_c is not None}
+                                if model_vals:
+                                    vals = list(model_vals.values())
+                                    c_mean = sum(vals) / len(vals)
+                                    c_std = (max(vals) - min(vals)) / 2 if len(vals) > 1 else 0.5
+                                break
+                        candidate = await ai_review_exit(candidate, model_vals, c_mean, c_std)
+                        if candidate.final_decision == "EXIT":
+                            city_id_str = candidate.trade.city_id
+                            position = store.get_position_for_market(candidate.trade.market_id)
+                            if position and position.get("total_shares", 0) >= MIN_SELL_SHARES:
+                                asset_id = position.get("asset_id", "")
+                                if asset_id:
+                                    try:
+                                        sell_result = await live_executor.place_sell_order(
+                                            token_id=asset_id,
+                                            shares=position["total_shares"],
+                                            price=candidate.current_market_price,
+                                            city_id=city_id_str,
+                                            description=f"EXIT: {candidate.reason}",
                                         )
-                                except Exception as e:
-                                    logger.error("LIVE EXIT FAILED: %s, %s", city_id_str, e)
+                                        if sell_result:
+                                            logger.warning(
+                                                "LIVE EXIT: %s %s %.0f shares @ %.3f, %s",
+                                                city_id_str, candidate.trade.side,
+                                                position["total_shares"],
+                                                candidate.current_market_price,
+                                                sell_result.order_id,
+                                            )
+                                    except Exception as e:
+                                        logger.error("LIVE EXIT FAILED: %s, %s", city_id_str, e)
 
                 # Record exit decision to AI Decisions tab
                 from weather_edge.analysis.claude_reasoning import _decision_history
@@ -788,7 +830,7 @@ async def run_cycle(
     return all_signals, _forecast_cache, city_volume
 
 
-async def run_loop(paper_trader: PaperTrader) -> None:
+async def run_loop(paper_trader: PaperTrader | None) -> None:
     """Run the fetch-analyze-trade loop continuously."""
     interval = settings.fetch_interval_minutes * 60
     cycle_num = 0
@@ -799,9 +841,10 @@ async def run_loop(paper_trader: PaperTrader) -> None:
         try:
             signals, _, _ = await run_cycle(paper_trader)
             tradeable = [s for s in signals if s.confidence_tier.value != "low"]
+            pnl = paper_trader.total_pnl if paper_trader else 0
             logger.info(
                 "Cycle %d complete: %d signals, %d tradeable, P&L=$%.2f",
-                cycle_num, len(signals), len(tradeable), paper_trader.total_pnl,
+                cycle_num, len(signals), len(tradeable), pnl,
             )
         except Exception:
             logger.exception("Cycle %d failed", cycle_num)

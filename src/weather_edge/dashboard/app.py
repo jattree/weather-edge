@@ -205,11 +205,13 @@ async def _run_dashboard_cycle_inner(run_ai: bool = True) -> None:
     # Track competitor performance
     await competitor_tracker.update_all()
 
-    # Run the core cycle (fetches markets, forecasts, computes signals, places paper trades)
-    # If live_executor is initialized, live orders are placed in parallel with paper
+    # Run the core cycle, paper and live are independent systems
+    # Either can be None/disabled and the other keeps working
+    _paper = paper_trader if settings.live_mode is False or not live_executor else paper_trader
     all_signals, forecast_cache, city_volume = await run_cycle(
-        paper_trader, target_dates, run_ai_reasoning=run_ai,
+        _paper, target_dates, run_ai_reasoning=run_ai,
         live_executor=live_executor,
+        store=paper_trader.store,
     )
 
     # Build city data from the forecast cache (no re-fetching!)
