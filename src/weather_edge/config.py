@@ -349,8 +349,15 @@ class Settings(BaseSettings):
     polymarket_gamma_url: str = "https://gamma-api.polymarket.com"
     polymarket_clob_url: str = "https://clob.polymarket.com"
     polymarket_api_key: str = ""  # CLOB API key for live execution
-    polymarket_private_key: str = ""  # Polygon wallet private key
+    polymarket_api_secret: str = ""  # CLOB API secret
+    polymarket_api_passphrase: str = ""  # CLOB API passphrase
+    polymarket_private_key: str = ""  # Polygon wallet private key (0x...)
     polymarket_wallet: str = ""  # Polygon wallet address
+    polymarket_signature_type: int = 2  # 2=EOA, 1=proxy/Magic Link
+
+    # Live execution
+    live_mode: bool = False  # Set True to enable real trades (paper always runs too)
+    live_max_shares: float = 0  # 0=unlimited. Set to 5/20/50 for graduated testing
 
     # Open-Meteo tier, auto-detected from api key presence
     # Paid tier: 1M req/month, dedicated servers, no rate-limit ban risk

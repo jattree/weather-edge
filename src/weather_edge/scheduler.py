@@ -88,11 +88,13 @@ async def run_cycle(
     paper_trader: PaperTrader,
     target_dates: list[date] | None = None,
     run_ai_reasoning: bool = True,
+    live_executor=None,
 ) -> tuple[list[Signal], dict[tuple, list], dict[str, dict]]:
     """Run one full fetch → analyze → signal cycle.
 
     Args:
         run_ai_reasoning: If False, skip Claude + Gemini calls (sniper-triggered cycles).
+        live_executor: Optional TradeExecutor for real order placement.
 
     Returns:
         (signals, forecast_cache) where forecast_cache maps (city_id, date) -> forecasts
@@ -512,6 +514,33 @@ async def run_cycle(
                     hedge = market_maker.generate_hedge_orders(signal, market_prices, settings.bankroll)
                     if hedge:
                         paper_trader.place_spread_trade(signal, hedge)
+
+            # === LIVE EXECUTION (parallel with paper) ===
+            if live_executor and not live_executor.dry_run and trade:
+                m = market_by_id.get(signal.market_id)
+                if m:
+                    # Pick the right token: YES token for YES side, NO token for NO side
+                    if signal.recommended_side.value == "YES":
+                        token_id = m.token_id_yes
+                    else:
+                        token_id = m.token_id_no
+
+                    if token_id:
+                        try:
+                            result = await live_executor.place_limit_order(
+                                signal, token_id,
+                            )
+                            if result:
+                                logger.info(
+                                    "LIVE: %s %s %s %.0f shares @ %.3f, %s",
+                                    result.status, signal.recommended_side.value,
+                                    signal.city_id, result.size_shares,
+                                    result.limit_price, result.order_id,
+                                )
+                        except Exception as e:
+                            logger.error(
+                                "LIVE ORDER FAILED: %s, %s", signal.city_id, e,
+                            )
 
     # Log spread capture summary
     spread_summary = market_maker.simulate_spread_pnl()

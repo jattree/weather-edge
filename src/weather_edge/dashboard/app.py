@@ -48,6 +48,9 @@ sniper = ModelSniper()
 competitor_tracker = CompetitorTracker()
 trading_active = False  # Must click START to begin
 
+# Live executor (initialized on startup if LIVE_MODE=true)
+live_executor = None
+
 # Load saved risk profile
 from weather_edge.analysis.risk_controls import (
     _circuit_breaker,
@@ -82,6 +85,7 @@ latest_state: dict = {
     "correlation_matrix": {"cities": [], "matrix": [], "pairs": []},
     "execution_analytics": {},
     "claude_decisions": [],
+    "kill_switch": {"active": False, "reason": "", "triggered_by": "", "triggered_at": ""},
 }
 connected_websockets: list[WebSocket] = []
 
@@ -201,7 +205,11 @@ async def _run_dashboard_cycle_inner(run_ai: bool = True) -> None:
     await competitor_tracker.update_all()
 
     # Run the core cycle (fetches markets, forecasts, computes signals, places paper trades)
-    all_signals, forecast_cache, city_volume = await run_cycle(paper_trader, target_dates, run_ai_reasoning=run_ai)
+    # If live_executor is initialized, live orders are placed in parallel with paper
+    all_signals, forecast_cache, city_volume = await run_cycle(
+        paper_trader, target_dates, run_ai_reasoning=run_ai,
+        live_executor=live_executor,
+    )
 
     # Build city data from the forecast cache (no re-fetching!)
     city_data = {}
@@ -359,6 +367,13 @@ async def _run_dashboard_cycle_inner(run_ai: bool = True) -> None:
         "ai_adherence": compute_adherence(paper_trader.closed_trades, get_decisions()).to_dict(),
     }
 
+    # Include kill switch state in every broadcast
+    try:
+        from weather_edge.trading.kill_switch import get_kill_switch_state
+        latest_state["kill_switch"] = get_kill_switch_state()
+    except Exception:
+        pass
+
     await broadcast(latest_state)
     logger.info("Dashboard cycle complete, next in %dm", settings.fetch_interval_minutes)
 
@@ -415,8 +430,63 @@ async def daily_report_loop() -> None:
             logger.exception("Daily report failed")
 
 
+async def heartbeat_loop() -> None:
+    """Send heartbeat every 30s to keep Polymarket session alive."""
+    while True:
+        if trading_active and live_executor and not live_executor.dry_run:
+            await live_executor.send_heartbeat()
+        await asyncio.sleep(30)
+
+
+async def stale_order_loop() -> None:
+    """Check for and cancel stale orders every 5 minutes."""
+    while True:
+        await asyncio.sleep(300)
+        if trading_active and live_executor and not live_executor.dry_run:
+            try:
+                cancelled = await live_executor.cancel_stale_orders(max_age_seconds=300)
+                if cancelled:
+                    logger.info("Cleaned up %d stale orders", cancelled)
+            except Exception:
+                logger.debug("Stale order cleanup failed", exc_info=True)
+
+
 @app.on_event("startup")
 async def startup():
+    global live_executor
+
+    # Initialize live executor if LIVE_MODE is enabled
+    if settings.live_mode:
+        from weather_edge.trading.executor import TradeExecutor
+        live_executor = TradeExecutor(
+            private_key=settings.polymarket_private_key,
+            wallet_address=settings.polymarket_wallet,
+            api_key=settings.polymarket_api_key,
+            api_secret=settings.polymarket_api_secret,
+            api_passphrase=settings.polymarket_api_passphrase,
+            signature_type=settings.polymarket_signature_type,
+            dry_run=False,
+            post_only=True,
+            max_shares=settings.live_max_shares or None,
+        )
+        try:
+            await live_executor.initialize()
+            balance = await live_executor.check_balance()
+            logger.warning(
+                "LIVE MODE ACTIVE, wallet balance: $%.2f, max_shares: %s",
+                balance or 0, settings.live_max_shares or "unlimited",
+            )
+            asyncio.create_task(heartbeat_loop())
+            asyncio.create_task(stale_order_loop())
+            # Fill tracker, poll every 15s for order status updates
+            from weather_edge.trading.fill_tracker import poll_fills
+            asyncio.create_task(poll_fills(live_executor, interval=15))
+        except Exception:
+            logger.exception("LIVE EXECUTOR INIT FAILED, falling back to paper only")
+            live_executor = None
+    else:
+        logger.info("Paper mode, live executor not initialized")
+
     asyncio.create_task(background_loop())
     asyncio.create_task(sniper_loop())
     asyncio.create_task(daily_report_loop())
@@ -486,6 +556,49 @@ async def api_stop():
     latest_state["trading_active"] = False
     await broadcast(latest_state)
     return {"status": "stopped", "trading_active": False, "open_positions": len(paper_trader.open_trades)}
+
+
+@app.post("/api/kill-switch")
+async def api_kill_switch():
+    """Emergency kill switch, block all new orders AND cancel open exchange orders."""
+    global trading_active
+    trading_active = False
+
+    from weather_edge.trading.kill_switch import kill_and_cancel, get_kill_switch_state
+
+    # Get live executor if it exists
+    executor = globals().get("live_executor")
+    result = await kill_and_cancel(
+        executor=executor,
+        reason="Manual emergency stop via dashboard",
+        triggered_by="api",
+    )
+
+    latest_state["trading_active"] = False
+    latest_state["kill_switch"] = get_kill_switch_state()
+    await broadcast(latest_state)
+
+    return {"status": "killed", **result}
+
+
+@app.post("/api/kill-switch/reset")
+async def api_kill_switch_reset():
+    """Reset the kill switch, allow trading to resume."""
+    from weather_edge.trading.kill_switch import deactivate_kill_switch, get_kill_switch_state
+
+    deactivate_kill_switch(cleared_by="api")
+
+    latest_state["kill_switch"] = get_kill_switch_state()
+    await broadcast(latest_state)
+
+    return {"status": "reset", **get_kill_switch_state()}
+
+
+@app.get("/api/kill-switch")
+async def api_kill_switch_state():
+    """Get current kill switch state."""
+    from weather_edge.trading.kill_switch import get_kill_switch_state
+    return get_kill_switch_state()
 
 
 @app.post("/api/close-all")
