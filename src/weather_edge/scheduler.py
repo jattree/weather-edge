@@ -491,19 +491,31 @@ async def run_cycle(
 
     for signal in all_signals:
         # Contract: verify taker fee doesn't eat >40% of projected alpha
+        # This gate applies to TAKER orders only. Live executor uses post_only
+        # (maker, $0 fee) so it bypasses this check.
         fee_check = validate_fee_alpha_ratio(
             edge=signal.edge,
             price=signal.market_prob,
             size_usd=signal.recommended_size,
         )
-        if not fee_check.valid:
+        fee_blocked = not fee_check.valid
+
+        if fee_blocked and not live_executor:
+            # Paper-only mode: skip trade entirely
             logger.info(
                 "CONTRACT [%s]: %s, skipping %s %s",
                 fee_check.code, fee_check.error, signal.city_id, signal.description[:40],
             )
             continue
+        elif fee_blocked and live_executor:
+            # Live mode: skip paper trade (taker fees eat alpha) but still
+            # place live maker order ($0 fee). Log the fee gate for awareness.
+            logger.info(
+                "FEE GATE (paper only): %s %s, paper skipped, live maker order OK",
+                signal.city_id, signal.description[:40],
+            )
 
-        trade = paper_trader.place_trade(signal)
+        trade = paper_trader.place_trade(signal) if not fee_blocked else None
         # Generate hedge/spread order only for core trades (not penny bets)
         # Penny bets at 0.1-5c: max loss is the entry cost, hedging is wasteful
         if trade:
@@ -515,8 +527,10 @@ async def run_cycle(
                     if hedge:
                         paper_trader.place_spread_trade(signal, hedge)
 
-            # === LIVE EXECUTION (parallel with paper) ===
-            if live_executor and not live_executor.dry_run and trade:
+        # === LIVE EXECUTION (maker orders bypass fee gate, $0 maker fee) ===
+        # Still require minimum raw edge, we're bypassing fee check, not edge check
+        if live_executor and not live_executor.dry_run:
+            if (trade or fee_blocked) and signal.edge >= 0.02:
                 m = market_by_id.get(signal.market_id)
                 if m:
                     # Pick the right token: YES token for YES side, NO token for NO side
