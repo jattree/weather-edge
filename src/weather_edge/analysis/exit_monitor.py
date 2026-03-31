@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from datetime import datetime, timezone
 
 from weather_edge.analysis.contracts import validate_penny_no_exit
 from weather_edge.models.position import Position
@@ -25,13 +26,14 @@ PROFIT_CAP_PRICE = 0.88  # Take profit above this price
 PROFIT_CAP_MODEL_MAX = 0.94  # Only take profit if model < 94%
 PENNY_ENTRY_MAX = 0.06  # Never exit penny bets (entry <= 6¢)
 MIN_SPREAD_MULTIPLIER = 1.5  # Don't exit if edge < 1.5x the spread
+STALE_MODEL_THRESHOLD_HOURS = 4.0  # Exit if model data > 4h old
 
 
 @dataclass
 class ExitCandidate:
     """A trade flagged for potential early exit."""
     trade: Position
-    reason: str  # "edge_inversion", "profit_cap", "pattern_bust"
+    reason: str  # "edge_inversion", "profit_cap", "pattern_bust", "stale_model"
     current_model_prob: float
     current_market_price: float
     original_edge: float
@@ -48,6 +50,7 @@ def scan_for_exits(
     open_trades: list[Position],
     market_prices: dict[str, float],
     model_probs: dict[str, float],
+    forecast_cache: dict[tuple, list] | None = None,
 ) -> list[ExitCandidate]:
     """Scan open positions for early exit candidates.
 
@@ -55,11 +58,10 @@ def scan_for_exits(
         open_trades: Currently open paper trades
         market_prices: Current market YES prices by market_id
         model_probs: Current model probabilities by market_id
-
-    Returns:
-        List of ExitCandidate objects needing AI review
+        forecast_cache: Optional cache mapping (city, date) -> forecasts
     """
     candidates: list[ExitCandidate] = []
+    now = datetime.now(timezone.utc)
 
     for trade in open_trades:
         # Contract: never exit penny bets (hold to resolution)
@@ -91,8 +93,36 @@ def scan_for_exits(
         reason = None
         urgency = "medium"
 
+        # 0. Stale model detection: data hasn't updated in 4+ hours
+        if forecast_cache:
+            stale = False
+            oldest_fetch = now
+            city_forecasts = []
+            for (cid, t_date), f_list in forecast_cache.items():
+                # cid is likely a City enum or string value
+                cid_val = cid.value if hasattr(cid, "value") else str(cid)
+                if cid_val == trade.city_id:
+                    city_forecasts.extend(f_list)
+            
+            if city_forecasts:
+                for f in city_forecasts:
+                    if hasattr(f, "fetched_at"):
+                        oldest_fetch = min(oldest_fetch, f.fetched_at)
+                
+                hours_old = (now - oldest_fetch).total_seconds() / 3600
+                if hours_old > STALE_MODEL_THRESHOLD_HOURS:
+                    stale = True
+                    logger.warning(
+                        "STALE MODEL DETECTED: %s data is %.1f hours old",
+                        trade.city_id, hours_old
+                    )
+
+            if stale:
+                reason = "stale_model"
+                urgency = "high"
+
         # 1. Edge inversion: model now says we're wrong
-        if current_edge < EDGE_INVERSION_THRESHOLD:
+        if not reason and current_edge < EDGE_INVERSION_THRESHOLD:
             reason = "edge_inversion"
             urgency = "high" if current_edge < -0.15 else "medium"
 

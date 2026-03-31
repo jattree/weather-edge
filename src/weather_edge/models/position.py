@@ -29,3 +29,4 @@ class Position:
     placed_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     total_shares: float = 0.0  # Number of shares held (size_usd / entry_price)
     source: str = ""           # "paper" or "live"
+    strategy: str = "core"     # "core", "penny", "spread", "exit"

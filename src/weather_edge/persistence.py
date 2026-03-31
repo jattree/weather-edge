@@ -27,6 +27,10 @@ def _ensure_tables(conn: sqlite3.Connection) -> None:
     except sqlite3.OperationalError:
         pass
     try:
+        conn.execute("ALTER TABLE paper_trades ADD COLUMN strategy TEXT DEFAULT 'core'")
+    except sqlite3.OperationalError:
+        pass
+    try:
         conn.execute("ALTER TABLE fills ADD COLUMN gas_usd REAL DEFAULT 0.0")
     except sqlite3.OperationalError:
         pass
@@ -53,6 +57,7 @@ def _ensure_tables(conn: sqlite3.Connection) -> None:
             entry_price REAL NOT NULL,
             placed_at TEXT NOT NULL,
             description TEXT,
+            strategy TEXT DEFAULT 'core',
             exit_price REAL,
             resolved_at TEXT,
             pnl REAL,
@@ -230,8 +235,8 @@ class PersistentStore:
     def save_trade(self, session_id: int, trade: PaperTrade) -> int:
         cur = self.conn.execute(
             """INSERT INTO paper_trades
-               (session_id, market_id, city_id, side, size_usd, entry_price, placed_at, description, exit_price, resolved_at, pnl, status)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               (session_id, market_id, city_id, side, size_usd, entry_price, placed_at, description, strategy, exit_price, resolved_at, pnl, status)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 session_id,
                 trade.market_id,
@@ -241,6 +246,7 @@ class PersistentStore:
                 trade.entry_price,
                 trade.placed_at.isoformat(),
                 trade.description,
+                trade.strategy,
                 trade.exit_price,
                 trade.resolved_at.isoformat() if trade.resolved_at else None,
                 trade.pnl,
@@ -281,6 +287,7 @@ class PersistentStore:
                 entry_price=r["entry_price"],
                 placed_at=datetime.fromisoformat(r["placed_at"]),
                 description=r["description"] or "",
+                strategy=r["strategy"] if "strategy" in r.keys() else "core",
                 exit_price=r["exit_price"],
                 resolved_at=datetime.fromisoformat(r["resolved_at"]) if r["resolved_at"] else None,
                 pnl=r["pnl"],

@@ -1047,7 +1047,7 @@ async def run_cycle(
                     "source": "exit_monitor",
                 })
     except Exception:
-        logger.debug("Exit monitor failed", exc_info=True)
+        logger.error("EXIT MONITOR CRASHED, check traceback", exc_info=True)
 
     # Also fetch forecasts for cities without active markets (monitoring)
     # But only for tomorrow (not all dates) to save API calls

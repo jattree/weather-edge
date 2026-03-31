@@ -316,22 +316,23 @@ async def fetch_city_forecasts(
     return results
 
 
+MAX_CONCURRENT_CITIES = 10
+
+
 async def fetch_all_cities(
     target_date: date,
     settings: Settings | None = None,
     city_order: list[City] | None = None,
 ) -> dict[City, list[ForecastResult]]:
-    """Fetch forecasts for all cities.
+    """Fetch forecasts for all cities in parallel.
 
     Args:
         target_date: Date to fetch forecasts for.
         settings: Config settings (uses global if None).
-        city_order: Optional priority ordering of cities. If provided, cities
-            are fetched in this order. Defaults to City enum order.
+        city_order: Optional priority ordering of cities.
 
-    On free tier: 0.5s delay between cities to respect rate limits.
-    On paid tier ($30/month, 600 req/min): no delay, cuts full cycle from
-    ~14 minutes to ~15 seconds.
+    On free tier: respects 2s delay between requests.
+    On paid tier: uses concurrency limit of 10 to maximize throughput.
     """
     if settings is None:
         from weather_edge.config import settings as _settings
@@ -339,14 +340,25 @@ async def fetch_all_cities(
 
     all_forecasts: dict[City, list[ForecastResult]] = {}
     inter_city_delay = 0.0 if settings.openmeteo_paid_tier else 2.0
-
-    # Use provided city order, or default to all cities
     cities = city_order if city_order is not None else list(City)
 
-    for city_id in cities:
-        forecasts = await fetch_city_forecasts(city_id, target_date, settings)
-        all_forecasts[city_id] = forecasts
-        if inter_city_delay > 0:
+    if inter_city_delay > 0:
+        # Sequential for free tier to avoid 429s
+        for city_id in cities:
+            forecasts = await fetch_city_forecasts(city_id, target_date, settings)
+            all_forecasts[city_id] = forecasts
             await asyncio.sleep(inter_city_delay)
+    else:
+        # Parallel for paid tier
+        semaphore = asyncio.Semaphore(MAX_CONCURRENT_CITIES)
+
+        async def _throttled_fetch(city_id):
+            async with semaphore:
+                return city_id, await fetch_city_forecasts(city_id, target_date, settings)
+
+        tasks = [_throttled_fetch(c) for c in cities]
+        results = await asyncio.gather(*tasks)
+        for city_id, forecasts in results:
+            all_forecasts[city_id] = forecasts
 
     return all_forecasts

@@ -2029,6 +2029,27 @@
                             <div class="bankroll-bar-fill" id="utilBar" style="width: 0%; background: var(--cyan);"></div>
                         </div>
                     </div>
+                    <!-- Pool Performance -->
+                    <div class="vs-block" id="poolBlock" style="margin-bottom: 12px; border-color: var(--border-active);">
+                        <div class="vs-header">
+                            <span class="vs-title">Pool Performance</span>
+                        </div>
+                        <div style="padding: 10px; display: flex; flex-direction: column; gap: 8px;">
+                            <div style="display: flex; justify-content: space-between; align-items: center;">
+                                <span style="font-size: 11px; color: var(--text-dim);">Core Alpha</span>
+                                <span class="mono" id="corePnl" style="font-size: 12px; font-weight: 600;">$0.00</span>
+                            </div>
+                            <div style="display: flex; justify-content: space-between; align-items: center;">
+                                <span style="font-size: 11px; color: var(--text-dim);">Penny Tail</span>
+                                <span class="mono" id="pennyPnl" style="font-size: 12px; font-weight: 600;">$0.00</span>
+                            </div>
+                            <div style="height: 1px; background: var(--border); margin: 2px 0;"></div>
+                            <div style="display: flex; justify-content: space-between; align-items: center;">
+                                <span style="font-size: 10px; color: var(--text-muted);">Risk: C:$<span id="coreRisk">0</span> / P:$<span id="pennyRisk">0</span></span>
+                            </div>
+                        </div>
+                    </div>
+
                     <!-- vs ColdMath -->
                     <div class="vs-block" id="vsBlock">
                         <div class="vs-header">
@@ -2567,6 +2588,25 @@
             document.getElementById('lastUpdate').textContent = state.last_update
                 ? new Date(state.last_update).toLocaleTimeString('en', {hour12: false}) : '--';
 
+            /* Pool Performance */
+            if (state.pools) {
+                var p = state.pools;
+                var cp = isLiveView ? (p.core.live_pnl || 0) : (p.core.paper_pnl || 0);
+                var pp = isLiveView ? (p.penny.live_pnl || 0) : (p.penny.paper_pnl || 0);
+                var cr = isLiveView ? (p.core.live_at_risk || 0) : (p.core.paper_at_risk || 0);
+                var pr = isLiveView ? (p.penny.live_at_risk || 0) : (p.penny.paper_at_risk || 0);
+
+                var coreEl = document.getElementById('corePnl');
+                coreEl.textContent = fmtPnl(cp);
+                coreEl.style.color = cp >= 0 ? 'var(--green)' : 'var(--red)';
+
+                var pennyEl = document.getElementById('pennyPnl');
+                pennyEl.textContent = fmtPnl(pp);
+                pennyEl.style.color = pp >= 0 ? 'var(--green)' : 'var(--red)';
+
+                document.getElementById('coreRisk').textContent = Math.round(cr);
+                document.getElementById('pennyRisk').textContent = Math.round(pr);
+            }
             /* Sniper */
             var snipeEvents = state.sniper_events || [];
             var sniperEl = document.getElementById('sniperStatus');

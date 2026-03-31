@@ -270,6 +270,7 @@ class PaperTrader:
             size_usd=size,
             entry_price=signal.market_prob,
             description=desc,
+            strategy="penny" if strategy == "tail" else "core",
         )
         self._next_id += 1
         self.trades.append(trade)
