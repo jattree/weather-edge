@@ -162,6 +162,16 @@ async def sync_portfolio(executor, store, market_lookup: dict | None = None) -> 
 
     store.commit()
 
+    # Step 1b: Backfill city_id and description on fills from market_map
+    store.conn.execute("""
+        UPDATE fills SET
+            city_id = (SELECT m.city_id FROM market_map m WHERE m.asset_id = fills.asset_id),
+            description = (SELECT m.description FROM market_map m WHERE m.asset_id = fills.asset_id)
+        WHERE (city_id = '' OR city_id IS NULL)
+          AND asset_id IN (SELECT asset_id FROM market_map WHERE city_id != '')
+    """)
+    store.commit()
+
     # Step 2: Rebuild positions from fills
     store.rebuild_positions()
 
