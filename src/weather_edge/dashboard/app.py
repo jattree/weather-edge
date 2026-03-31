@@ -383,7 +383,8 @@ async def _run_dashboard_cycle_inner(run_ai: bool = True) -> None:
             fills = paper_trader.store.get_fills(limit=100)
             portfolio = paper_trader.store.get_portfolio_summary()
 
-            # Build trade log from fills
+            # Build trade log from fills with resolution countdown
+            import re as _re
             live_trade_log = []
             for f in fills:
                 filled_at = f.get("filled_at", "")
@@ -391,10 +392,53 @@ async def _run_dashboard_cycle_inner(run_ai: bool = True) -> None:
                     time_str = filled_at.split("T")[1][:8] if "T" in filled_at else filled_at[-8:]
                 except Exception:
                     time_str = filled_at
+
+                # Extract target date from description for resolution countdown
+                resolves_at = None
+                resolves_in = ""
+                desc = f.get("description") or ""
+                city_id_str = (f.get("city_id") or "").lower()
+                date_match = _re.search(r"on (\w+ \d+)\??$", desc)
+                if date_match and not f.get("is_settled"):
+                    try:
+                        from dateutil.parser import parse as _parse_date
+                        target_date = _parse_date(date_match.group(1) + " 2026").date()
+                        # Look up city timezone for resolution time
+                        tz_name = None
+                        for ce, cc in CITIES.items():
+                            if ce.value == city_id_str:
+                                tz_name = cc.timezone
+                                break
+                        if tz_name and _HAS_ZONEINFO:
+                            tz = zoneinfo.ZoneInfo(tz_name)
+                            local_midnight = datetime(
+                                target_date.year, target_date.month, target_date.day,
+                                0, 0, 0, tzinfo=tz,
+                            ) + timedelta(days=1, hours=2)
+                            resolution_dt = local_midnight.astimezone(timezone.utc)
+                        else:
+                            resolution_dt = datetime(
+                                target_date.year, target_date.month, target_date.day,
+                                2, 0, 0, tzinfo=timezone.utc,
+                            ) + timedelta(days=1)
+                        now = datetime.now(timezone.utc)
+                        delta = resolution_dt - now
+                        resolves_at = resolution_dt.isoformat()
+                        if delta.total_seconds() <= 0:
+                            resolves_in = "OVERDUE"
+                        elif delta.days > 0:
+                            resolves_in = f"{delta.days}d {delta.seconds // 3600}h"
+                        else:
+                            hours = delta.seconds // 3600
+                            minutes = (delta.seconds % 3600) // 60
+                            resolves_in = f"{hours}h {minutes:02d}m" if hours > 0 else f"{minutes}m"
+                    except Exception:
+                        pass
+
                 live_trade_log.append({
                     "side": f.get("side", ""),
                     "city": (f.get("city_id") or "").upper(),
-                    "description": f.get("description", ""),
+                    "description": desc,
                     "size": round(f.get("size", 0) * f.get("price", 0), 2),
                     "pnl": None,
                     "time": time_str,
@@ -404,6 +448,8 @@ async def _run_dashboard_cycle_inner(run_ai: bool = True) -> None:
                     "shares": f.get("size", 0),
                     "outcome": f.get("outcome", ""),
                     "is_maker": f.get("is_maker", 1),
+                    "resolves_at": resolves_at,
+                    "resolves_in": resolves_in,
                 })
 
             # Build positions list
@@ -627,69 +673,14 @@ async def api_state():
     except Exception:
         state = latest_state
 
-    # Always refresh live data from positions + fills (exchange truth)
+    # Use latest_state["live"] from last cycle broadcast (already has positions/fills)
+    # Just refresh the balance which may have changed between cycles
     if live_executor and not live_executor.dry_run:
         try:
             state = dict(state) if not isinstance(state, dict) else state.copy()
-            positions = paper_trader.store.get_positions()
-            fills = paper_trader.store.get_fills(limit=100)
-            portfolio = paper_trader.store.get_portfolio_summary()
-
-            # Build trade log from fills (the truth)
-            live_trade_log = []
-            for f in fills:
-                filled_at = f.get("filled_at", "")
-                try:
-                    time_str = filled_at.split("T")[1][:8] if "T" in filled_at else filled_at[-8:]
-                except Exception:
-                    time_str = filled_at
-                live_trade_log.append({
-                    "side": f.get("side", ""),
-                    "city": (f.get("city_id") or "").upper(),
-                    "description": f.get("description", ""),
-                    "size": round(f.get("size", 0) * f.get("price", 0), 2),
-                    "pnl": None,  # Unrealized until market resolves
-                    "time": time_str,
-                    "status": "settled" if f.get("is_settled") else "filled",
-                    "tier": "core",
-                    "price": f.get("price", 0),
-                    "shares": f.get("size", 0),
-                    "outcome": f.get("outcome", ""),
-                    "is_maker": f.get("is_maker", 1),
-                })
-
-            # Build positions list for dashboard
-            position_list = []
-            for p in positions:
-                position_list.append({
-                    "city": (p.get("city_id") or "").upper(),
-                    "side": p.get("outcome") or p.get("side", ""),
-                    "shares": round(p.get("total_shares", 0), 1),
-                    "avg_price": round(p.get("avg_price", 0), 3),
-                    "cost_basis": round(p.get("cost_basis", 0), 2),
-                    "description": p.get("description", ""),
-                })
-
-            deployed = portfolio.get("total_deployed", 0)
-            live_balance = state.get("live", {}).get("balance", 0)
-            # Portfolio value = cash in wallet + cost basis of all positions
-            # (positions settle at $1 or $0, but cost basis is what we spent)
-            portfolio_value = round(live_balance + deployed, 2)
-
-            state["live"] = {
-                "enabled": True,
-                "balance": live_balance,
-                "portfolio_value": portfolio_value,
-                "available_cash": round(live_balance, 2),
-                "positions": position_list,
-                "position_count": portfolio.get("position_count", 0),
-                "trade_log": live_trade_log,
-                "trade_count": len(fills),
-                "capital_at_risk": round(deployed, 2),
-                "pnl": 0,  # Will be populated when markets resolve
-                "total_fees": 0,  # Maker = $0
-                "max_shares": live_executor.max_shares,
-            }
+            # Use cycle-built live data (has resolution countdowns, city names, etc.)
+            if latest_state.get("live", {}).get("enabled"):
+                state["live"] = latest_state["live"]
         except Exception as e:
             logger.debug("Live state refresh failed: %s", e)
 
