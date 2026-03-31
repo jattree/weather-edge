@@ -410,13 +410,34 @@ async def _run_dashboard_cycle_inner(run_ai: bool = True) -> None:
     except Exception:
         pass
 
-    # Include live trading data from positions + fills (exchange truth)
+    # Include live trading data, Polymarket APIs are source of truth
     if live_executor and not live_executor.dry_run:
         try:
             live_balance = await live_executor.check_balance()
-            positions = paper_trader.store.get_positions()
             fills = paper_trader.store.get_fills(limit=100)
-            portfolio = paper_trader.store.get_portfolio_summary()
+
+            # Get positions + values from Polymarket Data API (source of truth)
+            wallet = settings.polymarket_wallet.lower()
+            pm_positions = []
+            market_value = 0.0
+            cost_basis = 0.0
+            try:
+                async with httpx.AsyncClient() as val_client:
+                    resp = await val_client.get(
+                        "https://data-api.polymarket.com/positions",
+                        params={"user": wallet, "sizeThreshold": 0},
+                        timeout=15.0,
+                    )
+                    if resp.status_code == 200:
+                        pm_positions = resp.json()
+                        market_value = sum(float(p.get("currentValue", 0)) for p in pm_positions)
+                        cost_basis = sum(float(p.get("initialValue", 0)) for p in pm_positions)
+            except Exception:
+                logger.debug("Failed to fetch positions from Polymarket Data API")
+
+            portfolio_value = round((live_balance or 0) + market_value, 2)
+            unrealized_pnl = round(market_value - cost_basis, 2)
+            active_positions = len([p for p in pm_positions if float(p.get("size", 0)) > 0])
 
             # Update live pool stats
             for strat in ["core", "penny", "spread", "exit"]:
@@ -499,41 +520,28 @@ async def _run_dashboard_cycle_inner(run_ai: bool = True) -> None:
                     "resolves_in": resolves_in,
                 })
 
-            # Build positions list
+            # Build positions list from Polymarket Data API
             position_list = []
-            for p in positions:
+            for p in pm_positions:
+                size = float(p.get("size", 0))
+                if size <= 0:
+                    continue
+                cur_val = float(p.get("currentValue", 0))
+                init_val = float(p.get("initialValue", 0))
+                title = p.get("title", "")
+                # Extract city from title
+                import re as _re2
+                city_match = _re2.search(r"in (\w[\w\s]+?) (?:be |on )", title)
+                city_name = city_match.group(1) if city_match else ""
                 position_list.append({
-                    "city": (p.get("city_id") or "").upper(),
-                    "side": p.get("outcome") or p.get("side", ""),
-                    "shares": round(p.get("total_shares", 0), 1),
-                    "avg_price": round(p.get("avg_price", 0), 3),
-                    "cost_basis": round(p.get("cost_basis", 0), 2),
-                    "description": p.get("description", ""),
+                    "city": city_name.upper()[:3] if city_name else "",
+                    "side": p.get("outcome", ""),
+                    "shares": round(size, 1),
+                    "avg_price": round(init_val / size, 3) if size > 0 else 0,
+                    "cost_basis": round(init_val, 2),
+                    "current_value": round(cur_val, 2),
+                    "description": title,
                 })
-
-            cost_basis = portfolio.get("total_deployed", 0)
-
-            # Get market value from Polymarket Data API (source of truth)
-            market_value = 0.0
-            try:
-                wallet = settings.polymarket_wallet.lower()
-                async with httpx.AsyncClient() as val_client:
-                    resp = await val_client.get(
-                        "https://data-api.polymarket.com/positions",
-                        params={"user": wallet, "sizeThreshold": 0},
-                        timeout=15.0,
-                    )
-                    if resp.status_code == 200:
-                        for p in resp.json():
-                            market_value += float(p.get("currentValue", 0))
-            except Exception:
-                logger.debug("Failed to fetch portfolio value from Data API")
-                # Fallback to cost basis
-                market_value = cost_basis
-
-            market_value = round(market_value, 2)
-            portfolio_value = round((live_balance or 0) + market_value, 2)
-            unrealized_pnl = round(market_value - cost_basis, 2)
 
             latest_state["live"] = {
                 "enabled": True,
@@ -541,12 +549,12 @@ async def _run_dashboard_cycle_inner(run_ai: bool = True) -> None:
                 "portfolio_value": portfolio_value,
                 "available_cash": round(live_balance or 0, 2),
                 "positions": position_list,
-                "position_count": portfolio.get("position_count", 0),
+                "position_count": active_positions,
                 "trade_log": live_trade_log,
                 "trade_count": len(fills),
                 "cost_basis": round(cost_basis, 2),
-                "market_value": market_value,
-                "capital_at_risk": round(cost_basis, 2),
+                "market_value": round(market_value, 2),
+                "capital_at_risk": round(market_value, 2),
                 "pnl": unrealized_pnl,
                 "total_fees": 0,
                 "max_shares": live_executor.max_shares,
