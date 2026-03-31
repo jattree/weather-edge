@@ -237,6 +237,7 @@ async def fetch_polymarket_state(executor, wallet: str) -> dict:
         "balance": 0.0,
         "positions": [],
         "open_orders": [],
+        "activity": [],
         "market_value": 0.0,
         "cost_basis": 0.0,
         "unrealized_pnl": 0.0,
@@ -273,6 +274,19 @@ async def fetch_polymarket_state(executor, wallet: str) -> dict:
         result["open_orders"] = [o for o in orders if o.get("status") == "LIVE"]
     except Exception:
         logger.warning("Failed to fetch open orders from CLOB API")
+
+    # 4. Trade history from Data API (public)
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(
+                "https://data-api.polymarket.com/activity",
+                params={"user": wallet.lower(), "limit": 200},
+                timeout=15.0,
+            )
+            if resp.status_code == 200:
+                result["activity"] = resp.json()
+    except Exception:
+        logger.warning("Failed to fetch activity from Polymarket Data API")
 
     # Compute aggregates
     for p in result["positions"]:
