@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 
 import httpx
@@ -375,18 +375,26 @@ class ModelSniper:
 
         return events
 
-    async def run_sniper_loop(self, poll_interval_seconds: int = 60) -> None:
-        """Main sniper loop, polls metadata every 60 seconds, triggers on model drops.
+    # Model drop windows (UTC hours), probe faster during these periods
+    # 00Z runs: ECMWF ~00:30-01:30, GFS ~00:30-01:00
+    # 06Z runs: GFS ~06:30-07:00
+    # 12Z runs: ECMWF ~12:30-13:30, GFS ~12:30-13:00
+    # 18Z runs: GFS ~18:30-19:00
+    MODEL_DROP_HOURS = {0, 1, 6, 7, 12, 13, 18, 19}
 
-        This runs alongside the regular 30-minute cycle. The regular cycle
-        handles steady-state trading. The sniper handles time-sensitive
-        opportunities when models shift.
+    async def run_sniper_loop(self, poll_interval_seconds: int = 60) -> None:
+        """Main sniper loop, adaptive polling speed based on model drop windows.
+
+        During model drop windows (known UTC hours when ECMWF/GFS update):
+        probes every 30 seconds for fastest detection.
+        Outside drop windows: probes every 180 seconds to save API calls.
 
         v2: Uses lightweight metadata probes (generationtime_ms comparison)
         instead of full forecast fetches. ~10x less API load.
         """
         logger.info(
-            "Sniper armed (v2 metadata-based), monitoring %s every %ds",
+            "Sniper armed (v2 metadata-based), monitoring %s "
+            "(30s during drops, %ds otherwise)",
             ", ".join(cfg["label"] for cfg in SNIPE_TARGETS.values()),
             poll_interval_seconds,
         )
@@ -414,4 +422,20 @@ class ModelSniper:
             except Exception:
                 logger.exception("Sniper probe failed")
 
-            await asyncio.sleep(poll_interval_seconds)
+            # Adaptive interval: fast during model drop windows, slow otherwise
+            current_hour = datetime.now(timezone.utc).hour
+            in_drop_window = current_hour in self.MODEL_DROP_HOURS
+            interval = 30 if in_drop_window else poll_interval_seconds
+
+            # Log transitions between fast/slow mode
+            prev_mode = getattr(self, "_last_sniper_mode", None)
+            current_mode = "fast" if in_drop_window else "normal"
+            if current_mode != prev_mode:
+                logger.info(
+                    "SNIPER %s: polling every %ds (UTC hour %d)",
+                    "FAST MODE" if in_drop_window else "NORMAL MODE",
+                    interval, current_hour,
+                )
+                self._last_sniper_mode = current_mode
+
+            await asyncio.sleep(interval)
