@@ -656,6 +656,23 @@ async def fast_exit_loop() -> None:
             continue
 
         try:
+            # Sync positions from exchange first, keeps dashboard fresh
+            # and prevents trading on stale balance data
+            from weather_edge.trading.portfolio_sync import sync_portfolio
+            try:
+                await sync_portfolio(live_executor, paper_trader.store)
+            except Exception:
+                logger.debug("Fast exit portfolio sync failed", exc_info=True)
+
+            # Update live state balance
+            try:
+                balance = await live_executor.check_balance()
+                if balance is not None and "live" in latest_state:
+                    latest_state["live"]["balance"] = round(balance, 2)
+                    latest_state["live"]["available_cash"] = round(balance, 2)
+            except Exception:
+                pass
+
             positions = paper_trader.store.get_positions()
             if not positions:
                 continue
