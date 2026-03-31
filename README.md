@@ -26,6 +26,84 @@ Inspired by [@ColdMath's Claude Trader](https://polymarket.com/profile/@ColdMath
 18. **Contract-first runtime validation**, 9 pure validation functions (including leverage cap)
 19. Persists everything to SQLite, trades, forecasts, AI decisions, settings (survives restarts)
 
+## Live Execution (March 31 2026)
+
+The system trades real money on Polymarket via the CLOB API. Paper and live are **independent systems**, either can be disabled without affecting the other.
+
+### Architecture: Decoupled Paper + Live
+
+```
+                    Shared Layer
+    Weather Models → Signals → AI Reasoning (Claude + Gemini)
+                         |
+              ┌──────────┴──────────┐
+              │                     │
+         Paper System          Live System
+         (simulated)           (real money)
+              │                     │
+    PaperTrader.place_trade()  TradeExecutor.place_limit_order()
+    PaperTrader.close_position() TradeExecutor.place_sell_order()
+    scan_for_exits(paper_trades) scan_for_exits(live_positions)
+              │                     │
+         paper_trades          fills → positions
+         (SQLite)              (SQLite, synced from exchange)
+```
+
+### Source of Truth: Exchange, Not Local State
+
+- **Orders** = intentions (what we tried to buy). Tracked in `live_trades` table.
+- **Fills** = reality (what actually executed). Immutable ledger in `fills` table, synced from `get_trades()`.
+- **Positions** = aggregated fills. Rebuilt from fills every cycle. This is what the bot uses for decisions.
+- Portfolio sync runs every 30-min cycle. Exchange is always the source of truth.
+
+### Live Capabilities
+
+| Feature | Status | Notes |
+|---------|--------|-------|
+| Buy orders (maker, post_only) | ✅ | $0 fee, GTC |
+| Sell orders (exit monitor) | ✅ | AI-reviewed exits from live positions |
+| Close all positions | ✅ | `/api/close-all` cancels + sells |
+| Kill switch | ✅ | Redis-backed, cancels all exchange orders |
+| Position-aware duplicate prevention | ✅ | Checks positions table, not orders |
+| Portfolio sync from exchange | ✅ | `get_trades()` → fills → positions |
+| Independent exit scanning | ✅ | Scans live positions, not paper trades |
+| Cancel-and-replace | ✅ | Preserves queue priority when price unchanged |
+| Golden window flush | ✅ | Model drop → cancel stale orders → recalculate |
+| Price chase | ✅ | Unfilled >60min → improve 0.1c if edge >2% |
+| Margin check | ✅ | Won't place if available cash < order cost |
+| Spread capture | ❌ | Paper-only. Wire to live at $5 cap (low priority) |
+
+### Gemini Audit: Known Gaps (TODO)
+
+1. **Generic Position interface**, Replace PaperTrade adapter with shared `Position` dataclass for `scan_for_exits()`. Current PaperTrade shim works but is an anti-pattern.
+2. **Partial fills on exits**, Sell orders are GTC post_only, may not fill instantly. Need to handle partially-closed positions and re-scan next cycle.
+3. **Slippage tolerance**, `place_sell_order` should enforce max slippage vs current mark price.
+4. **Network retry logic**, Exponential backoff for CLOB API failures. Currently single-attempt.
+5. **Spread capture for live**, Wire up but cap at $5 max. Risk of adverse selection from HFT bots.
+
+### VPN (Required, UK Geo-blocked)
+
+WireGuard split tunnel to ProtonVPN Canada:
+- Only Polymarket IPs routed through VPN (`104.18.0.0/16`, `172.64.0.0/16`)
+- Config: `/etc/wireguard/protonvpn.conf`
+- Enabled on boot: `systemctl enable wg-quick@protonvpn`
+- SSH unaffected (inbound LAN traffic doesn't use VPN)
+
+### Wallet Configuration
+
+- Polymarket Magic Link proxy wallet
+- `POLYMARKET_PRIVATE_KEY` = wallet private key (0x...)
+- `POLYMARKET_WALLET` = EOA address derived from key (NOT the proxy address)
+- `POLYMARKET_SIGNATURE_TYPE=1` (proxy wallet)
+- API creds auto-derived via `create_or_derive_api_creds`
+
+### Tax Compliance (UK CGT)
+
+- `fills` table = immutable audit trail for HMRC
+- Section 104 pooling: weighted average cost per asset
+- Settlement: market resolves → winning token = $1, losing = $0
+- All maker trades = $0 fee (tracked in fills)
+
 ## Production Deployment
 
 The system runs on **hf-toybox-001** (Rocky Linux 9.7):
