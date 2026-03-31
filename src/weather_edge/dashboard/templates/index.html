@@ -2450,17 +2450,19 @@
             var live = state.live || {};
             var isLiveView = viewMode === 'live' && live.enabled;
 
-            var pnl, bankroll, atRisk, openPos;
+            var pnl, bankroll, atRisk, openPos, portfolioVal;
             if (isLiveView) {
                 pnl = live.pnl || 0;
-                bankroll = live.balance || 0;
-                atRisk = (live.open_orders || 0) * 5; // rough estimate: max_shares * avg price
-                openPos = live.open_orders || 0;
+                bankroll = live.portfolio_value || live.balance || 0;
+                atRisk = live.capital_at_risk || 0;
+                openPos = live.position_count || 0;
+                portfolioVal = live.portfolio_value || 0;
             } else {
                 pnl = state.total_pnl || 0;
                 bankroll = state.bankroll || 2000;
                 atRisk = state.capital_at_risk || 0;
                 openPos = state.open_positions || 0;
+                portfolioVal = bankroll + pnl;
             }
 
             var pnlEl = document.getElementById('totalPnl');
@@ -2476,9 +2478,10 @@
             document.getElementById('openPositions').textContent = String(openPos);
             document.getElementById('cycleCount').textContent = String(state.cycle_count || 0);
 
-            var portfolioValue = isLiveView ? bankroll : bankroll + pnl;
-            var freeCash = Math.max(0, portfolioValue - atRisk);
-            var returnPct = bankroll > 0 ? ((pnl / bankroll) * 100) : 0;
+            var portfolioValue = isLiveView ? portfolioVal : bankroll + pnl;
+            var freeCash = isLiveView ? (live.available_cash || 0) : Math.max(0, portfolioValue - atRisk);
+            var startingBankroll = isLiveView ? 210 : bankroll; // Original deposit for return %
+            var returnPct = startingBankroll > 0 ? (((portfolioValue - startingBankroll) / startingBankroll) * 100) : 0;
 
             /* Portfolio Value = Free Cash + Invested (always adds up) */
             var pvEl = document.getElementById('portfolioValue');
