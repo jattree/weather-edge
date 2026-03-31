@@ -454,6 +454,35 @@ async def _run_dashboard_cycle_inner(run_ai: bool = True) -> None:
                     "status": o.get("status", ""),
                 })
 
+            # Build trade log from Polymarket activity API
+            trade_log_live = []
+            for a in pm.get("activity", []):
+                ts = a.get("timestamp", 0)
+                try:
+                    time_str = datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%H:%M:%S")
+                except Exception:
+                    time_str = str(ts)
+                title = a.get("title", "")
+                side = a.get("side", "")
+                outcome = a.get("outcome", "")
+                size = float(a.get("size", 0))
+                price = float(a.get("price", 0))
+                usdc = float(a.get("usdcSize", 0))
+                label = f"{side} {outcome}" if outcome else side
+                trade_log_live.append({
+                    "side": label,
+                    "city": "",
+                    "description": title,
+                    "size": round(usdc, 2),
+                    "pnl": None,
+                    "time": time_str,
+                    "status": a.get("type", "TRADE").lower(),
+                    "tier": "core",
+                    "price": price,
+                    "shares": size,
+                    "outcome": outcome,
+                })
+
             latest_state["live"] = {
                 "enabled": True,
                 "balance": pm["balance"],
@@ -463,8 +492,8 @@ async def _run_dashboard_cycle_inner(run_ai: bool = True) -> None:
                 "position_count": pm["position_count"],
                 "open_orders": open_order_list,
                 "open_order_count": len(pm["open_orders"]),
-                "trade_log": [],  # TODO: build from activity API
-                "trade_count": 0,
+                "trade_log": trade_log_live,
+                "trade_count": len(trade_log_live),
                 "cost_basis": pm["cost_basis"],
                 "market_value": pm["market_value"],
                 "capital_at_risk": pm["market_value"],
