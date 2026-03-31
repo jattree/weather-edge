@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import logging
 import os
-import time
 from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
@@ -319,15 +318,21 @@ def get_service_status() -> dict:
 
 
 def _compute_freshness(last_success_iso: str, now: datetime) -> str:
-    """Determine status color based on time since last success."""
+    """Determine status color based on time since last success.
+
+    Thresholds aligned with 30-min cycle + 2-min fast loop:
+    - green: called within the last cycle (35 min buffer)
+    - yellow: missed one cycle but seen within an hour
+    - red: not seen for over an hour, something is wrong
+    """
     try:
         last = datetime.fromisoformat(last_success_iso)
         if last.tzinfo is None:
             last = last.replace(tzinfo=timezone.utc)
         delta = (now - last).total_seconds()
-        if delta < 300:  # 5 minutes
+        if delta < 2100:  # 35 minutes (one cycle + buffer)
             return "green"
-        elif delta < 1800:  # 30 minutes
+        elif delta < 3600:  # 1 hour
             return "yellow"
         else:
             return "red"

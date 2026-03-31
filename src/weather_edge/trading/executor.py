@@ -381,6 +381,13 @@ class TradeExecutor:
                     order_id, e,
                 )
 
+            # Record CLOB health
+            try:
+                from weather_edge.analysis.service_health import record_service_call
+                record_service_call("polymarket_clob", True)
+            except Exception:
+                pass
+
             logger.info(
                 "LIVE ORDER PLACED: %s %s %.0f shares @ %.3f ($%.2f) | "
                 "order_id=%s | post_only=%s | taker_fee_avoided=$%.2f",
@@ -686,6 +693,12 @@ class TradeExecutor:
                     "GHOST SELL: sell order %s placed on exchange but DB write "
                     "failed, %s", order_id, e,
                 )
+
+            try:
+                from weather_edge.analysis.service_health import record_service_call
+                record_service_call("polymarket_clob", True)
+            except Exception:
+                pass
 
             logger.info(
                 "LIVE SELL PLACED: %s %.0f shares @ %.3f ($%.2f) | order_id=%s",
