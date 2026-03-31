@@ -96,7 +96,10 @@ async def fetch_model_forecast(
         "latitude": city.latitude,
         "longitude": city.longitude,
         "hourly": "temperature_2m,precipitation,snowfall,wind_speed_10m",
-        "daily": "temperature_2m_max,temperature_2m_min,precipitation_sum,snowfall_sum,wind_speed_10m_max",
+        "daily": (
+            "temperature_2m_max,temperature_2m_min,"
+            "precipitation_sum,snowfall_sum,wind_speed_10m_max"
+        ),
         "timezone": "UTC",
         "models": model_id,
         "start_date": str(target_date),
@@ -110,17 +113,27 @@ async def fetch_model_forecast(
             resp = await client.get(base_url, params=params, timeout=15.0)
             if resp.status_code == 429:
                 wait = 2 ** attempt * 10  # 10s, 20s, 40s, 80s
-                logger.info("Rate limited (429) on %s/%s, waiting %ds (attempt %d/4)", city_id.value, model_id, wait, attempt + 1)
+                logger.info(
+                    "Rate limited (429) on %s/%s, waiting %ds "
+                    "(attempt %d/4)",
+                    city_id.value, model_id, wait, attempt + 1,
+                )
                 await asyncio.sleep(wait)
                 continue
             resp.raise_for_status()
             data = resp.json()
             break
         except httpx.HTTPStatusError as e:
-            logger.warning("HTTP %s fetching %s for %s: %s", e.response.status_code, model_id, city_id, e)
+            logger.warning(
+                "HTTP %s fetching %s for %s: %s",
+                e.response.status_code, model_id, city_id, e,
+            )
             return None
         except httpx.RequestError as e:
-            logger.warning("Request error fetching %s for %s: %s", model_id, city_id, e)
+            logger.warning(
+                "Request error fetching %s for %s: %s",
+                model_id, city_id, e,
+            )
             return None
     if data is None:
         logger.warning("Gave up on %s/%s after rate-limit retries", city_id.value, model_id)
@@ -194,7 +207,10 @@ async def fetch_city_forecasts(
     params = {
         "latitude": city.latitude,
         "longitude": city.longitude,
-        "daily": "temperature_2m_max,temperature_2m_min,precipitation_sum,snowfall_sum,wind_speed_10m_max",
+        "daily": (
+            "temperature_2m_max,temperature_2m_min,"
+            "precipitation_sum,snowfall_sum,wind_speed_10m_max"
+        ),
         "timezone": "UTC",
         "models": ",".join(model_ids),
         "start_date": str(target_date),
@@ -211,17 +227,27 @@ async def fetch_city_forecasts(
                 resp = await client.get(base_url, params=params, timeout=20.0)
                 if resp.status_code == 429:
                     wait = 2 ** attempt * 10
-                    logger.info("Rate limited (429) batch for %s, waiting %ds (attempt %d/4)", city_id.value, wait, attempt + 1)
+                    logger.info(
+                        "Rate limited (429) batch for %s, "
+                        "waiting %ds (attempt %d/4)",
+                        city_id.value, wait, attempt + 1,
+                    )
                     await asyncio.sleep(wait)
                     continue
                 resp.raise_for_status()
                 data = resp.json()
                 break
             except httpx.HTTPStatusError as e:
-                logger.warning("HTTP %s batch fetch for %s: %s", e.response.status_code, city_id.value, e)
+                logger.warning(
+                    "HTTP %s batch fetch for %s: %s",
+                    e.response.status_code, city_id.value, e,
+                )
                 return []
             except httpx.RequestError as e:
-                logger.warning("Request error batch fetch for %s: %s", city_id.value, e)
+                logger.warning(
+                    "Request error batch fetch for %s: %s",
+                    city_id.value, e,
+                )
                 return []
 
     if data is None:
@@ -230,14 +256,14 @@ async def fetch_city_forecasts(
             from weather_edge.analysis.service_health import record_service_call
             record_service_call("openmeteo", False)
         except Exception:
-            pass
+            logger.debug("Failed to record Open-Meteo failure", exc_info=True)
         return []
 
     try:
         from weather_edge.analysis.service_health import record_service_call
         record_service_call("openmeteo", True)
     except Exception:
-        pass
+        logger.debug("Failed to record Open-Meteo health", exc_info=True)
 
     # Parse multi-model response: keys are like "temperature_2m_max_ecmwf_ifs025"
     daily = data.get("daily", {})

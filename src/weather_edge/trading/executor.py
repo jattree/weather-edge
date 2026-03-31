@@ -19,6 +19,8 @@ import math
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
+import requests
+
 from weather_edge.analysis.edge import Signal
 from weather_edge.trading.fees import calculate_taker_fee
 from weather_edge.trading.kill_switch import (
@@ -112,9 +114,10 @@ class TradeExecutor:
             #   key = wallet private key (0x...)
             #   funder = public wallet address holding funds
             #   signature_type = 2 for EOA wallets, 1 for proxy/Magic Link
+            from weather_edge.config import settings as cfg
             self._client = ClobClient(
-                host="https://clob.polymarket.com",
-                chain_id=137,  # Polygon mainnet
+                host=cfg.polymarket_clob_url,
+                chain_id=cfg.polymarket_chain_id,
                 key=self.private_key,
                 signature_type=self.signature_type,
                 funder=self.wallet_address,
@@ -169,8 +172,11 @@ class TradeExecutor:
             balance = float(result.get("balance", 0)) / 1e6  # USDC has 6 decimals
             logger.info("USDC balance: $%.2f", balance)
             return balance
-        except Exception as e:
-            logger.error("Balance check failed: %s", e)
+        except requests.RequestException as e:
+            logger.error("Balance check network error: %s", e)
+            return None
+        except (ValueError, KeyError, TypeError) as e:
+            logger.error("Balance check parse error: %s", e)
             return None
 
     async def place_limit_order(
@@ -334,26 +340,46 @@ class TradeExecutor:
             if order_id and order_id != "unknown":
                 track_open_order(order_id)
 
-            # Persist to SQLite for tax compliance and dashboard
+            # Persist to SQLite for tax compliance and dashboard.
+            # This MUST succeed, a ghost trade (on exchange but not in DB)
+            # breaks position tracking, duplicate prevention, and tax records.
+            from weather_edge.persistence import PersistentStore
+            from weather_edge.retry import retry_sync
+
+            def _persist_trade():
+                s = PersistentStore()
+                try:
+                    s.save_live_trade(
+                        order_id=order_id,
+                        market_id=signal.market_id,
+                        token_id=token_id,
+                        city_id=signal.city_id,
+                        side=signal.recommended_side.value,
+                        limit_price=limit_price,
+                        size_shares=shares,
+                        size_usd=actual_usd,
+                        description=signal.description[:80],
+                        strategy=getattr(signal, "strategy", "core"),
+                        is_maker=self.post_only,
+                    )
+                finally:
+                    s.close()
+
             try:
-                from weather_edge.persistence import PersistentStore
-                store = PersistentStore()
-                store.save_live_trade(
-                    order_id=order_id,
-                    market_id=signal.market_id,
-                    token_id=token_id,
-                    city_id=signal.city_id,
-                    side=signal.recommended_side.value,
-                    limit_price=limit_price,
-                    size_shares=shares,
-                    size_usd=actual_usd,
-                    description=signal.description[:80],
-                    strategy=getattr(signal, "strategy", "core"),
-                    is_maker=self.post_only,
+                retry_sync(
+                    _persist_trade,
+                    attempts=3,
+                    base_delay=0.5,
+                    label=f"persist_trade:{order_id[:16]}",
                 )
-                store.close()
             except Exception as e:
-                logger.warning("Failed to persist live trade: %s", e)
+                # All retries failed. Order is ON the exchange but NOT in our DB.
+                # Log at CRITICAL so this is impossible to miss.
+                logger.critical(
+                    "GHOST TRADE: order %s placed on exchange but DB write "
+                    "failed after 3 retries, %s. Manual reconciliation needed.",
+                    order_id, e,
+                )
 
             logger.info(
                 "LIVE ORDER PLACED: %s %s %.0f shares @ %.3f ($%.2f) | "
@@ -381,33 +407,54 @@ class TradeExecutor:
                 raw_response=response,
             )
 
-        except Exception as e:
+        except (requests.ConnectionError, requests.Timeout) as e:
             logger.error(
-                "LIVE ORDER FAILED: %s %s, %s",
+                "LIVE ORDER NETWORK FAILURE: %s %s, %s",
+                signal.city_id, signal.description[:40], e,
+            )
+            return None
+        except requests.RequestException as e:
+            logger.error(
+                "LIVE ORDER API ERROR: %s %s, %s",
+                signal.city_id, signal.description[:40], e,
+            )
+            return None
+        except (ValueError, KeyError, TypeError) as e:
+            logger.error(
+                "LIVE ORDER PARSE ERROR: %s %s, %s",
                 signal.city_id, signal.description[:40], e,
             )
             return None
 
     async def get_order_status(self, order_id: str) -> dict | None:
-        """Poll order status for fill tracking."""
+        """Poll order status for fill tracking. Retries on transient errors."""
         if self.dry_run or self._client is None:
             return None
 
-        try:
+        from weather_edge.retry import retry_async
+
+        async def _poll():
             loop = asyncio.get_running_loop()
-            result = await loop.run_in_executor(
+            return await loop.run_in_executor(
                 None, self._client.get_order, order_id,
+            )
+
+        try:
+            result = await retry_async(
+                _poll,
+                attempts=3,
+                base_delay=2.0,
+                label=f"get_order:{order_id[:16]}",
             )
 
             status = result.get("status", "unknown") if isinstance(result, dict) else "unknown"
 
-            # If fully filled or cancelled, stop tracking
             if status in ("FILLED", "CANCELLED", "EXPIRED"):
                 untrack_order(order_id)
 
             return result if isinstance(result, dict) else {"raw": str(result)}
         except Exception as e:
-            logger.error("Failed to get order %s: %s", order_id, e)
+            logger.error("Failed to get order %s after retries: %s", order_id, e)
             return None
 
     async def cancel_order(self, order_id: str) -> bool:
@@ -421,8 +468,11 @@ class TradeExecutor:
             untrack_order(order_id)
             logger.info("Cancelled order %s", order_id)
             return True
-        except Exception as e:
-            logger.error("Failed to cancel %s: %s", order_id, e)
+        except requests.RequestException as e:
+            logger.error("Failed to cancel %s (network): %s", order_id, e)
+            return False
+        except (ValueError, KeyError) as e:
+            logger.error("Failed to cancel %s (parse): %s", order_id, e)
             return False
 
     async def cancel_all_orders(self) -> int:
@@ -438,8 +488,11 @@ class TradeExecutor:
             count = len(result) if isinstance(result, list) else 1
             logger.warning("Cancelled %d orders via cancel_all", count)
             return count
-        except Exception as e:
-            logger.error("cancel_all failed: %s", e)
+        except requests.RequestException as e:
+            logger.error("cancel_all network error: %s", e)
+            return 0
+        except (ValueError, KeyError) as e:
+            logger.error("cancel_all parse error: %s", e)
             return 0
 
     async def cancel_stale_orders(self, max_age_seconds: int = 300) -> int:
@@ -489,8 +542,11 @@ class TradeExecutor:
                         )
 
             return cancelled
-        except Exception as e:
-            logger.error("Stale order check failed: %s", e)
+        except requests.RequestException as e:
+            logger.error("Stale order check network error: %s", e)
+            return 0
+        except (ValueError, KeyError, TypeError) as e:
+            logger.error("Stale order check parse error: %s", e)
             return 0
 
     async def place_sell_order(
@@ -518,7 +574,10 @@ class TradeExecutor:
         price = _round_price(price)
 
         if shares < MIN_ORDER_SHARES:
-            logger.info("SELL TOO SMALL: %s %.1f shares < %d min", city_id, shares, MIN_ORDER_SHARES)
+            logger.info(
+                "SELL TOO SMALL: %s %.1f shares < %d min",
+                city_id, shares, MIN_ORDER_SHARES,
+            )
             return None
 
         if self.dry_run or self._client is None:
@@ -582,8 +641,14 @@ class TradeExecutor:
                 raw_response=response,
             )
 
-        except Exception as e:
-            logger.error("LIVE SELL FAILED: %s, %s", city_id, e)
+        except (requests.ConnectionError, requests.Timeout) as e:
+            logger.error("LIVE SELL NETWORK FAILURE: %s, %s", city_id, e)
+            return None
+        except requests.RequestException as e:
+            logger.error("LIVE SELL API ERROR: %s, %s", city_id, e)
+            return None
+        except (ValueError, KeyError, TypeError) as e:
+            logger.error("LIVE SELL PARSE ERROR: %s, %s", city_id, e)
             return None
 
     async def send_heartbeat(self) -> bool:
@@ -622,9 +687,12 @@ class TradeExecutor:
                     ttl=60,
                 )
             except Exception:
-                pass
+                logger.debug("Heartbeat Redis tracking failed", exc_info=True)
 
             return True
-        except Exception as e:
-            logger.warning("Heartbeat failed: %s, orders may be cancelled", e)
+        except requests.RequestException as e:
+            logger.warning("Heartbeat network error: %s, orders may be cancelled", e)
+            return False
+        except (ValueError, KeyError) as e:
+            logger.warning("Heartbeat parse error: %s", e)
             return False

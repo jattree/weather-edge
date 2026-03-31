@@ -1,11 +1,14 @@
 """Configuration for the weather edge system."""
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 
 from pydantic_settings import BaseSettings
 
 from weather_edge.models.enums import City, WeatherModel
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -296,16 +299,24 @@ def get_model_weights(city_id: City) -> dict[WeatherModel, float]:
         from weather_edge.analysis.learner import get_adaptive_weights
         from weather_edge.persistence import PersistentStore
         store = PersistentStore()
-        adaptive = get_adaptive_weights(store, city_id.value)
-        store.close()
+        try:
+            adaptive = get_adaptive_weights(store, city_id.value)
+        finally:
+            store.close()
         if adaptive:
             models = get_models_for_city(city_id)
             return {
                 m: adaptive.get(m.value, 1.0 / len(models))
                 for m in models
             }
-    except Exception:
+    except ImportError:
+        # Learner module not available, use static weights
         pass
+    except Exception:
+        logger.warning(
+            "Adaptive weight loading failed for %s, using static weights",
+            city_id.value, exc_info=True,
+        )
 
     # Fall back to static weights
     models = get_models_for_city(city_id)
@@ -358,6 +369,12 @@ class Settings(BaseSettings):
     # Live execution
     live_mode: bool = False  # Set True to enable real trades (paper always runs too)
     live_max_shares: float = 0  # 0=unlimited. Set to 5/20/50 for graduated testing
+    polymarket_chain_id: int = 137  # Polygon mainnet
+
+    # Redis (hot-path cache, kill switch, heartbeats)
+    redis_host: str = "localhost"
+    redis_port: int = 6379
+    redis_db: int = 0
 
     # Open-Meteo tier, auto-detected from api key presence
     # Paid tier: 1M req/month, dedicated servers, no rate-limit ban risk

@@ -2,32 +2,29 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from weather_edge.analysis.contracts import validate_pool_budget, validate_reserve_pot
 from weather_edge.analysis.edge import Signal
 from weather_edge.models.enums import SignalTier, TradeStatus
+from weather_edge.models.position import Position
 
 logger = logging.getLogger(__name__)
 
 
 @dataclass
-class PaperTrade:
-    """A paper trade record."""
+class PaperTrade(Position):
+    """A paper trade record. Extends Position with paper-specific fields."""
     trade_id: int | None = None
     signal_id: int | None = None
-    market_id: str = ""
-    city_id: str = ""
-    side: str = ""
-    size_usd: float = 0.0
-    entry_price: float = 0.0
-    placed_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
-    description: str = ""
     exit_price: float | None = None
     resolved_at: datetime | None = None
     pnl: float | None = None
-    status: TradeStatus = TradeStatus.OPEN
+
+    def __post_init__(self):
+        if not self.source:
+            self.source = "paper"
 
 
 class PaperTrader:

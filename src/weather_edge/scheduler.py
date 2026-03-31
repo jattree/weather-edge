@@ -5,24 +5,41 @@ import asyncio
 import logging
 from datetime import date, datetime, timedelta, timezone
 
-from weather_edge.analysis.arbitrage import check_bucket_parity, find_parity_opportunities
-from weather_edge.analysis.claude_reasoning import analyze_trade, record_decision, ANTHROPIC_API_KEY
-from weather_edge.analysis.contracts import validate_emos_active, validate_fee_alpha_ratio, validate_model_count
-from weather_edge.analysis.pattern_detector import detect_patterns, get_pattern_adjustment
+from weather_edge.analysis.arbitrage import (
+    check_bucket_parity,
+    find_parity_opportunities,
+)
+from weather_edge.analysis.claude_reasoning import (
+    ANTHROPIC_API_KEY,
+    analyze_trade,
+    record_decision,
+)
 from weather_edge.analysis.consensus import (
-    compute_consensus,
-    get_probability_for_threshold,
+    EMOS_VARIANCE_FLOOR_C,
     MAX_BUCKET_PROBABILITY,
     SPREAD_INFLATION_FACTOR,
-    EMOS_VARIANCE_FLOOR_C,
+    compute_consensus,
+    get_probability_for_threshold,
+)
+from weather_edge.analysis.contracts import (
+    validate_emos_active,
+    validate_fee_alpha_ratio,
+    validate_model_count,
 )
 from weather_edge.analysis.edge import Signal, calculate_edge
 from weather_edge.analysis.market_mapper import get_required_variable
 from weather_edge.analysis.model_timing import is_golden_window
+from weather_edge.analysis.pattern_detector import (
+    detect_patterns,
+    get_pattern_adjustment,
+)
 from weather_edge.analysis.resolver import resolve_open_trades
 from weather_edge.config import CITIES, settings
 from weather_edge.fetchers.openmeteo import fetch_city_forecasts
-from weather_edge.fetchers.polymarket import MarketInfo, discover_weather_markets
+from weather_edge.fetchers.polymarket import (
+    MarketInfo,
+    discover_weather_markets,
+)
 from weather_edge.models.enums import City
 from weather_edge.trading.paper import PaperTrader
 
@@ -43,13 +60,24 @@ def compute_model_prob_for_market(market: MarketInfo, consensus) -> float | None
     prob = None
 
     if market.threshold_dir == "lte":
-        p_gte = get_probability_for_threshold(consensus, market.threshold_high_c or market.threshold_value, "gte")
+        p_gte = get_probability_for_threshold(
+            consensus,
+            market.threshold_high_c or market.threshold_value,
+            "gte",
+        )
         prob = 1.0 - p_gte
 
     elif market.threshold_dir == "range":
-        if market.threshold_low_c is not None and market.threshold_high_c is not None:
-            p_gte_low = get_probability_for_threshold(consensus, market.threshold_low_c, "gte")
-            p_gte_high = get_probability_for_threshold(consensus, market.threshold_high_c + 1.0, "gte")
+        if (
+        market.threshold_low_c is not None
+        and market.threshold_high_c is not None
+    ):
+            p_gte_low = get_probability_for_threshold(
+                consensus, market.threshold_low_c, "gte",
+            )
+            p_gte_high = get_probability_for_threshold(
+                consensus, market.threshold_high_c + 1.0, "gte",
+            )
             prob = max(0.0, p_gte_low - p_gte_high)
 
     elif market.threshold_dir == "gte":
@@ -62,7 +90,10 @@ def compute_model_prob_for_market(market: MarketInfo, consensus) -> float | None
     # During extreme events (tight model agreement + anomalous temps), raise the cap
     if prob is not None and market.threshold_dir in ("range", "lte"):
         from weather_edge.analysis.consensus import (
-            MAX_BUCKET_PROBABILITY_EXTREME, CITY_CLIMATOLOGY, CLIMATOLOGICAL_MEAN, CLIMATOLOGICAL_STD
+            CITY_CLIMATOLOGY,
+            CLIMATOLOGICAL_MEAN,
+            CLIMATOLOGICAL_STD,
+            MAX_BUCKET_PROBABILITY_EXTREME,
         )
         cap = MAX_BUCKET_PROBABILITY
         if consensus.std_dev < 1.5 and consensus.model_count >= 5:
@@ -74,12 +105,19 @@ def compute_model_prob_for_market(market: MarketInfo, consensus) -> float | None
             else:
                 clim_mean = CLIMATOLOGICAL_MEAN.get("temp_max_c", 15.0)
                 clim_std = CLIMATOLOGICAL_STD.get("temp_max_c", 6.0)
-            anomaly = abs(consensus.weighted_mean - clim_mean) / clim_std if clim_std > 0 else 0
+            anomaly = (
+                abs(consensus.weighted_mean - clim_mean) / clim_std
+                if clim_std > 0 else 0
+            )
             if anomaly > 2.0:
                 cap = MAX_BUCKET_PROBABILITY_EXTREME
                 logger.info(
-                    "EXTREME EVENT: %s consensus=%.1f°C (%.1f sigma from %.1f°C norm), std=%.1f, cap raised to %.0f%%",
-                    city_key, consensus.weighted_mean, anomaly, clim_mean, consensus.std_dev, cap * 100,
+                    "EXTREME EVENT: %s consensus=%.1f°C "
+                    "(%.1f sigma from %.1f°C norm), "
+                    "std=%.1f, cap raised to %.0f%%",
+                    city_key, consensus.weighted_mean,
+                    anomaly, clim_mean,
+                    consensus.std_dev, cap * 100,
                 )
         prob = min(prob, cap)
 
@@ -113,9 +151,15 @@ async def run_cycle(
         target_dates = [today, today + timedelta(days=1), today + timedelta(days=2)]
 
     # Contract: verify EMOS calibration is active at cycle start
-    emos_check = validate_emos_active(SPREAD_INFLATION_FACTOR, MAX_BUCKET_PROBABILITY, EMOS_VARIANCE_FLOOR_C)
+    emos_check = validate_emos_active(
+        SPREAD_INFLATION_FACTOR, MAX_BUCKET_PROBABILITY,
+        EMOS_VARIANCE_FLOOR_C,
+    )
     if not emos_check.valid:
-        logger.warning("CONTRACT VIOLATION [%s]: %s", emos_check.code, emos_check.error)
+        logger.warning(
+            "CONTRACT VIOLATION [%s]: %s",
+            emos_check.code, emos_check.error,
+        )
 
     # Resolve any open paper trades before placing new ones
     if paper_trader:
@@ -211,7 +255,10 @@ async def run_cycle(
     # Step 1c: Fetch AI model forecasts (GraphCast via GribStream) for comparison
     ai_forecasts: dict[str, dict] = {}  # city_id -> AIModelForecast
     try:
-        from weather_edge.fetchers.gribstream import fetch_ai_forecasts_batch, compute_ai_physics_divergence
+        from weather_edge.fetchers.gribstream import (
+            compute_ai_physics_divergence,
+            fetch_ai_forecasts_batch,
+        )
         market_cities = list({city_id for city_id, _ in market_groups})
         tomorrow = target_dates[1] if len(target_dates) > 1 else target_dates[0]
         ai_batch = await fetch_ai_forecasts_batch(market_cities, tomorrow)
@@ -293,7 +340,7 @@ async def run_cycle(
             # Track forecast trends (run-to-run consistency)
             trend_mult = 1.0
             try:
-                from weather_edge.analysis.forecast_trends import record_forecast, compute_trend
+                from weather_edge.analysis.forecast_trends import compute_trend, record_forecast
                 if variable == "temp_max_c":
                     record_forecast(city_id.value, consensus.weighted_mean)
                     trend = compute_trend(city_id.value, consensus.weighted_mean)
@@ -345,13 +392,20 @@ async def run_cycle(
                     ai_fc = ai_forecasts.get(city_id.value)
                     if ai_fc and variable == "temp_max_c":
                         try:
-                            div = compute_ai_physics_divergence(ai_fc, consensus.weighted_mean)
+                            div = compute_ai_physics_divergence(
+                                ai_fc, consensus.weighted_mean,
+                            )
                             _ai_divergence_cache[_ai_div_key] = div
                             if div["signal"] == "strong_diverge":
                                 logger.info(
-                                    "AI DIVERGE: %s GraphCast=%.1fC vs physics=%.1fC (%+.1fC), conf ×%.2f",
-                                    city_id.value, div["ai_max_c"], div["physics_mean_c"],
-                                    div["divergence_c"], div["confidence_multiplier"],
+                                    "AI DIVERGE: %s GraphCast="
+                                    "%.1fC vs physics=%.1fC "
+                                    "(%+.1fC), conf ×%.2f",
+                                    city_id.value,
+                                    div["ai_max_c"],
+                                    div["physics_mean_c"],
+                                    div["divergence_c"],
+                                    div["confidence_multiplier"],
                                 )
                         except Exception:
                             _ai_divergence_cache[_ai_div_key] = None
@@ -389,11 +443,18 @@ async def run_cycle(
             consensus_std = 2.0
             for (cid, td), f_list in _forecast_cache.items():
                 if cid.value == signal.city_id:
-                    model_vals = {f.model_name: f.temp_max_c for f in f_list if f.temp_max_c is not None}
+                    model_vals = {
+                        f.model_name: f.temp_max_c
+                        for f in f_list
+                        if f.temp_max_c is not None
+                    }
                     if model_vals:
                         vals = list(model_vals.values())
                         consensus_mean = sum(vals) / len(vals)
-                        consensus_std = (max(vals) - min(vals)) / 2 if len(vals) > 1 else 0.5
+                        consensus_std = (
+                            (max(vals) - min(vals)) / 2
+                            if len(vals) > 1 else 0.5
+                        )
                     break
 
             reasoning = await analyze_trade(
@@ -417,11 +478,19 @@ async def run_cycle(
                     pass
 
                 if not reasoning.should_trade:
-                    logger.info("CLAUDE SKIP: %s %s, %s", signal.city_id, signal.description[:40], reasoning.rationale)
+                    logger.info(
+                        "CLAUDE SKIP: %s %s, %s",
+                        signal.city_id,
+                        signal.description[:40],
+                        reasoning.rationale,
+                    )
                     signal.confidence_tier = signal.confidence_tier  # Keep as-is but don't trade
                     continue
                 # Apply Claude's confidence adjustment to position size
-                signal.recommended_size = round(signal.recommended_size * reasoning.confidence_adjustment, 2)
+                signal.recommended_size = round(
+                    signal.recommended_size
+                    * reasoning.confidence_adjustment, 2,
+                )
 
                 # === Gemini red team on Claude-approved trades ===
                 try:
@@ -437,7 +506,11 @@ async def run_cycle(
                         from weather_edge.analysis.claude_reasoning import _decision_history
                         _decision_history.insert(0, {
                             "time": datetime.now(timezone.utc).strftime("%H:%M:%S"),
-                            "city": signal.city_id.upper() if isinstance(signal.city_id, str) else signal.city_id,
+                            "city": (
+                                signal.city_id.upper()
+                                if isinstance(signal.city_id, str)
+                                else signal.city_id
+                            ),
                             "decision": "DISSENT" if verdict == "DISSENT" else "AGREE",
                             "signal": signal.description[:60],
                             "adjustment": round(1.0 - dissent, 2),
@@ -558,7 +631,9 @@ async def run_cycle(
             if strategy != "tail":
                 prices = market_prices.get(signal.market_id, {})
                 if prices.get("spread_profitable"):
-                    hedge = market_maker.generate_hedge_orders(signal, market_prices, settings.bankroll)
+                    hedge = market_maker.generate_hedge_orders(
+                        signal, market_prices, settings.bankroll,
+                    )
                     if hedge and paper_trader:
                         paper_trader.place_spread_trade(signal, hedge)
 
@@ -576,8 +651,10 @@ async def run_cycle(
                 )
                 continue
 
-            can_live = (trade or fee_blocked) and signal.edge >= 0.02
-            if not can_live and fee_blocked:
+            # Live is independent of paper, only requires minimum edge.
+            # Maker orders have $0 fees so fee gate doesn't apply.
+            can_live = signal.edge >= 0.02
+            if not can_live:
                 logger.debug(
                     "LIVE SKIP: %s edge=%.3f size=$%.0f (need ≥2%% edge)",
                     signal.city_id, signal.edge, signal.recommended_size,
@@ -611,9 +688,13 @@ async def run_cycle(
                             filled = existing.get("filled_shares", 0) or 0
                             # Calculate what our new limit price would be
                             if signal.recommended_side.value == "YES":
-                                new_price = round(max(0.01, min(0.99, signal.market_prob - 0.005)), 2)
+                                new_price = round(
+                                    max(0.01, min(0.99, signal.market_prob - 0.005)), 2,
+                                )
                             else:
-                                new_price = round(max(0.01, min(0.99, (1.0 - signal.market_prob) - 0.005)), 2)
+                                new_price = round(
+                                    max(0.01, min(0.99, (1.0 - signal.market_prob) - 0.005)), 2,
+                                )
 
                             # Check order age for price chase
                             order_age_minutes = 0
@@ -621,7 +702,9 @@ async def run_cycle(
                             if placed_str:
                                 try:
                                     placed_dt = datetime.fromisoformat(placed_str)
-                                    order_age_minutes = (datetime.now(timezone.utc) - placed_dt).total_seconds() / 60
+                                    order_age_minutes = (
+                                        datetime.now(timezone.utc) - placed_dt
+                                    ).total_seconds() / 60
                                 except (ValueError, TypeError):
                                     pass
 
@@ -642,11 +725,17 @@ async def run_cycle(
                                         await live_executor.cancel_order(old_id)
                                         store.cancel_live_trade(old_id)
                                         logger.info(
-                                            "PRICE CHASE: %s improving %.3f→%.3f after %dm unfilled",
-                                            signal.city_id, old_price, chase_price, int(order_age_minutes),
+                                            "PRICE CHASE: %s improving "
+                                            "%.3f→%.3f after %dm unfilled",
+                                            signal.city_id, old_price,
+                                            chase_price,
+                                            int(order_age_minutes),
                                         )
                                     except Exception as e:
-                                        logger.warning("Price chase cancel failed %s: %s", old_id[:16], e)
+                                        logger.warning(
+                                            "Price chase cancel failed %s: %s",
+                                            old_id[:16], e,
+                                        )
                                 # Fall through to place new order at chased price
                                 # Override the signal's market_prob to get the chased price
                                 if signal.recommended_side.value == "YES":
@@ -657,8 +746,11 @@ async def run_cycle(
                             elif price_drift <= 0.001:
                                 # Price unchanged, keep existing order, preserve queue priority
                                 logger.info(
-                                    "LIVE KEEP: %s @ %.3f (age=%dm, drift=%.4f, filled=%.0f)",
-                                    signal.city_id, old_price, int(order_age_minutes), price_drift, filled,
+                                    "LIVE KEEP: %s @ %.3f "
+                                    "(age=%dm, drift=%.4f, filled=%.0f)",
+                                    signal.city_id, old_price,
+                                    int(order_age_minutes),
+                                    price_drift, filled,
                                 )
                                 continue
                             else:
@@ -669,11 +761,18 @@ async def run_cycle(
                                         await live_executor.cancel_order(old_id)
                                         store.cancel_live_trade(old_id)
                                         logger.info(
-                                            "LIVE REPLACE: %s cancelled %s (price %.3f→%.3f, drift=%.3f)",
-                                            signal.city_id, old_id[:16], old_price, new_price, price_drift,
+                                            "LIVE REPLACE: %s cancelled "
+                                            "%s (price %.3f→%.3f, "
+                                            "drift=%.3f)",
+                                            signal.city_id, old_id[:16],
+                                            old_price, new_price,
+                                            price_drift,
                                         )
                                     except Exception as e:
-                                        logger.warning("Failed to cancel old order %s: %s", old_id[:16], e)
+                                        logger.warning(
+                                            "Failed to cancel old order %s: %s",
+                                            old_id[:16], e,
+                                        )
 
                         try:
                             result = await live_executor.place_limit_order(
@@ -702,7 +801,7 @@ async def run_cycle(
     # === Early exit monitor ===
     # Paper and live scan independently, either can run alone
     try:
-        from weather_edge.analysis.exit_monitor import scan_for_exits, ai_review_exit
+        from weather_edge.analysis.exit_monitor import ai_review_exit, scan_for_exits
         current_market_prices = {m.market_id: m.yes_price for m in markets}
         current_model_probs = {}
         for signal in all_signals:
@@ -710,7 +809,10 @@ async def run_cycle(
 
         # --- PAPER EXIT SCANNING ---
         if paper_trader:
-            paper_candidates = scan_for_exits(paper_trader.open_trades, current_market_prices, current_model_probs)
+            paper_candidates = scan_for_exits(
+                paper_trader.open_trades,
+                current_market_prices, current_model_probs,
+            )
             if paper_candidates:
                 logger.info("PAPER EXIT MONITOR: %d candidates", len(paper_candidates))
                 for candidate in paper_candidates[:3]:
@@ -718,46 +820,60 @@ async def run_cycle(
                     c_mean, c_std = 0.0, 1.0
                     for (cid, td), f_list in _forecast_cache.items():
                         if cid.value == candidate.trade.city_id:
-                            model_vals = {f.model_name: f.temp_max_c for f in f_list if f.temp_max_c is not None}
+                            model_vals = {
+                                f.model_name: f.temp_max_c
+                                for f in f_list
+                                if f.temp_max_c is not None
+                            }
                             if model_vals:
                                 vals = list(model_vals.values())
                                 c_mean = sum(vals) / len(vals)
-                                c_std = (max(vals) - min(vals)) / 2 if len(vals) > 1 else 0.5
+                                c_std = (
+                                    (max(vals) - min(vals)) / 2
+                                    if len(vals) > 1 else 0.5
+                                )
                             break
-                    candidate = await ai_review_exit(candidate, model_vals, c_mean, c_std)
+                    candidate = await ai_review_exit(
+                        candidate, model_vals, c_mean, c_std,
+                    )
                     if candidate.final_decision == "EXIT":
                         logger.warning(
                             "PAPER EXIT: %s %s $%.0f, %s",
-                            candidate.trade.side, candidate.trade.city_id,
-                            candidate.trade.size_usd, candidate.reason,
+                            candidate.trade.side,
+                            candidate.trade.city_id,
+                            candidate.trade.size_usd,
+                            candidate.reason,
                         )
-                        paper_trader.close_position(candidate.trade, candidate.current_market_price)
+                        paper_trader.close_position(
+                            candidate.trade,
+                            candidate.current_market_price,
+                        )
 
         # --- LIVE EXIT SCANNING (from positions table, independent of paper) ---
         if live_executor and not live_executor.dry_run and store:
-            from weather_edge.trading.paper import PaperTrade, TradeStatus
+            from weather_edge.models.position import Position
             positions = store.get_positions()
-            # Convert positions to PaperTrade-compatible objects for exit scanner
-            live_pseudo_trades = []
+            live_positions: list[Position] = []
             for pos in positions:
-                condition_id = pos.get("condition_id", "")
-                city = pos.get("city_id", "")
                 shares = pos.get("total_shares", 0)
                 avg_price = pos.get("avg_price", 0)
                 if shares >= MIN_SELL_SHARES:
-                    pt = PaperTrade(
-                        market_id=condition_id,
-                        city_id=city,
+                    live_positions.append(Position(
+                        market_id=pos.get("condition_id", ""),
+                        city_id=pos.get("city_id", ""),
                         side=pos.get("outcome", pos.get("side", "")),
                         size_usd=pos.get("cost_basis", 0),
                         entry_price=avg_price,
+                        total_shares=shares,
                         description=pos.get("description", ""),
-                        status=TradeStatus.OPEN,
-                    )
-                    live_pseudo_trades.append(pt)
+                        source="live",
+                    ))
 
-            if live_pseudo_trades:
-                live_candidates = scan_for_exits(live_pseudo_trades, current_market_prices, current_model_probs)
+            if live_positions:
+                live_candidates = scan_for_exits(
+                    live_positions,
+                    current_market_prices, current_model_probs,
+                )
                 if live_candidates:
                     logger.info("LIVE EXIT MONITOR: %d candidates", len(live_candidates))
                     for candidate in live_candidates[:3]:
@@ -765,13 +881,22 @@ async def run_cycle(
                         c_mean, c_std = 0.0, 1.0
                         for (cid, td), f_list in _forecast_cache.items():
                             if cid.value == candidate.trade.city_id:
-                                model_vals = {f.model_name: f.temp_max_c for f in f_list if f.temp_max_c is not None}
+                                model_vals = {
+                                    f.model_name: f.temp_max_c
+                                    for f in f_list
+                                    if f.temp_max_c is not None
+                                }
                                 if model_vals:
                                     vals = list(model_vals.values())
                                     c_mean = sum(vals) / len(vals)
-                                    c_std = (max(vals) - min(vals)) / 2 if len(vals) > 1 else 0.5
+                                    c_std = (
+                                        (max(vals) - min(vals)) / 2
+                                        if len(vals) > 1 else 0.5
+                                    )
                                 break
-                        candidate = await ai_review_exit(candidate, model_vals, c_mean, c_std)
+                        candidate = await ai_review_exit(
+                            candidate, model_vals, c_mean, c_std,
+                        )
                         if candidate.final_decision == "EXIT":
                             city_id_str = candidate.trade.city_id
                             position = store.get_position_for_market(candidate.trade.market_id)
@@ -803,7 +928,10 @@ async def run_cycle(
                     "time": datetime.now(timezone.utc).strftime("%H:%M:%S"),
                     "city": candidate.trade.city_id.upper(),
                     "decision": "EXIT" if candidate.final_decision == "EXIT" else "HOLD",
-                    "signal": f"[EXIT CHECK] {candidate.reason}: {candidate.trade.description[:40]}",
+                    "signal": (
+                        f"[EXIT CHECK] {candidate.reason}: "
+                        f"{candidate.trade.description[:40]}"
+                    ),
                     "adjustment": round(candidate.current_edge, 2),
                     "rationale": candidate.claude_rationale or "No AI review",
                     "risk_factors": [candidate.gemini_rationale or ""],

@@ -73,13 +73,23 @@ The system trades real money on Polymarket via the CLOB API. Paper and live are 
 | Margin check | ✅ | Won't place if available cash < order cost |
 | Spread capture | ❌ | Paper-only. Wire to live at $5 cap (low priority) |
 
-### Gemini Audit: Known Gaps (TODO)
+### Gemini Audit: Architecture Review (2026-03-31)
 
-1. **Generic Position interface**, Replace PaperTrade adapter with shared `Position` dataclass for `scan_for_exits()`. Current PaperTrade shim works but is an anti-pattern.
-2. **Partial fills on exits**, Sell orders are GTC post_only, may not fill instantly. Need to handle partially-closed positions and re-scan next cycle.
+Gemini audited the decoupled architecture and validated the design. Key findings:
+
+**Already Correct:**
+- Sell recording, don't write to `fills` on sell, wait for `get_trades()` sync. Exchange is source of truth.
+- Orders → Fills → Positions pipeline. Record order with `PENDING` status, only write to `fills` when exchange confirms fill.
+
+**Known Gaps (TODO):**
+
+1. **Generic Position interface**, Replace PaperTrade adapter with shared `Position` dataclass for `scan_for_exits()`. Current PaperTrade shim works but is an anti-pattern. Both paper and live should output `Position` objects.
+2. **Partial fills on exits**, Sell orders are GTC post_only, may not fill instantly. Need to handle partially-closed positions (e.g. 30% filled) and re-scan unfilled exits next cycle.
 3. **Slippage tolerance**, `place_sell_order` should enforce max slippage vs current mark price.
-4. **Network retry logic**, Exponential backoff for CLOB API failures. Currently single-attempt.
-5. **Spread capture for live**, Wire up but cap at $5 max. Risk of adverse selection from HFT bots.
+4. **Network retry logic**, Exponential backoff for CLOB API failures and dropped Polygon RPC nodes. Currently single-attempt.
+5. **Spread capture for live**, Wire up but cap at $5 max. Risk of adverse selection from HFT bots filling only when forecast shifts against us.
+6. **Gas cost tracking**, Polygon gas is cheap but not zero. Track cumulative gas over hundreds of 30-min cycles for portfolio drag on $210 bankroll.
+7. **Share count in AI scanner**, Ensure exit scanner has access to number of shares (`cost_basis / avg_price`) for projected payout vs current exit value calculation.
 
 ### VPN (Required, UK Geo-blocked)
 

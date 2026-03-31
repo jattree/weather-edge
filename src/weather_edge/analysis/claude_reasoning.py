@@ -37,7 +37,11 @@ def record_decision(reasoning: "TradeReasoning") -> None:
 
     entry = {
         "time": datetime.now(timezone.utc).strftime("%H:%M:%S"),
-        "city": reasoning.signal.city_id.upper() if isinstance(reasoning.signal.city_id, str) else reasoning.signal.city_id,
+        "city": (
+            reasoning.signal.city_id.upper()
+            if isinstance(reasoning.signal.city_id, str)
+            else reasoning.signal.city_id
+        ),
         "decision": "TRADE" if reasoning.should_trade else "SKIP",
         "signal": reasoning.signal.description[:60] if reasoning.signal.description else "",
         "adjustment": reasoning.confidence_adjustment,
@@ -86,7 +90,10 @@ def _check_ai_keys_at_load() -> None:
             pass
     result = validate_ai_keys_present(ANTHROPIC_API_KEY, gemini_key)
     if not result.valid:
-        logger.warning("CONTRACT [%s]: %s, AI reasoning will be degraded", result.code, result.error)
+        logger.warning(
+            "CONTRACT [%s]: %s, AI reasoning will be degraded",
+            result.code, result.error,
+        )
 
 _check_ai_keys_at_load()
 
@@ -102,33 +109,54 @@ class TradeReasoning:
     weather_insight: str  # What Claude sees in the pattern
 
 
-SYSTEM_PROMPT = """You are a forensic meteorologist. Your ONLY job is to assess what the atmosphere will do. You are MARKET-BLIND, you do not care about prices, edges, or whether a trade "looks too good." That is someone else's job.
-
-You receive model forecasts from 6-8 weather models for a specific city/date. Assess:
-
-1. PHYSICAL PLAUSIBILITY: Do the models agree for the right physical reasons? Or are they clustering on a shared bias (e.g., all using the same SST boundary condition)?
-2. MODEL TRUST: Which models should be weighted more for THIS city? (HRRR for US short-range, UKV for UK, ECMWF for 3+ day global)
-3. OUTLIER DIAGNOSIS: If one model disagrees, is it seeing a real mesoscale feature (frontal boundary, sea breeze, orographic effect) or is it just wrong?
-4. FORECAST CONFIDENCE: How confident are you in the consensus temperature? Consider: time of year, city microclimate, synoptic pattern.
-5. RISKS: What specific physical mechanisms could bust this forecast? (fronts, inversions, lake effect, marine layer, convective initiation)
-
-CRITICAL RULES:
-- NEVER say "the edge looks too large" or "massive edge suggests market error." You don't know market prices.
-- NEVER skip a trade because "the market knows something." You are the weather expert.
-- Default to should_trade=true unless you identify a specific physical mechanism the models are missing or mishandling.
-- Only set should_trade=false if you have a SPECIFIC meteorological reason (not market skepticism).
-- confidence_adjustment reflects YOUR forecast confidence, not market confidence.
-- Include your estimated probability that the actual temperature falls in the target range (e.g., "I estimate 65% chance of 25-26°C").
-
-Respond in JSON:
-{
-  "should_trade": true/false,
-  "confidence_adjustment": 0.5-1.5,
-  "rationale": "one sentence about the WEATHER, not the market",
-  "risk_factors": ["specific physical mechanism 1", "mechanism 2"],
-  "weather_insight": "what the atmosphere is doing",
-  "estimated_probability": 0.0-1.0
-}"""
+SYSTEM_PROMPT = (
+    "You are a forensic meteorologist. Your ONLY job is to assess "
+    "what the atmosphere will do. You are MARKET-BLIND, you do not "
+    "care about prices, edges, or whether a trade \"looks too good.\" "
+    "That is someone else's job.\n\n"
+    "You receive model forecasts from 6-8 weather models for a "
+    "specific city/date. Assess:\n\n"
+    "1. PHYSICAL PLAUSIBILITY: Do the models agree for the right "
+    "physical reasons? Or are they clustering on a shared bias "
+    "(e.g., all using the same SST boundary condition)?\n"
+    "2. MODEL TRUST: Which models should be weighted more for THIS "
+    "city? (HRRR for US short-range, UKV for UK, ECMWF for 3+ day "
+    "global)\n"
+    "3. OUTLIER DIAGNOSIS: If one model disagrees, is it seeing a "
+    "real mesoscale feature (frontal boundary, sea breeze, orographic "
+    "effect) or is it just wrong?\n"
+    "4. FORECAST CONFIDENCE: How confident are you in the consensus "
+    "temperature? Consider: time of year, city microclimate, "
+    "synoptic pattern.\n"
+    "5. RISKS: What specific physical mechanisms could bust this "
+    "forecast? (fronts, inversions, lake effect, marine layer, "
+    "convective initiation)\n\n"
+    "CRITICAL RULES:\n"
+    "- NEVER say \"the edge looks too large\" or \"massive edge "
+    "suggests market error.\" You don't know market prices.\n"
+    "- NEVER skip a trade because \"the market knows something.\" "
+    "You are the weather expert.\n"
+    "- Default to should_trade=true unless you identify a specific "
+    "physical mechanism the models are missing or mishandling.\n"
+    "- Only set should_trade=false if you have a SPECIFIC "
+    "meteorological reason (not market skepticism).\n"
+    "- confidence_adjustment reflects YOUR forecast confidence, "
+    "not market confidence.\n"
+    "- Include your estimated probability that the actual temperature "
+    "falls in the target range "
+    "(e.g., \"I estimate 65% chance of 25-26°C\").\n\n"
+    "Respond in JSON:\n"
+    "{\n"
+    "  \"should_trade\": true/false,\n"
+    "  \"confidence_adjustment\": 0.5-1.5,\n"
+    "  \"rationale\": \"one sentence about the WEATHER, not the "
+    "market\",\n"
+    "  \"risk_factors\": [\"specific physical mechanism 1\", "
+    "\"mechanism 2\"],\n"
+    "  \"weather_insight\": \"what the atmosphere is doing\",\n"
+    "  \"estimated_probability\": 0.0-1.0\n"
+    "}"
+)
 
 
 async def analyze_trade(
@@ -165,29 +193,40 @@ MODEL FORECASTS:
 {model_summary}
 
 CONSENSUS: mean={consensus_mean:.1f}°C, std={consensus_std:.1f}°C
-MODEL SPREAD: {max(model_values.values()) - min(model_values.values()):.1f}°C range across {len(model_values)} models
+MODEL SPREAD: {max(model_values.values()) - min(model_values.values()):.1f}°C \
+range across {len(model_values)} models
 
 Is this consensus trustworthy? What physical mechanisms could bust it?"""
 
     try:
-        async with httpx.AsyncClient() as client:
-            resp = await client.post(
-                "https://api.anthropic.com/v1/messages",
-                headers={
-                    "x-api-key": ANTHROPIC_API_KEY,
-                    "anthropic-version": "2023-06-01",
-                    "content-type": "application/json",
-                },
-                json={
-                    "model": CLAUDE_MODEL,
-                    "max_tokens": 300,
-                    "system": SYSTEM_PROMPT,
-                    "messages": [{"role": "user", "content": user_prompt}],
-                },
-                timeout=15.0,
-            )
-            resp.raise_for_status()
-            data = resp.json()
+        from weather_edge.retry import retry_async
+
+        async def _call_claude():
+            async with httpx.AsyncClient() as client:
+                resp = await client.post(
+                    "https://api.anthropic.com/v1/messages",
+                    headers={
+                        "x-api-key": ANTHROPIC_API_KEY,
+                        "anthropic-version": "2023-06-01",
+                        "content-type": "application/json",
+                    },
+                    json={
+                        "model": CLAUDE_MODEL,
+                        "max_tokens": 300,
+                        "system": SYSTEM_PROMPT,
+                        "messages": [{"role": "user", "content": user_prompt}],
+                    },
+                    timeout=15.0,
+                )
+                resp.raise_for_status()
+                return resp.json()
+
+        data = await retry_async(
+            _call_claude,
+            attempts=3,
+            base_delay=2.0,
+            label=f"claude:{signal.city_id}",
+        )
 
         # Parse Claude's response
         content = data["content"][0]["text"]
@@ -201,7 +240,10 @@ Is this consensus trustworthy? What physical mechanisms could bust it?"""
                 content = content.split("```")[1].split("```")[0]
             result = json.loads(content)
         except (json.JSONDecodeError, IndexError):
-            logger.warning("Could not parse Claude response as JSON: %s", content[:200])
+            logger.warning(
+                "Could not parse Claude response as JSON: %s",
+                content[:200],
+            )
             return TradeReasoning(
                 signal=signal,
                 should_trade=True,
@@ -214,7 +256,9 @@ Is this consensus trustworthy? What physical mechanisms could bust it?"""
         reasoning = TradeReasoning(
             signal=signal,
             should_trade=result.get("should_trade", True),
-            confidence_adjustment=max(0.5, min(1.5, result.get("confidence_adjustment", 1.0))),
+            confidence_adjustment=max(
+                0.5, min(1.5, result.get("confidence_adjustment", 1.0)),
+            ),
             rationale=result.get("rationale", ""),
             risk_factors=result.get("risk_factors", []),
             weather_insight=result.get("weather_insight", ""),
@@ -236,21 +280,21 @@ Is this consensus trustworthy? What physical mechanisms could bust it?"""
                 from weather_edge.live_state import get_json
                 existing = get_json("svc:claude") or {}
             except Exception:
-                pass
+                logger.debug("Failed to read Claude service state", exc_info=True)
             decisions_today = existing.get("decisions_today", 0) + 1
             record_service_call("claude", True, extra={"decisions_today": decisions_today})
         except Exception:
-            pass
+            logger.debug("Failed to record Claude health", exc_info=True)
 
         return reasoning
 
     except httpx.HTTPError as e:
-        logger.warning("Claude API call failed: %s", e)
+        logger.warning("Claude API call failed after retries: %s", e)
         try:
             from weather_edge.analysis.service_health import record_service_call
             record_service_call("claude", False)
         except Exception:
-            pass
+            logger.debug("Failed to record Claude failure", exc_info=True)
         return None
     except Exception as e:
         logger.warning("Claude reasoning failed: %s", e)
@@ -258,7 +302,7 @@ Is this consensus trustworthy? What physical mechanisms could bust it?"""
             from weather_edge.analysis.service_health import record_service_call
             record_service_call("claude", False)
         except Exception:
-            pass
+            logger.debug("Failed to record Claude failure", exc_info=True)
         return None
 
 

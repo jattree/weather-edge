@@ -10,8 +10,8 @@ At 22 cities per cycle, 2 cycles/hour = ~352 credits/day (29% of quota).
 from __future__ import annotations
 
 import logging
-from datetime import date, datetime, timedelta, timezone
 from dataclasses import dataclass
+from datetime import date, datetime, timedelta, timezone
 
 import httpx
 
@@ -71,14 +71,26 @@ async def fetch_ai_forecast(
         return None
 
     city = CITIES[city_id]
-    start = datetime(target_date.year, target_date.month, target_date.day, 0, tzinfo=timezone.utc)
+    start = datetime(
+        target_date.year, target_date.month, target_date.day,
+        0, tzinfo=timezone.utc,
+    )
     end = start + timedelta(hours=23)
 
     payload = {
         "fromTime": start.strftime("%Y-%m-%dT%H:%M:%SZ"),
         "untilTime": end.strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "coordinates": [{"lat": city.latitude, "lon": city.longitude, "name": city_id.value}],
-        "variables": [{"name": "TMP", "level": "2 m above ground", "info": "", "alias": "temp_2m"}],
+        "coordinates": [{
+            "lat": city.latitude,
+            "lon": city.longitude,
+            "name": city_id.value,
+        }],
+        "variables": [{
+            "name": "TMP",
+            "level": "2 m above ground",
+            "info": "",
+            "alias": "temp_2m",
+        }],
     }
 
     url = f"{GRIBSTREAM_API_URL}/{model}/timeseries"
@@ -103,14 +115,14 @@ async def fetch_ai_forecast(
             from weather_edge.analysis.service_health import record_service_call
             record_service_call("gribstream", False)
         except Exception:
-            pass
+            logger.debug("Failed to record GribStream failure", exc_info=True)
         return None
 
     try:
         from weather_edge.analysis.service_health import record_service_call
         record_service_call("gribstream", True)
     except Exception:
-        pass
+        logger.debug("Failed to record GribStream health", exc_info=True)
 
     # Parse CSV response
     lines = csv_text.strip().split("\n")
@@ -165,19 +177,31 @@ async def fetch_ai_forecasts_batch(
     if not api_key:
         return {}
 
-    start = datetime(target_date.year, target_date.month, target_date.day, 0, tzinfo=timezone.utc)
+    start = datetime(
+        target_date.year, target_date.month, target_date.day,
+        0, tzinfo=timezone.utc,
+    )
     end = start + timedelta(hours=23)
 
     coordinates = []
     for city_id in cities:
         city = CITIES[city_id]
-        coordinates.append({"lat": city.latitude, "lon": city.longitude, "name": city_id.value})
+        coordinates.append({
+            "lat": city.latitude,
+            "lon": city.longitude,
+            "name": city_id.value,
+        })
 
     payload = {
         "fromTime": start.strftime("%Y-%m-%dT%H:%M:%SZ"),
         "untilTime": end.strftime("%Y-%m-%dT%H:%M:%SZ"),
         "coordinates": coordinates,
-        "variables": [{"name": "TMP", "level": "2 m above ground", "info": "", "alias": "temp_2m"}],
+        "variables": [{
+            "name": "TMP",
+            "level": "2 m above ground",
+            "info": "",
+            "alias": "temp_2m",
+        }],
     }
 
     url = f"{GRIBSTREAM_API_URL}/{model}/timeseries"
@@ -202,14 +226,14 @@ async def fetch_ai_forecasts_batch(
             from weather_edge.analysis.service_health import record_service_call
             record_service_call("gribstream", False)
         except Exception:
-            pass
+            logger.debug("Failed to record GribStream failure", exc_info=True)
         return {}
 
     try:
         from weather_edge.analysis.service_health import record_service_call
         record_service_call("gribstream", True)
     except Exception:
-        pass
+        logger.debug("Failed to record GribStream health", exc_info=True)
 
     # Parse CSV, group by city name
     lines = csv_text.strip().split("\n")
@@ -279,7 +303,8 @@ def compute_ai_physics_divergence(
     elif abs(divergence) < 3.0:
         signal = "mild_diverge"  # Notable but not alarming
     else:
-        signal = "strong_diverge"  # AI and physics disagree significantly, reduce confidence
+        # AI and physics disagree significantly, reduce confidence
+        signal = "strong_diverge"
 
     return {
         "ai_model": ai_forecast.model_name,
@@ -287,5 +312,9 @@ def compute_ai_physics_divergence(
         "physics_mean_c": round(physics_mean_c, 1),
         "divergence_c": round(divergence, 1),
         "signal": signal,
-        "confidence_multiplier": 1.1 if signal == "agree" else 0.9 if signal == "mild_diverge" else 0.7,
+        "confidence_multiplier": (
+            1.1 if signal == "agree"
+            else 0.9 if signal == "mild_diverge"
+            else 0.7
+        ),
     }
