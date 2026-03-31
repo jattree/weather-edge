@@ -643,12 +643,21 @@ async def fast_exit_loop() -> None:
             except Exception:
                 logger.debug("Fast exit portfolio sync failed", exc_info=True)
 
-            # Update live state balance
+            # Update live state from Polymarket (source of truth)
             try:
-                balance = await live_executor.check_balance()
-                if balance is not None and "live" in latest_state:
-                    latest_state["live"]["balance"] = round(balance, 2)
-                    latest_state["live"]["available_cash"] = round(balance, 2)
+                from weather_edge.trading.portfolio_sync import fetch_polymarket_state
+                proxy = "0xe23940d70793b441c9f949741daa65289947fadb"
+                pm = await fetch_polymarket_state(live_executor, proxy)
+                if "live" in latest_state:
+                    latest_state["live"]["balance"] = pm["balance"]
+                    latest_state["live"]["available_cash"] = pm["balance"]
+                    latest_state["live"]["portfolio_value"] = pm["portfolio_value"]
+                    latest_state["live"]["market_value"] = pm["market_value"]
+                    latest_state["live"]["cost_basis"] = pm["cost_basis"]
+                    latest_state["live"]["capital_at_risk"] = pm["market_value"]
+                    latest_state["live"]["pnl"] = pm["total_pnl"]
+                    latest_state["live"]["position_count"] = pm["position_count"]
+                    await broadcast(latest_state)
             except Exception:
                 pass
 
