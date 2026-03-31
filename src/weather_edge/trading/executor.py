@@ -483,12 +483,14 @@ class TradeExecutor:
         try:
             loop = asyncio.get_running_loop()
 
-            if hasattr(self._client, "update_balance_allowance"):
+            if hasattr(self._client, "get_balance_allowance"):
                 # Lightweight API call that keeps the session alive
+                from py_clob_client.clob_types import AssetType, BalanceAllowanceParams
+                params = BalanceAllowanceParams(asset_type=AssetType.COLLATERAL)
                 await loop.run_in_executor(
                     None,
                     self._client.get_balance_allowance,
-                    {"asset_type": "COLLATERAL"},
+                    params,
                 )
             elif hasattr(self._client, "get_orders"):
                 # Fallback: any authenticated L2 call keeps session alive

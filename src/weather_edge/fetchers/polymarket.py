@@ -8,6 +8,7 @@ Real Polymarket weather market format (from Gamma API):
 """
 from __future__ import annotations
 
+import json
 import logging
 import re
 from dataclasses import dataclass, field
@@ -395,7 +396,15 @@ async def discover_weather_markets(
                         continue
 
                     # Extract token IDs
-                    tokens = mkt.get("clobTokenIds") or []
+                    # Gamma API returns clobTokenIds as a JSON string, not a list
+                    tokens_raw = mkt.get("clobTokenIds") or []
+                    if isinstance(tokens_raw, str):
+                        try:
+                            tokens = json.loads(tokens_raw)
+                        except (json.JSONDecodeError, TypeError):
+                            tokens = []
+                    else:
+                        tokens = tokens_raw
                     if len(tokens) >= 2:
                         parsed.token_id_yes = tokens[0]
                         parsed.token_id_no = tokens[1]
@@ -412,7 +421,6 @@ async def discover_weather_markets(
                     elif isinstance(outcome_prices, str):
                         # Sometimes it's a JSON string
                         try:
-                            import json
                             prices = json.loads(outcome_prices)
                             if isinstance(prices, list) and len(prices) >= 2:
                                 parsed.yes_price = float(prices[0])
