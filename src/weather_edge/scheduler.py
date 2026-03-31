@@ -109,7 +109,6 @@ async def run_cycle(
         logger.warning("CONTRACT VIOLATION [%s]: %s", emos_check.code, emos_check.error)
 
     # Resolve any open trades before placing new ones
-    # This frees up capital and updates P&L before new signals are computed
     try:
         resolved_count = await resolve_open_trades(paper_trader)
         if resolved_count > 0:
@@ -117,15 +116,17 @@ async def run_cycle(
     except Exception:
         logger.exception("Paper trade resolution failed, continuing with cycle")
 
-    # Resolve live trades too
+    # === PORTFOLIO SYNC: reconcile with exchange truth ===
+    _portfolio_summary = {}
     if live_executor and not live_executor.dry_run:
         try:
-            from weather_edge.trading.fill_tracker import resolve_live_trades
-            live_resolved = await resolve_live_trades(live_executor)
-            if live_resolved > 0:
-                logger.info("Resolved %d LIVE trades at cycle start", live_resolved)
+            from weather_edge.trading.portfolio_sync import sync_portfolio
+            _portfolio_summary = await sync_portfolio(
+                executor=live_executor,
+                store=paper_trader.store,
+            )
         except Exception:
-            logger.exception("Live trade resolution failed, continuing with cycle")
+            logger.exception("Portfolio sync failed, continuing with stale positions")
 
     all_signals: list[Signal] = []
     _forecast_cache: dict[tuple, list] = {}  # (city_id, date) -> forecasts for Claude
@@ -145,6 +146,16 @@ async def run_cycle(
     # Step 1: Discover active weather markets (prices included from Gamma API)
     logger.info("=== Discovering Polymarket weather markets ===")
     markets = await discover_weather_markets()
+
+    # Update market_map for position tracking (maps asset_id → city_id)
+    if live_executor and markets:
+        try:
+            from weather_edge.trading.portfolio_sync import sync_market_map_from_discovery
+            mapped = await sync_market_map_from_discovery(paper_trader.store, markets)
+            if mapped:
+                logger.info("Market map updated: %d token mappings", mapped)
+        except Exception:
+            logger.debug("Market map update failed", exc_info=True)
 
     # Aggregate volume and liquidity by city for dashboard
     city_volume: dict[str, dict] = {}
@@ -540,6 +551,17 @@ async def run_cycle(
         # === LIVE EXECUTION (maker orders bypass fee gate, $0 maker fee) ===
         # Still require minimum raw edge, we're bypassing fee check, not edge check
         if live_executor and not live_executor.dry_run:
+            # Margin check, don't place if we can't afford it
+            portfolio = _portfolio_summary or {}
+            deployed = portfolio.get("total_deployed", 0)
+            available = (settings.bankroll - deployed) if deployed else settings.bankroll
+            if signal.recommended_size > available and available < 10:
+                logger.info(
+                    "MARGIN LIMIT: %s needs $%.0f but only $%.0f available, skipping",
+                    signal.city_id, signal.recommended_size, available,
+                )
+                continue
+
             can_live = (trade or fee_blocked) and signal.edge >= 0.02
             if not can_live and fee_blocked:
                 logger.debug(
@@ -556,7 +578,19 @@ async def run_cycle(
                         token_id = m.token_id_no
 
                     if token_id:
-                        # === DUPLICATE PREVENTION + CANCEL-AND-REPLACE + PRICE CHASE ===
+                        # === POSITION-AWARE DUPLICATE PREVENTION ===
+                        # Check POSITIONS (what we actually hold) not orders
+                        existing_position = paper_trader.store.get_position_for_market(signal.market_id)
+                        if existing_position and existing_position.get("total_shares", 0) > 0:
+                            logger.info(
+                                "POSITION EXISTS: %s already hold %.0f shares ($%.2f), skipping",
+                                signal.city_id,
+                                existing_position["total_shares"],
+                                existing_position.get("cost_basis", 0),
+                            )
+                            continue
+
+                        # Also check open orders (not yet filled)
                         existing = paper_trader.store.get_open_order_for_market(signal.market_id)
                         if existing:
                             old_price = existing.get("limit_price", 0)
