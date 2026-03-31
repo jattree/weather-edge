@@ -76,6 +76,21 @@ def generate_daily_report(
     top_cities = sorted(city_pnl.items(), key=lambda x: x[1], reverse=True)[:5]
     worst_cities = sorted(city_pnl.items(), key=lambda x: x[1])[:5]
 
+    # Pool breakdown
+    pool_stats = {}
+    for strat in ["core", "penny", "spread", "exit"]:
+        s_trades = [t for t in trades if getattr(t, "strategy", "core") == strat]
+        s_won = [t for t in s_trades if t.status == "won"]
+        s_lost = [t for t in s_trades if t.status == "lost"]
+        s_pnl = sum(t.pnl or 0 for t in s_won + s_lost)
+        if s_trades:
+            pool_stats[strat] = {
+                "total_trades": len(s_trades),
+                "pnl": round(s_pnl, 2),
+                "win_rate": round(len(s_won) / (len(s_won) + len(s_lost)) * 100, 1) if (len(s_won) + len(s_lost)) > 0 else 0,
+                "at_risk": round(sum(t.size_usd for t in s_trades if t.status == "open"), 2),
+            }
+
     # AI stats from decision history
     ai_stats = _get_ai_stats()
 
@@ -142,6 +157,9 @@ def generate_daily_report(
 
         # AI performance
         "ai_stats": ai_stats,
+
+        # Pool performance
+        "pool_breakdown": pool_stats,
 
         # Live performance
         "live_stats": _get_live_stats(paper_trader),

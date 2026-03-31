@@ -29,7 +29,7 @@ from weather_edge.analysis.resolver import _extract_target_date_from_trade
 from weather_edge.analysis.sniper import ModelSniper
 from weather_edge.analysis.weather_alerts import fetch_all_alerts
 from weather_edge.config import CITIES, settings
-from weather_edge.models.enums import City
+from weather_edge.models.enums import City, TradeStatus
 from weather_edge.persistence import PersistentPaperTrader
 from weather_edge.scheduler import run_cycle
 
@@ -79,6 +79,7 @@ latest_state: dict = {
     "open_positions": 0,
     "best_trade": 0.0,
     "streak": 0,
+    "pools": {"core": {"pnl": 0, "at_risk": 0}, "penny": {"pnl": 0, "at_risk": 0}},
     "cycle_count": 0,
     "last_update": None,
     "weather_alerts": [],
@@ -370,6 +371,26 @@ async def _run_dashboard_cycle_inner(run_ai: bool = True) -> None:
         "ai_adherence": compute_adherence(paper_trader.closed_trades, get_decisions()).to_dict(),
     }
 
+    # Pool breakdown calculation
+    pools = {}
+    for strat in ["core", "penny", "spread", "exit"]:
+        # Paper stats
+        p_trades = [t for t in paper_trader.trades if getattr(t, "strategy", "core") == strat]
+        p_won = [t for t in p_trades if t.status == TradeStatus.WON]
+        p_lost = [t for t in p_trades if t.status == TradeStatus.LOST]
+        p_pnl = sum(t.pnl or 0 for t in p_won + p_lost)
+        p_at_risk = sum(t.size_usd for t in p_trades if t.status == TradeStatus.OPEN)
+        
+        pools[strat] = {
+            "paper_pnl": round(p_pnl, 2),
+            "paper_at_risk": round(p_at_risk, 2),
+            "live_pnl": 0.0,
+            "live_at_risk": 0.0,
+            "total_trades": len(p_trades)
+        }
+    
+    latest_state["pools"] = pools
+
     # Include kill switch state in every broadcast
     try:
         from weather_edge.trading.kill_switch import get_kill_switch_state
@@ -384,6 +405,18 @@ async def _run_dashboard_cycle_inner(run_ai: bool = True) -> None:
             positions = paper_trader.store.get_positions()
             fills = paper_trader.store.get_fills(limit=100)
             portfolio = paper_trader.store.get_portfolio_summary()
+
+            # Update live pool stats
+            for strat in ["core", "penny", "spread", "exit"]:
+                l_trades = paper_trader.store.conn.execute(
+                    "SELECT pnl, size_usd, status FROM live_trades WHERE strategy = ?",
+                    (strat,)
+                ).fetchall()
+                l_pnl = sum(r[0] or 0 for r in l_trades if r[2] in ("won", "lost"))
+                l_at_risk = sum(r[1] or 0 for r in l_trades if r[2] in ("open", "partial"))
+                if strat in latest_state["pools"]:
+                    latest_state["pools"][strat]["live_pnl"] = round(l_pnl, 2)
+                    latest_state["pools"][strat]["live_at_risk"] = round(l_at_risk, 2)
 
             # Build trade log from fills with resolution countdown
             import re as _re

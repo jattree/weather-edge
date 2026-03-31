@@ -8,6 +8,7 @@ Real Polymarket weather market format (from Gamma API):
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -333,18 +334,17 @@ async def discover_weather_markets(
 ) -> list[MarketInfo]:
     """Discover active weather markets from Polymarket's Gamma API.
 
-    Paginates through weather-tagged events and parses multi-bucket temperature markets.
+    Parallelizes fetching across multiple offsets to handle hundreds of markets efficiently.
     Uses outcomePrices from Gamma API directly (no CLOB calls needed for price discovery).
     """
     if settings is None:
         from weather_edge.config import settings as _settings
         settings = _settings
 
-    markets: list[MarketInfo] = []
     today = date.today()
 
     async with httpx.AsyncClient() as client:
-        for offset in range(0, 500, 100):
+        async def _fetch_page(offset):
             try:
                 resp = await client.get(
                     f"{settings.polymarket_gamma_url}/events",
@@ -358,97 +358,96 @@ async def discover_weather_markets(
                     timeout=15.0,
                 )
                 resp.raise_for_status()
-                events = resp.json()
+                return resp.json()
             except (httpx.HTTPError, ValueError) as e:
                 logger.error("Failed to fetch Polymarket events at offset %d: %s", offset, e)
-                try:
-                    from weather_edge.analysis.service_health import record_service_call
-                    record_service_call("polymarket_gamma", False)
-                except Exception:
-                    pass
-                break
+                return []
 
-            if not events:
-                break
+        # Fetch first 5 pages in parallel
+        offsets = [0, 100, 200, 300, 400]
+        pages = await asyncio.gather(*[_fetch_page(o) for o in offsets])
+        
+        all_events = []
+        for page in pages:
+            if page:
+                all_events.extend(page)
 
-            for event in events:
-                event_title = event.get("title", "")
-                end_date = event.get("endDate")
+        markets: list[MarketInfo] = []
+        for event in all_events:
+            event_title = event.get("title", "")
+            end_date = event.get("endDate")
 
-                # Only process temperature/snow events for our tracked cities
-                title_lower = event_title.lower()
-                if "highest temperature" not in title_lower and "snow" not in title_lower:
+            # Only process temperature/snow events for our tracked cities
+            title_lower = event_title.lower()
+            if "highest temperature" not in title_lower and "snow" not in title_lower:
+                continue
+
+            event_markets = event.get("markets", [])
+            for mkt in event_markets:
+                condition_id = mkt.get("conditionId", "")
+                question = mkt.get("question", "")
+                if not question:
                     continue
 
-                event_markets = event.get("markets", [])
-                for mkt in event_markets:
-                    condition_id = mkt.get("conditionId", "")
-                    question = mkt.get("question", "")
-                    if not question:
-                        continue
+                parsed = parse_market_question(question, event_title, condition_id, end_date)
+                if parsed is None:
+                    continue
 
-                    parsed = parse_market_question(question, event_title, condition_id, end_date)
-                    if parsed is None:
-                        continue
+                # Skip markets for dates that have already passed
+                if parsed.target_date < today:
+                    continue
 
-                    # Skip markets for dates that have already passed
-                    if parsed.target_date < today:
-                        continue
-
-                    # Extract token IDs
-                    # Gamma API returns clobTokenIds as a JSON string, not a list
-                    tokens_raw = mkt.get("clobTokenIds") or []
-                    if isinstance(tokens_raw, str):
-                        try:
-                            tokens = json.loads(tokens_raw)
-                        except (json.JSONDecodeError, TypeError):
-                            tokens = []
-                    else:
-                        tokens = tokens_raw
-                    if len(tokens) >= 2:
-                        parsed.token_id_yes = tokens[0]
-                        parsed.token_id_no = tokens[1]
-
-                    # Get prices directly from Gamma (avoids CLOB rate limits)
-                    outcome_prices = mkt.get("outcomePrices")
-                    is_list = isinstance(outcome_prices, list)
-                    if outcome_prices and is_list and len(outcome_prices) >= 2:
-                        try:
-                            parsed.yes_price = float(outcome_prices[0])
-                            parsed.no_price = float(outcome_prices[1])
-                        except (ValueError, TypeError):
-                            pass
-                    elif isinstance(outcome_prices, str):
-                        # Sometimes it's a JSON string
-                        try:
-                            prices = json.loads(outcome_prices)
-                            if isinstance(prices, list) and len(prices) >= 2:
-                                parsed.yes_price = float(prices[0])
-                                parsed.no_price = float(prices[1])
-                        except (ValueError, TypeError):
-                            pass
-
-                    parsed.description = question
-                    parsed.slug = mkt.get("slug", "")
-                    # Volume and liquidity from Gamma API
+                # Extract token IDs
+                # Gamma API returns clobTokenIds as a JSON string, not a list
+                tokens_raw = mkt.get("clobTokenIds") or []
+                if isinstance(tokens_raw, str):
                     try:
-                        parsed.volume_24h = float(mkt.get("volumeNum") or mkt.get("volume") or 0)
+                        tokens = json.loads(tokens_raw)
+                    except (json.JSONDecodeError, TypeError):
+                        tokens = []
+                else:
+                    tokens = tokens_raw
+                if len(tokens) >= 2:
+                    parsed.token_id_yes = tokens[0]
+                    parsed.token_id_no = tokens[1]
+
+                # Get prices directly from Gamma (avoids CLOB rate limits)
+                outcome_prices = mkt.get("outcomePrices")
+                is_list = isinstance(outcome_prices, list)
+                if outcome_prices and is_list and len(outcome_prices) >= 2:
+                    try:
+                        parsed.yes_price = float(outcome_prices[0])
+                        parsed.no_price = float(outcome_prices[1])
                     except (ValueError, TypeError):
                         pass
+                elif isinstance(outcome_prices, str):
+                    # Sometimes it's a JSON string
                     try:
-                        liq = mkt.get("liquidityNum") or mkt.get("liquidity") or 0
-                        parsed.liquidity = float(liq)
+                        prices = json.loads(outcome_prices)
+                        if isinstance(prices, list) and len(prices) >= 2:
+                            parsed.yes_price = float(prices[0])
+                            parsed.no_price = float(prices[1])
                     except (ValueError, TypeError):
                         pass
-                    markets.append(parsed)
 
-            logger.info(
-                "Fetched %d events at offset %d, %d markets so far",
-                len(events), offset, len(markets),
-            )
+                parsed.description = question
+                parsed.slug = mkt.get("slug", "")
+                # Volume and liquidity from Gamma API
+                try:
+                    parsed.volume_24h = float(mkt.get("volumeNum") or mkt.get("volume") or 0)
+                except (ValueError, TypeError):
+                    pass
+                try:
+                    liq = mkt.get("liquidityNum") or mkt.get("liquidity") or 0
+                    parsed.liquidity = float(liq)
+                except (ValueError, TypeError):
+                    pass
+                markets.append(parsed)
 
-            if len(events) < 100:
-                break
+        logger.info(
+            "Discovered %d markets from %d events across %d pages",
+            len(markets), len(all_events), len(offsets),
+        )
 
     # Filter to only cities we track
     tracked_cities = set(City)
