@@ -370,6 +370,7 @@ class Settings(BaseSettings):
     live_mode: bool = False  # Set True to enable real trades (paper always runs too)
     live_max_shares: float = 0  # 0=unlimited. Set to 5/20/50 for graduated testing
     polymarket_chain_id: int = 137  # Polygon mainnet
+    max_slippage_pct: float = 0.02  # Max 2% price movement for exit orders
 
     # Redis (hot-path cache, kill switch, heartbeats)
     redis_host: str = "localhost"

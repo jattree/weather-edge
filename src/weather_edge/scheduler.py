@@ -48,6 +48,11 @@ logger = logging.getLogger(__name__)
 MIN_SELL_SHARES = 5.0  # Polymarket minimum order size
 
 
+def _round_price(price: float) -> float:
+    """Round price to valid Polymarket tick size (1 cent)."""
+    return round(max(0.01, min(0.99, price)), 2)
+
+
 def compute_model_prob_for_market(market: MarketInfo, consensus) -> float | None:
     """Compute model probability for a market bucket.
 
@@ -651,15 +656,17 @@ async def run_cycle(
                 )
                 continue
 
-            # Live is independent of paper, only requires minimum edge.
+            # Live is independent of paper, only requires minimum edge or spread strategy.
             # Maker orders have $0 fees so fee gate doesn't apply.
-            can_live = signal.edge >= 0.02
+            is_spread = getattr(signal, "strategy", "") == "spread"
+            can_live = signal.edge >= 0.02 or is_spread
             if not can_live:
                 logger.debug(
                     "LIVE SKIP: %s edge=%.3f size=$%.0f (need ≥2%% edge)",
                     signal.city_id, signal.edge, signal.recommended_size,
                 )
             if can_live:
+
                 m = market_by_id.get(signal.market_id)
                 if m:
                     # Pick the right token
@@ -785,6 +792,46 @@ async def run_cycle(
                                     signal.city_id, result.size_shares,
                                     result.limit_price, result.order_id,
                                 )
+
+                                # --- LIVE SPREAD CAPTURE HEDGE ---
+                                if market_maker and not live_executor.dry_run:
+                                    # Use settings.bankroll as baseline for pool-sizing
+                                    hedge = market_maker.generate_hedge_orders(
+                                        signal, market_prices, settings.bankroll, is_live=True
+                                    )
+                                    if hedge:
+                                        m = market_by_id.get(hedge.market_id)
+                                        if m:
+                                            from weather_edge.models.enums import MarketType
+                                            h_side = MarketType.YES if hedge.side == "YES" else MarketType.NO
+                                            h_token_id = m.token_id_yes if hedge.side == "YES" else m.token_id_no
+                                            
+                                            # Create synthetic signal for the hedge order
+                                            h_signal = Signal(
+                                                market_id=hedge.market_id,
+                                                city_id=signal.city_id,
+                                                recommended_side=h_side,
+                                                recommended_size=hedge.cost,
+                                                edge=0.0, # Spread orders have guaranteed profit, not directional edge
+                                                confidence=1.0,
+                                                description=f"[SPREAD] {hedge.description}",
+                                                strategy="spread",
+                                                market_prob=hedge.limit_price,
+                                            )
+                                            
+                                            try:
+                                                import requests
+                                                h_result = await live_executor.place_limit_order(h_signal, h_token_id)
+                                                if h_result:
+                                                    logger.info(
+                                                        "LIVE SPREAD HEDGE: %s %s %.0f shares @ %.3f, %s",
+                                                        h_side.value, signal.city_id,
+                                                        h_result.size_shares, h_result.limit_price,
+                                                        h_result.order_id,
+                                                    )
+                                            except (requests.RequestException, ValueError, KeyError) as e:
+                                                logger.error("LIVE SPREAD HEDGE FAILED: %s, %s", signal.city_id, e)
+
                         except Exception as e:
                             logger.error(
                                 "LIVE ORDER FAILED: %s, %s", signal.city_id, e,
@@ -899,17 +946,61 @@ async def run_cycle(
                         )
                         if candidate.final_decision == "EXIT":
                             city_id_str = candidate.trade.city_id
-                            position = store.get_position_for_market(candidate.trade.market_id)
+                            market_id = candidate.trade.market_id
+                            
+                            # 1. Cancel any open BUY orders for this market if we are exiting
+                            open_buy = store.get_open_order_for_market(market_id)
+                            if open_buy and open_buy.get("side") in ("YES", "NO"):
+                                buy_id = open_buy["order_id"]
+                                try:
+                                    await live_executor.cancel_order(buy_id)
+                                    store.cancel_live_trade(buy_id)
+                                    logger.info("EXIT: cancelled open BUY order %s for %s", buy_id[:16], city_id_str)
+                                except Exception as e:
+                                    logger.warning("Failed to cancel BUY order %s: %s", buy_id[:16], e)
+
+                            # 2. Check for existing open SELL order
+                            existing_sell = store.get_open_order_for_market(market_id, side="SELL")
+                            
+                            position = store.get_position_for_market(market_id)
                             if position and position.get("total_shares", 0) >= MIN_SELL_SHARES:
                                 asset_id = position.get("asset_id", "")
                                 if asset_id:
+                                    # If we already have a sell order, check if it's still at the right price
+                                    if existing_sell:
+                                        old_price = existing_sell.get("limit_price", 0)
+                                        new_price = _round_price(candidate.current_market_price)
+                                        price_drift = abs(old_price - new_price)
+                                        
+                                        # Only replace if price drifted by > 1¢
+                                        if price_drift <= 0.01:
+                                            logger.info(
+                                                "LIVE SELL KEEP: %s @ %.3f (drift=%.3f)",
+                                                city_id_str, old_price, price_drift
+                                            )
+                                            continue
+                                        else:
+                                            # Cancel old, replace with new price
+                                            old_id = existing_sell["order_id"]
+                                            try:
+                                                await live_executor.cancel_order(old_id)
+                                                store.cancel_live_trade(old_id)
+                                                logger.info(
+                                                    "LIVE SELL REPLACE: %s cancelled %s (%.3f->%.3f)",
+                                                    city_id_str, old_id[:16], old_price, new_price
+                                                )
+                                            except Exception as e:
+                                                logger.warning("Failed to cancel old sell order %s: %s", old_id[:16], e)
+
                                     try:
                                         sell_result = await live_executor.place_sell_order(
                                             token_id=asset_id,
                                             shares=position["total_shares"],
                                             price=candidate.current_market_price,
+                                            market_id=market_id,
                                             city_id=city_id_str,
                                             description=f"EXIT: {candidate.reason}",
+                                            reference_price=candidate.current_market_price,
                                         )
                                         if sell_result:
                                             logger.warning(

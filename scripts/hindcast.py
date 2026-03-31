@@ -56,6 +56,10 @@ MODELS_TO_HINDCAST = [m.value for m in GLOBAL_MODELS]
 
 DB_PATH = Path(__file__).parent.parent / "weather_edge.db"
 
+# Historical forecast API only goes back ~2.5 years reliably
+# Beyond that, model versions change (ECMWF IFS upgrade 2023)
+MAX_HINDCAST_DAYS = 912  # ~2.5 years
+
 
 def fetch_historical_forecast(
     lat: float, lon: float, target_date: date, model_id: str,

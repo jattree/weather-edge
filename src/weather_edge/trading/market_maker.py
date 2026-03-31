@@ -24,7 +24,6 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timezone
 
 from weather_edge.analysis.edge import Signal
 
@@ -71,11 +70,13 @@ class MarketMaker:
         self,
         spread_budget_pct: float = 0.20,  # 20% of bankroll for market-making
         min_profit_per_trade: float = 0.01,  # Minimum 1¢ guaranteed profit per share
-        max_position_per_bucket: float = 100.0,  # Max $ per bucket for spread capture
+        max_position_per_bucket: float = 100.0,  # Max $ per bucket for spread capture (paper)
+        max_live_usd_per_bucket: float = 5.0,  # $5 cap for live spread capture (README mandate)
     ):
         self.spread_budget_pct = spread_budget_pct
         self.min_profit_per_trade = min_profit_per_trade
         self.max_position_per_bucket = max_position_per_bucket
+        self.max_live_usd_per_bucket = max_live_usd_per_bucket
         self.orders: list[SpreadOrder] = []
         self.total_spread_pnl: float = 0.0
 
@@ -83,9 +84,13 @@ class MarketMaker:
         self,
         signals: list[Signal],
         market_prices: dict[str, dict],  # market_id -> {yes_price, no_price, bid, ask}
+        is_live: bool = False,
     ) -> list[SpreadOpportunity]:
         """Find buckets where buying both sides costs less than $1.00."""
         opportunities: list[SpreadOpportunity] = []
+        
+        # Apply $5 cap if live
+        max_usd = self.max_live_usd_per_bucket if is_live else self.max_position_per_bucket
 
         for signal in signals:
             prices = market_prices.get(signal.market_id)
@@ -114,7 +119,7 @@ class MarketMaker:
             if profit_per_share < self.min_profit_per_trade:
                 continue  # Not worth it
 
-            max_shares = self.max_position_per_bucket / total_cost
+            max_shares = max_usd / total_cost
 
             opp = SpreadOpportunity(
                 market_id=signal.market_id,
@@ -142,6 +147,7 @@ class MarketMaker:
         signal: Signal,
         market_prices: dict[str, dict],
         bankroll: float,
+        is_live: bool = False,
     ) -> SpreadOrder | None:
         """Generate a spread capture order on the opposite side of a directional trade.
 
@@ -153,6 +159,7 @@ class MarketMaker:
             return None
 
         budget = bankroll * self.spread_budget_pct
+        max_usd = self.max_live_usd_per_bucket if is_live else self.max_position_per_bucket
 
         if signal.recommended_side.value == "YES":
             # Our directional trade is YES, hedge by buying NO
@@ -170,11 +177,11 @@ class MarketMaker:
                 return None
             limit_price = max(0.01, hedge_price - 0.01)
 
-        # Size: match the directional trade size but cap at budget
+        # Size: match the directional trade size but cap at budget and bucket limit
         shares = min(
             signal.recommended_size / limit_price,
             budget / limit_price,
-            self.max_position_per_bucket / limit_price,
+            max_usd / limit_price,
         )
 
         if shares < 1:

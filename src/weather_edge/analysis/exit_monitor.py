@@ -150,8 +150,7 @@ async def ai_review_exit(
             import httpx
             prompt = f"""EXIT REVIEW: Should we close this position early?
 
-Position: {trade.side} {trade.city_id} \
-${trade.size_usd:.0f} @ {trade.entry_price:.2f}
+Position: {trade.side} {trade.city_id} {trade.total_shares:.0f} shares (${trade.size_usd:.0f}) @ {trade.entry_price:.2f}
 Reason flagged: {candidate.reason}
 Original edge: {candidate.original_edge:.1%}
 Current edge: {candidate.current_edge:.1%}
@@ -228,8 +227,7 @@ resolution
 Generic arguments like "edge is still positive" or \
 "market might overreact" are NOT sufficient to override an exit.
 
-Position: {trade.side} {trade.city_id} \
-${trade.size_usd:.0f}
+Position: {trade.side} {trade.city_id} {trade.total_shares:.0f} shares (${trade.size_usd:.0f})
 Exit reason: {candidate.reason} \
 (edge: {candidate.original_edge:.1%} \
 \u2192 {candidate.current_edge:.1%})

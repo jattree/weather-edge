@@ -20,6 +20,10 @@ from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 
+# Polygon gas is cheap but not zero. Track for portfolio drag.
+# Est $0.002 USD per fill transaction (approx 0.005 POL at $0.40).
+POLYGON_GAS_ESTIMATE_USD = 0.002
+
 
 async def sync_portfolio(executor, store, market_lookup: dict | None = None) -> dict:
     """Full portfolio reconciliation from exchange.
@@ -52,6 +56,7 @@ async def sync_portfolio(executor, store, market_lookup: dict | None = None) -> 
         all_trades = all_trades.get("data", []) if isinstance(all_trades, dict) else []
 
     fills_synced = 0
+    total_gas = 0.0
     our_address = (executor.wallet_address or "").lower()
 
     for trade in all_trades:
@@ -86,7 +91,7 @@ async def sync_portfolio(executor, store, market_lookup: dict | None = None) -> 
             outcome = mo.get("outcome", "")
             fee_bps = int(mo.get("fee_rate_bps", 0))
 
-            # Unique fill ID: trade_id + order_id (one trade can match multiple of our orders)
+            # Unique fill ID: trade_id + order_id
             fill_id = f"{trade_id}:{order_id}"
 
             # Look up city from market_lookup or market_map
@@ -95,6 +100,10 @@ async def sync_portfolio(executor, store, market_lookup: dict | None = None) -> 
             if market_lookup and condition_id in market_lookup:
                 city_id = market_lookup[condition_id].get("city_id", "")
                 description = market_lookup[condition_id].get("description", "")
+
+            # Estimate gas per fill
+            gas_cost = POLYGON_GAS_ESTIMATE_USD
+            total_gas += gas_cost
 
             store.upsert_fill(
                 fill_id=fill_id,
@@ -109,9 +118,17 @@ async def sync_portfolio(executor, store, market_lookup: dict | None = None) -> 
                 tx_hash=tx_hash,
                 is_maker=1 if trade.get("trader_side") == "MAKER" else 0,
                 fee_rate_bps=fee_bps,
+                gas_usd=gas_cost,
                 outcome=outcome,
                 description=description,
             )
+            
+            # Update live_trades record with gas cost
+            if order_id:
+                store.conn.execute(
+                    "UPDATE live_trades SET gas_usd = gas_usd + ? WHERE order_id = ?",
+                    (gas_cost, order_id)
+                )
 
             # Update market_map
             if asset_id:
@@ -128,12 +145,12 @@ async def sync_portfolio(executor, store, market_lookup: dict | None = None) -> 
 
         # We might also be the taker (trader_side == TAKER)
         if trade.get("trader_side") == "TAKER":
+            # ... similar logic for taker ...
             asset_id = trade.get("asset_id", "")
             size = float(trade.get("size", 0))
             price = float(trade.get("price", 0))
             side = trade.get("side", "BUY")
             outcome = trade.get("outcome", "")
-
             fill_id = f"{trade_id}:taker"
 
             city_id = ""
@@ -141,6 +158,9 @@ async def sync_portfolio(executor, store, market_lookup: dict | None = None) -> 
             if market_lookup and condition_id in market_lookup:
                 city_id = market_lookup[condition_id].get("city_id", "")
                 description = market_lookup[condition_id].get("description", "")
+
+            gas_cost = POLYGON_GAS_ESTIMATE_USD
+            total_gas += gas_cost
 
             store.upsert_fill(
                 fill_id=fill_id,
@@ -155,12 +175,11 @@ async def sync_portfolio(executor, store, market_lookup: dict | None = None) -> 
                 tx_hash=tx_hash,
                 is_maker=0,
                 fee_rate_bps=int(trade.get("fee_rate_bps", 0)),
+                gas_usd=gas_cost,
                 outcome=outcome,
                 description=description,
             )
             fills_synced += 1
-
-    store.commit()
 
     # Step 1b: Backfill city_id and description on fills from market_map
     store.conn.execute("""
@@ -170,12 +189,21 @@ async def sync_portfolio(executor, store, market_lookup: dict | None = None) -> 
         WHERE (city_id = '' OR city_id IS NULL)
           AND asset_id IN (SELECT asset_id FROM market_map WHERE city_id != '')
     """)
-    store.commit()
-
+    
     # Step 2: Rebuild positions from fills
     store.rebuild_positions()
 
-    # Step 3: Get summary
+    # Step 3: Update session cumulative gas
+    try:
+        active = store.get_active_session()
+        if active and total_gas > 0:
+            store.update_live_session_gas(active["session_id"], total_gas)
+    except Exception as e:
+        logger.debug("Failed to update session gas: %s", e)
+
+    store.commit()
+
+    # Step 4: Get summary
     summary = store.get_portfolio_summary()
     summary["fills_synced"] = fills_synced
     summary["total_fills_on_exchange"] = len(all_trades)
