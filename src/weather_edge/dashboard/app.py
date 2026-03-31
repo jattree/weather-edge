@@ -454,34 +454,51 @@ async def _run_dashboard_cycle_inner(run_ai: bool = True) -> None:
                     "status": o.get("status", ""),
                 })
 
-            # Build trade log from Polymarket activity API
+            # Build trade log from positions (has resolution status) + activity (has timestamps)
             trade_log_live = []
-            for a in pm.get("activity", []):
-                ts = a.get("timestamp", 0)
-                try:
-                    time_str = datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%H:%M:%S")
-                except Exception:
-                    time_str = str(ts)
-                title = a.get("title", "")
-                side = a.get("side", "")
-                outcome = a.get("outcome", "")
-                size = float(a.get("size", 0))
-                price = float(a.get("price", 0))
-                usdc = float(a.get("usdcSize", 0))
-                label = f"{side} {outcome}" if outcome else side
+
+            # Positions → blotter entries with won/lost/open status
+            for p in pm["positions"]:
+                size = float(p.get("size", 0))
+                cur_val = float(p.get("currentValue", 0))
+                init_val = float(p.get("initialValue", 0))
+                avg_price = float(p.get("avgPrice", 0))
+                cash_pnl = float(p.get("cashPnl", 0))
+                redeemable = p.get("redeemable", False)
+                title = p.get("title", "")
+                outcome = p.get("outcome", "")
+
+                # Determine status
+                if redeemable and cur_val == 0:
+                    status = "lost"
+                elif redeemable:
+                    status = "won"
+                elif size == 0:
+                    status = "sold"
+                else:
+                    status = "open"
+
+                # Determine tier from entry price
+                tier = "tail" if avg_price <= 0.06 else "core"
+
                 trade_log_live.append({
-                    "side": label,
+                    "side": outcome or "YES",
                     "city": "",
                     "description": title,
-                    "size": round(usdc, 2),
-                    "pnl": None,
-                    "time": time_str,
-                    "status": a.get("type", "TRADE").lower(),
-                    "tier": "core",
-                    "price": price,
+                    "size": round(init_val, 2),
+                    "pnl": round(cash_pnl, 2),
+                    "time": "",
+                    "status": status,
+                    "tier": tier,
+                    "price": avg_price,
                     "shares": size,
                     "outcome": outcome,
+                    "current_value": round(cur_val, 2),
                 })
+
+            # Sort: open first, then won, then lost
+            status_order = {"open": 0, "won": 1, "lost": 2, "sold": 3}
+            trade_log_live.sort(key=lambda t: (status_order.get(t["status"], 9), -t["size"]))
 
             latest_state["live"] = {
                 "enabled": True,
