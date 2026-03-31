@@ -427,10 +427,10 @@ class PersistentStore:
                                    total_shares, avg_price, cost_basis, last_updated, description)
             SELECT
                 f.asset_id,
-                f.condition_id,
-                COALESCE(m.city_id, f.city_id, ''),
-                f.side,
-                COALESCE(m.outcome, f.outcome, ''),
+                MAX(f.condition_id),
+                MAX(COALESCE(m.city_id, f.city_id, '')),
+                MAX(f.side),
+                MAX(COALESCE(m.outcome, f.outcome, '')),
                 SUM(CASE WHEN f.side = 'BUY' THEN f.size ELSE -f.size END),
                 CASE WHEN SUM(CASE WHEN f.side = 'BUY' THEN f.size ELSE 0 END) > 0
                      THEN SUM(CASE WHEN f.side = 'BUY' THEN f.size * f.price ELSE 0 END)
@@ -438,7 +438,7 @@ class PersistentStore:
                      ELSE 0 END,
                 SUM(CASE WHEN f.side = 'BUY' THEN f.size * f.price ELSE 0 END),
                 datetime('now'),
-                COALESCE(m.description, f.description, '')
+                MAX(COALESCE(m.description, f.description, ''))
             FROM fills f
             LEFT JOIN market_map m ON f.asset_id = m.asset_id
             WHERE f.is_settled = 0
