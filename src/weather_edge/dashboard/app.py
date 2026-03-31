@@ -398,7 +398,7 @@ async def _run_dashboard_cycle_inner(run_ai: bool = True) -> None:
                     "size": round(f.get("size", 0) * f.get("price", 0), 2),
                     "pnl": None,
                     "time": time_str,
-                    "status": "settled" if f.get("is_settled") else "open",
+                    "status": "settled" if f.get("is_settled") else "filled",
                     "tier": "core",
                     "price": f.get("price", 0),
                     "shares": f.get("size", 0),
@@ -650,7 +650,7 @@ async def api_state():
                     "size": round(f.get("size", 0) * f.get("price", 0), 2),
                     "pnl": None,  # Unrealized until market resolves
                     "time": time_str,
-                    "status": "settled" if f.get("is_settled") else "open",
+                    "status": "settled" if f.get("is_settled") else "filled",
                     "tier": "core",
                     "price": f.get("price", 0),
                     "shares": f.get("size", 0),
