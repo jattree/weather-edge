@@ -250,6 +250,42 @@ Respond JSON only: \
             unrealized_pnl = current_value - cost_basis
             exit_fee_est = current_value * 0.02  # taker fee estimate
 
+            # Fetch order book depth for this position
+            book_context = "Order book data unavailable."
+            try:
+                from weather_edge.persistence import PersistentStore
+                s = PersistentStore()
+                pos = s.get_position_for_market(trade.market_id)
+                s.close()
+                if pos:
+                    asset_id = pos.get("asset_id", "")
+                    if asset_id:
+                        from weather_edge.config import settings
+                        async with httpx.AsyncClient() as book_client:
+                            resp = await book_client.get(
+                                f"{settings.polymarket_clob_url}/book",
+                                params={"token_id": asset_id},
+                                timeout=8.0,
+                            )
+                            if resp.status_code == 200:
+                                book = resp.json()
+                                bids = book.get("bids", [])
+                                asks = book.get("asks", [])
+                                # Top 5 levels of depth
+                                bid_depth = sum(float(b.get("size", 0)) for b in bids[:5])
+                                ask_depth = sum(float(a.get("size", 0)) for a in asks[:5])
+                                best_bid = float(bids[0]["price"]) if bids else 0
+                                best_ask = float(asks[0]["price"]) if asks else 0
+                                spread = round(best_ask - best_bid, 3) if best_bid and best_ask else 0
+                                book_context = (
+                                    f"Best bid: ${best_bid:.3f} ({bid_depth:.0f} shares depth)\n"
+                                    f"Best ask: ${best_ask:.3f} ({ask_depth:.0f} shares depth)\n"
+                                    f"Spread: ${spread:.3f}\n"
+                                    f"Our shares vs bid depth: {trade.total_shares:.0f} vs {bid_depth:.0f}"
+                                )
+            except Exception:
+                pass  # book_context stays as "unavailable"
+
             prompt = f"""RISK ASSESSMENT: Evaluate the cost of exiting this position NOW.
 
 You are a Risk Quant. Do NOT evaluate weather or meteorology. \
@@ -266,14 +302,18 @@ Edge: {candidate.current_edge:+.1%}
 Estimated taker fee if we exit: ${exit_fee_est:.2f}
 Bankroll: $210
 
+Order Book:
+{book_context}
+
 Questions to answer:
 1. Is the exit cost (fees + slippage) small relative to the \
 potential loss from holding?
-2. At {trade.total_shares:.0f} shares, can we exit without \
-moving the market significantly?
+2. Can we exit {trade.total_shares:.0f} shares without moving \
+the market? Compare our size to the bid depth.
 3. Should we exit NOW (taker) or place a maker sell and wait?
 
 If exit cost is <10% of potential loss, recommend EXIT.
+If our shares exceed bid depth by 3x+, warn about market impact.
 If exit would cost more than holding to resolution, recommend HOLD.
 
 Respond JSON only:
