@@ -292,6 +292,8 @@ async def fetch_polymarket_state(executor, wallet: str) -> dict:
         "market_value": 0.0,
         "cost_basis": 0.0,
         "unrealized_pnl": 0.0,
+        "cash_pnl": 0.0,
+        "realized_pnl": 0.0,
         "portfolio_value": 0.0,
         "position_count": 0,
     }
@@ -339,17 +341,21 @@ async def fetch_polymarket_state(executor, wallet: str) -> dict:
     except Exception:
         logger.warning("Failed to fetch activity from Polymarket Data API")
 
-    # Compute aggregates
+    # Compute aggregates from Polymarket's own calculations
     for p in result["positions"]:
         size = float(p.get("size", 0))
         if size > 0:
             result["position_count"] += 1
         result["market_value"] += float(p.get("currentValue", 0))
         result["cost_basis"] += float(p.get("initialValue", 0))
+        result["cash_pnl"] += float(p.get("cashPnl", 0))
+        result["realized_pnl"] += float(p.get("realizedPnl", 0))
 
     result["market_value"] = round(result["market_value"], 2)
     result["cost_basis"] = round(result["cost_basis"], 2)
     result["unrealized_pnl"] = round(result["market_value"] - result["cost_basis"], 2)
+    result["cash_pnl"] = round(result["cash_pnl"], 2)
+    result["realized_pnl"] = round(result["realized_pnl"], 2)
     result["portfolio_value"] = round(result["balance"] + result["market_value"], 2)
 
     return result
