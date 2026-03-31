@@ -357,6 +357,9 @@ async def fetch_polymarket_state(executor, wallet: str) -> dict:
     result["cash_pnl"] = round(result["cash_pnl"], 2)
     result["realized_pnl"] = round(result["realized_pnl"], 2)
     result["portfolio_value"] = round(result["balance"] + result["market_value"], 2)
+    # True P&L = what you have now - what you put in. Can't lie.
+    from weather_edge.config import settings as _s
+    result["total_pnl"] = round(result["portfolio_value"] - _s.bankroll, 2)
 
     return result
 
