@@ -378,19 +378,46 @@ async def _run_dashboard_cycle_inner(run_ai: bool = True) -> None:
     if live_executor and not live_executor.dry_run:
         try:
             live_balance = await live_executor.check_balance()
-            from weather_edge.trading.fill_tracker import get_fill_log
-            from weather_edge.live_state import get_json
-            open_order_ids = get_json("live:open_orders") or []
-            fills = get_fill_log()
-            # Compute live P&L from fills (filled_shares * (1 - price) for wins, -price for losses)
-            live_pnl = sum(f.get("filled_shares", 0) * f.get("price", 0) for f in fills if f.get("status") == "filled")
+            # Get live stats and trade log from SQLite (permanent storage)
+            live_stats = paper_trader.store.get_live_stats()
+            live_trades_db = paper_trader.store.get_live_trades(limit=100)
+            # Format live trades like paper trades for dashboard compatibility
+            live_trade_log = []
+            for lt in live_trades_db:
+                placed = lt.get("placed_at", "")
+                try:
+                    time_str = placed.split("T")[1][:8] if "T" in placed else placed[-8:]
+                except Exception:
+                    time_str = placed
+                live_trade_log.append({
+                    "side": lt.get("side", ""),
+                    "city": (lt.get("city_id") or "").upper(),
+                    "description": lt.get("description", ""),
+                    "size": lt.get("size_usd", 0),
+                    "pnl": lt.get("pnl"),
+                    "time": time_str,
+                    "status": lt.get("status", "open"),
+                    "tier": lt.get("strategy", "core"),
+                    "order_id": lt.get("order_id", ""),
+                    "price": lt.get("limit_price", 0),
+                    "shares": lt.get("size_shares", 0),
+                    "filled": lt.get("filled_shares", 0),
+                    "fee": lt.get("fee_usd", 0),
+                })
             latest_state["live"] = {
                 "enabled": True,
                 "balance": round(live_balance or 0, 2),
-                "open_orders": len(open_order_ids),
-                "open_order_ids": open_order_ids[:20],
-                "fills": fills[:20],
-                "pnl": round(live_pnl, 2),
+                "open_orders": live_stats.get("open_trades", 0),
+                "trade_log": live_trade_log,
+                "trade_count": live_stats.get("total_trades", 0),
+                "capital_at_risk": round(live_stats.get("capital_at_risk", 0), 2),
+                "pnl": round(live_stats.get("total_pnl", 0), 2),
+                "total_fees": round(live_stats.get("total_fees", 0), 2),
+                "win_rate": round(live_stats.get("win_rate", 0), 1),
+                "wins": live_stats.get("wins", 0),
+                "losses": live_stats.get("losses", 0),
+                "best_trade": live_stats.get("best_trade", 0),
+                "worst_trade": live_stats.get("worst_trade", 0),
                 "max_shares": live_executor.max_shares,
             }
         except Exception:
