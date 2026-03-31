@@ -76,6 +76,38 @@ def _ensure_tables(conn: sqlite3.Connection) -> None:
             FOREIGN KEY (trade_id) REFERENCES paper_trades(trade_id)
         );
 
+        CREATE TABLE IF NOT EXISTS live_trades (
+            trade_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            order_id TEXT UNIQUE,
+            market_id TEXT NOT NULL,
+            token_id TEXT NOT NULL,
+            city_id TEXT NOT NULL,
+            side TEXT NOT NULL,
+            status TEXT DEFAULT 'open',
+            limit_price REAL NOT NULL,
+            avg_fill_price REAL,
+            size_shares REAL NOT NULL,
+            filled_shares REAL DEFAULT 0,
+            size_usd REAL NOT NULL,
+            is_maker BOOLEAN DEFAULT 1,
+            fee_usd REAL DEFAULT 0,
+            cost_basis REAL,
+            proceeds REAL,
+            pnl REAL,
+            placed_at TEXT NOT NULL,
+            filled_at TEXT,
+            resolved_at TEXT,
+            description TEXT,
+            strategy TEXT DEFAULT 'core'
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_live_trades_status
+            ON live_trades(status);
+        CREATE INDEX IF NOT EXISTS idx_live_trades_city
+            ON live_trades(city_id);
+        CREATE INDEX IF NOT EXISTS idx_live_trades_placed
+            ON live_trades(placed_at);
+
         CREATE INDEX IF NOT EXISTS idx_forecast_city_model
             ON forecast_snapshots(city_id, model_name);
         CREATE INDEX IF NOT EXISTS idx_forecast_date
@@ -199,6 +231,104 @@ class PersistentStore:
             (key, value),
         )
         self.conn.commit()
+
+    # --- Live Trades (real money, tax-compliant) ---
+
+    def save_live_trade(
+        self,
+        order_id: str,
+        market_id: str,
+        token_id: str,
+        city_id: str,
+        side: str,
+        limit_price: float,
+        size_shares: float,
+        size_usd: float,
+        description: str = "",
+        strategy: str = "core",
+        is_maker: bool = True,
+    ) -> int:
+        cur = self.conn.execute(
+            """INSERT OR IGNORE INTO live_trades
+               (order_id, market_id, token_id, city_id, side, limit_price,
+                size_shares, size_usd, is_maker, placed_at, description, strategy)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                order_id, market_id, token_id, city_id, side, limit_price,
+                size_shares, size_usd, is_maker,
+                datetime.now(timezone.utc).isoformat(),
+                description, strategy,
+            ),
+        )
+        self.conn.commit()
+        return cur.lastrowid
+
+    def update_live_trade_fill(
+        self, order_id: str, avg_fill_price: float, filled_shares: float,
+        fee_usd: float = 0.0, status: str = "filled",
+    ) -> None:
+        now = datetime.now(timezone.utc).isoformat()
+        cost_basis = avg_fill_price * filled_shares + fee_usd
+        self.conn.execute(
+            """UPDATE live_trades
+               SET avg_fill_price = ?, filled_shares = ?, fee_usd = ?,
+                   cost_basis = ?, filled_at = ?, status = ?
+               WHERE order_id = ?""",
+            (avg_fill_price, filled_shares, fee_usd, cost_basis, now, status, order_id),
+        )
+        self.conn.commit()
+
+    def resolve_live_trade(
+        self, order_id: str, proceeds: float, pnl: float, status: str = "won",
+    ) -> None:
+        now = datetime.now(timezone.utc).isoformat()
+        self.conn.execute(
+            """UPDATE live_trades
+               SET proceeds = ?, pnl = ?, resolved_at = ?, status = ?
+               WHERE order_id = ?""",
+            (proceeds, pnl, now, status, order_id),
+        )
+        self.conn.commit()
+
+    def cancel_live_trade(self, order_id: str) -> None:
+        self.conn.execute(
+            "UPDATE live_trades SET status = 'cancelled' WHERE order_id = ?",
+            (order_id,),
+        )
+        self.conn.commit()
+
+    def get_live_trades(self, limit: int = 100) -> list[dict]:
+        rows = self.conn.execute(
+            "SELECT * FROM live_trades ORDER BY placed_at DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_open_live_trades(self) -> list[dict]:
+        rows = self.conn.execute(
+            "SELECT * FROM live_trades WHERE status IN ('open', 'partial') ORDER BY placed_at DESC",
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_live_stats(self) -> dict:
+        """Summary stats for live trading dashboard."""
+        row = self.conn.execute("""
+            SELECT
+                COUNT(*) as total_trades,
+                SUM(CASE WHEN status = 'open' THEN 1 ELSE 0 END) as open_trades,
+                SUM(CASE WHEN status = 'won' THEN 1 ELSE 0 END) as wins,
+                SUM(CASE WHEN status = 'lost' THEN 1 ELSE 0 END) as losses,
+                SUM(CASE WHEN status IN ('open','partial') THEN size_usd ELSE 0 END) as capital_at_risk,
+                COALESCE(SUM(pnl), 0) as total_pnl,
+                COALESCE(SUM(fee_usd), 0) as total_fees,
+                MAX(pnl) as best_trade,
+                MIN(pnl) as worst_trade
+            FROM live_trades
+        """).fetchone()
+        r = dict(row)
+        total_resolved = (r["wins"] or 0) + (r["losses"] or 0)
+        r["win_rate"] = (r["wins"] or 0) / total_resolved * 100 if total_resolved > 0 else 0
+        return r
 
     # --- Forecast Snapshots (for self-learning) ---
 

@@ -334,6 +334,27 @@ class TradeExecutor:
             if order_id and order_id != "unknown":
                 track_open_order(order_id)
 
+            # Persist to SQLite for tax compliance and dashboard
+            try:
+                from weather_edge.persistence import PersistentStore
+                store = PersistentStore()
+                store.save_live_trade(
+                    order_id=order_id,
+                    market_id=signal.market_id,
+                    token_id=token_id,
+                    city_id=signal.city_id,
+                    side=signal.recommended_side.value,
+                    limit_price=limit_price,
+                    size_shares=shares,
+                    size_usd=actual_usd,
+                    description=signal.description[:80],
+                    strategy=getattr(signal, "strategy", "core"),
+                    is_maker=self.post_only,
+                )
+                store.close()
+            except Exception as e:
+                logger.warning("Failed to persist live trade: %s", e)
+
             logger.info(
                 "LIVE ORDER PLACED: %s %s %.0f shares @ %.3f ($%.2f) | "
                 "order_id=%s | post_only=%s | taker_fee_avoided=$%.2f",

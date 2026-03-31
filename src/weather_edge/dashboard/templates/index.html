@@ -2537,12 +2537,13 @@
                 apEl.appendChild(emptyCard);
             }
 
-            /* Trade log */
-            if (state.trade_log) {
-                document.getElementById('tradeCount').textContent = state.trade_log.length + ' trades';
-                updateTradeLog(state.trade_log);
-                /* Accumulate into allTrades (dedup by time+city+desc) */
-                mergeTradesIntoBlotter(state.trade_log);
+            /* Trade log, switches with view mode */
+            var tradeLog = isLiveView ? (live.trade_log || []) : (state.trade_log || []);
+            if (tradeLog) {
+                var countLabel = isLiveView ? tradeLog.length + ' live trades' : tradeLog.length + ' trades';
+                document.getElementById('tradeCount').textContent = countLabel;
+                updateTradeLog(tradeLog);
+                mergeTradesIntoBlotter(tradeLog);
             }
 
             /* Session P&L, switches with view mode */
