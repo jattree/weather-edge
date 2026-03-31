@@ -579,8 +579,8 @@ class TradeExecutor:
 
         # Slippage guard: reject if limit price drifted too far from mark
         if reference_price is not None:
-            from weather_edge.config import get_settings
-            max_slip = get_settings().max_slippage_pct
+            from weather_edge.config import settings
+            max_slip = settings.max_slippage_pct
             if reference_price > 0 and (reference_price - price) / reference_price > max_slip:
                 logger.warning(
                     "SELL BLOCKED (slippage): %s price=%.3f ref=%.3f drift=%.1f%% > max=%.1f%%",
