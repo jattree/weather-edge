@@ -497,7 +497,9 @@ async def _run_dashboard_cycle_inner(run_ai: bool = True) -> None:
                 "cost_basis": pm["cost_basis"],
                 "market_value": pm["market_value"],
                 "capital_at_risk": pm["market_value"],
-                "pnl": pm["unrealized_pnl"],
+                "pnl": pm["cash_pnl"],
+                "realized_pnl": pm["realized_pnl"],
+                "unrealized_pnl": pm["unrealized_pnl"],
                 "total_fees": 0,
                 "max_shares": live_executor.max_shares,
             }
