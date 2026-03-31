@@ -135,6 +135,7 @@ async def run_cycle(
     run_ai_reasoning: bool = True,
     live_executor=None,
     store=None,
+    forecast_cache: dict[tuple, list] | None = None,
 ) -> tuple[list[Signal], dict[tuple, list], dict[str, dict]]:
     """Run one full fetch → analyze → signal cycle.
 
@@ -143,6 +144,7 @@ async def run_cycle(
         run_ai_reasoning: If False, skip Claude + Gemini calls (sniper-triggered cycles).
         live_executor: Optional TradeExecutor for real order placement.
         store: PersistentStore instance (shared by both paper and live).
+        forecast_cache: Optional persistent cache of forecasts across cycles.
 
     Returns:
         (signals, forecast_cache) where forecast_cache maps (city_id, date) -> forecasts
@@ -178,7 +180,7 @@ async def run_cycle(
     _portfolio_summary = {}
 
     all_signals: list[Signal] = []
-    _forecast_cache: dict[tuple, list] = {}  # (city_id, date) -> forecasts for Claude
+    _forecast_cache = forecast_cache if forecast_cache is not None else {}
     _ai_divergence_cache: dict[tuple, dict | None] = {}  # (city, variable) -> divergence result
 
     # Check if we're in a golden window (model just updated)
@@ -285,17 +287,27 @@ async def run_cycle(
 
         # Fetch multi-model forecasts
         forecasts = await fetch_city_forecasts(city_id, target_date)
-        _forecast_cache[(city_id, target_date)] = forecasts
+        if forecasts:
+            _forecast_cache[(city_id, target_date)] = forecasts
 
-        # Persist forecast snapshot for self-learning
-        try:
-            m_vals = {f.model_name: f.temp_max_c for f in forecasts if f.temp_max_c is not None}
-            if m_vals:
-                store.save_forecast_snapshot(
-                    city_id.value, str(target_date), m_vals,
+            # Persist forecast snapshot for self-learning
+            try:
+                m_vals = {f.model_name: f.temp_max_c for f in forecasts if f.temp_max_c is not None}
+                if m_vals:
+                    store.save_forecast_snapshot(
+                        city_id.value, str(target_date), m_vals,
+                    )
+            except Exception:
+                pass  # Don't break pipeline if persistence fails
+        else:
+            # Check if we have stale data in cache
+            cached = _forecast_cache.get((city_id, target_date))
+            if cached:
+                forecasts = cached
+                logger.warning(
+                    "STALE DATA: fetch failed for %s on %s, using cached data from %s",
+                    city_id.value, target_date, cached[0].fetched_at.strftime("%H:%M:%S"),
                 )
-        except Exception:
-            pass  # Don't break pipeline if persistence fails
 
         if not forecasts:
             logger.warning("No forecasts for %s on %s", city_id.value, target_date)
@@ -859,6 +871,7 @@ async def run_cycle(
             paper_candidates = scan_for_exits(
                 paper_trader.open_trades,
                 current_market_prices, current_model_probs,
+                forecast_cache=_forecast_cache,
             )
             if paper_candidates:
                 logger.info("PAPER EXIT MONITOR: %d candidates", len(paper_candidates))
@@ -920,6 +933,7 @@ async def run_cycle(
                 live_candidates = scan_for_exits(
                     live_positions,
                     current_market_prices, current_model_probs,
+                    forecast_cache=_forecast_cache,
                 )
                 if live_candidates:
                     logger.info("LIVE EXIT MONITOR: %d candidates", len(live_candidates))
@@ -993,6 +1007,9 @@ async def run_cycle(
                                                 logger.warning("Failed to cancel old sell order %s: %s", old_id[:16], e)
 
                                     try:
+                                        # High urgency: use taker mode to guarantee fill
+                                        # Low/medium: use maker (post_only) to save fees
+                                        urgent = candidate.urgency == "high"
                                         sell_result = await live_executor.place_sell_order(
                                             token_id=asset_id,
                                             shares=position["total_shares"],
@@ -1001,6 +1018,7 @@ async def run_cycle(
                                             city_id=city_id_str,
                                             description=f"EXIT: {candidate.reason}",
                                             reference_price=candidate.current_market_price,
+                                            force_taker=urgent,
                                         )
                                         if sell_result:
                                             logger.warning(
@@ -1053,12 +1071,17 @@ async def run_loop(paper_trader: PaperTrader | None) -> None:
     """Run the fetch-analyze-trade loop continuously."""
     interval = settings.fetch_interval_minutes * 60
     cycle_num = 0
+    forecast_cache: dict[tuple, list] = {}
 
     while True:
         cycle_num += 1
         logger.info("===== CYCLE %d START =====", cycle_num)
         try:
-            signals, _, _ = await run_cycle(paper_trader)
+            # Pass existing cache to run_cycle
+            signals, forecast_cache, _ = await run_cycle(
+                paper_trader,
+                forecast_cache=forecast_cache,
+            )
             tradeable = [s for s in signals if s.confidence_tier.value != "low"]
             pnl = paper_trader.total_pnl if paper_trader else 0
             logger.info(

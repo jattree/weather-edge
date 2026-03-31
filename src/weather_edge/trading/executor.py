@@ -558,6 +558,7 @@ class TradeExecutor:
         city_id: str = "",
         description: str = "",
         reference_price: float | None = None,
+        force_taker: bool = False,
     ) -> OrderResult | None:
         """Place a sell order to exit a position.
 
@@ -569,6 +570,7 @@ class TradeExecutor:
             city_id: For logging.
             description: For logging.
             reference_price: Current market price for slippage check.
+            force_taker: If True, skip post_only to guarantee fill (pays ~2% taker fee).
         """
         if is_kill_switch_active():
             logger.warning("KILL SWITCH ACTIVE, blocking sell for %s", city_id)
@@ -624,14 +626,21 @@ class TradeExecutor:
             signed_order = await loop.run_in_executor(
                 None, self._client.create_order, order_args,
             )
+            use_post_only = self.post_only and not force_taker
             response = await loop.run_in_executor(
                 None,
                 lambda: self._client.post_order(
                     signed_order,
                     orderType=OrderType.GTC,
-                    post_only=self.post_only,
+                    post_only=use_post_only,
                 ),
             )
+
+            if force_taker:
+                logger.info(
+                    "EXIT TAKER MODE: %s, post_only=False, will pay taker fees",
+                    city_id,
+                )
 
             if not isinstance(response, dict):
                 response = {"raw": str(response)}
@@ -660,7 +669,7 @@ class TradeExecutor:
                         size_usd=round(shares * price, 2),
                         description=description[:80],
                         strategy="exit",
-                        is_maker=self.post_only,
+                        is_maker=use_post_only,
                     )
                 finally:
                     s.close()
