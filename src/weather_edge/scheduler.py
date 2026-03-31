@@ -116,17 +116,7 @@ async def run_cycle(
     except Exception:
         logger.exception("Paper trade resolution failed, continuing with cycle")
 
-    # === PORTFOLIO SYNC: reconcile with exchange truth ===
     _portfolio_summary = {}
-    if live_executor and not live_executor.dry_run:
-        try:
-            from weather_edge.trading.portfolio_sync import sync_portfolio
-            _portfolio_summary = await sync_portfolio(
-                executor=live_executor,
-                store=paper_trader.store,
-            )
-        except Exception:
-            logger.exception("Portfolio sync failed, continuing with stale positions")
 
     all_signals: list[Signal] = []
     _forecast_cache: dict[tuple, list] = {}  # (city_id, date) -> forecasts for Claude
@@ -156,6 +146,18 @@ async def run_cycle(
                 logger.info("Market map updated: %d token mappings", mapped)
         except Exception:
             logger.debug("Market map update failed", exc_info=True)
+
+    # === PORTFOLIO SYNC: reconcile with exchange truth ===
+    # Runs AFTER market_map so positions get city_id mapping
+    if live_executor and not live_executor.dry_run:
+        try:
+            from weather_edge.trading.portfolio_sync import sync_portfolio
+            _portfolio_summary = await sync_portfolio(
+                executor=live_executor,
+                store=paper_trader.store,
+            )
+        except Exception:
+            logger.exception("Portfolio sync failed, continuing with stale positions")
 
     # Aggregate volume and liquidity by city for dashboard
     city_volume: dict[str, dict] = {}
