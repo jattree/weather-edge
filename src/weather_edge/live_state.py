@@ -34,20 +34,27 @@ def _get_redis():
         return _redis_client
     try:
         import redis
+
+        from weather_edge.config import settings
         _redis_client = redis.Redis(
-            host="localhost", port=6379, db=0,
+            host=settings.redis_host,
+            port=settings.redis_port,
+            db=settings.redis_db,
             decode_responses=True,
             socket_connect_timeout=2,
             socket_timeout=2,
         )
         _redis_client.ping()
-        logger.info("Redis connected (localhost:6379)")
+        logger.info(
+            "Redis connected (%s:%d/%d)",
+            settings.redis_host, settings.redis_port, settings.redis_db,
+        )
         # Record Redis health (avoid circular import, write directly to in-memory store)
         try:
             from weather_edge.analysis.service_health import record_service_call
             record_service_call("redis", True)
         except Exception:
-            pass
+            logger.debug("Failed to record Redis health", exc_info=True)
         return _redis_client
     except Exception as e:
         logger.warning("Redis unavailable (%s), using in-memory fallback", e)
@@ -56,7 +63,7 @@ def _get_redis():
             from weather_edge.analysis.service_health import record_service_call
             record_service_call("redis", False)
         except Exception:
-            pass
+            logger.debug("Failed to record Redis failure", exc_info=True)
         return None
 
 
@@ -68,7 +75,7 @@ def set_value(key: str, value: str, ttl: int | None = None) -> None:
             r.set(key, value, ex=ttl)
             return
         except Exception:
-            pass
+            logger.debug("Redis set failed for %s, using fallback", key)
     _fallback_cache[key] = value
 
 
@@ -79,7 +86,7 @@ def get_value(key: str) -> str | None:
         try:
             return r.get(key)
         except Exception:
-            pass
+            logger.debug("Redis get failed for %s, using fallback", key)
     return _fallback_cache.get(key)
 
 
@@ -106,7 +113,7 @@ def set_lock(key: str, ttl: int = 180) -> bool:
         try:
             return bool(r.set(key, "locked", nx=True, ex=ttl))
         except Exception:
-            pass
+            logger.debug("Redis lock failed for %s, using fallback", key)
     # Fallback: simple in-memory check
     if key in _fallback_cache:
         return False
@@ -122,7 +129,7 @@ def release_lock(key: str) -> None:
             r.delete(key)
             return
         except Exception:
-            pass
+            logger.debug("Redis delete failed for %s, using fallback", key)
     _fallback_cache.pop(key, None)
 
 

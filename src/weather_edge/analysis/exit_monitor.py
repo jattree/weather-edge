@@ -15,7 +15,7 @@ import logging
 from dataclasses import dataclass
 
 from weather_edge.analysis.contracts import validate_penny_no_exit
-from weather_edge.trading.paper import PaperTrade
+from weather_edge.models.position import Position
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +30,7 @@ MIN_SPREAD_MULTIPLIER = 1.5  # Don't exit if edge < 1.5x the spread
 @dataclass
 class ExitCandidate:
     """A trade flagged for potential early exit."""
-    trade: PaperTrade
+    trade: Position
     reason: str  # "edge_inversion", "profit_cap", "pattern_bust"
     current_model_prob: float
     current_market_price: float
@@ -45,7 +45,7 @@ class ExitCandidate:
 
 
 def scan_for_exits(
-    open_trades: list[PaperTrade],
+    open_trades: list[Position],
     market_prices: dict[str, float],
     model_probs: dict[str, float],
 ) -> list[ExitCandidate]:
@@ -150,7 +150,8 @@ async def ai_review_exit(
             import httpx
             prompt = f"""EXIT REVIEW: Should we close this position early?
 
-Position: {trade.side} {trade.city_id} ${trade.size_usd:.0f} @ {trade.entry_price:.2f}
+Position: {trade.side} {trade.city_id} \
+${trade.size_usd:.0f} @ {trade.entry_price:.2f}
 Reason flagged: {candidate.reason}
 Original edge: {candidate.original_edge:.1%}
 Current edge: {candidate.current_edge:.1%}
@@ -158,11 +159,14 @@ Current model prob: {candidate.current_model_prob:.1%}
 Current market price: {candidate.current_market_price:.1%}
 
 Model forecasts:
-{chr(10).join(f"  {k}: {v:.1f}°C" for k, v in sorted(model_values.items()))}
+{chr(10).join(
+    f"  {k}: {v:.1f}°C" for k, v in sorted(model_values.items())
+)}
 Consensus: {consensus_mean:.1f}°C (std={consensus_std:.1f})
 
 Should we EXIT this position or HOLD to resolution?
-Respond JSON only: {{"verdict": "EXIT" or "HOLD", "rationale": "brief reason"}}"""
+Respond JSON only: \
+{{"verdict": "EXIT" or "HOLD", "rationale": "brief reason"}}"""
 
             async with httpx.AsyncClient() as client:
                 resp = await client.post(
@@ -181,16 +185,20 @@ Respond JSON only: {{"verdict": "EXIT" or "HOLD", "rationale": "brief reason"}}"
                 )
                 if resp.status_code == 200:
                     import json
-                    text = resp.json()["content"][0]["text"]
                     import re
+
+                    text = resp.json()["content"][0]["text"]
                     match = re.search(r"\{.*\}", text, re.DOTALL)
                     if match:
                         result = json.loads(match.group())
                         candidate.claude_verdict = result.get("verdict", "HOLD")
                         candidate.claude_rationale = result.get("rationale", "")
-                        logger.info("CLAUDE EXIT: %s %s, %s: %s",
-                                    trade.city_id, candidate.reason,
-                                    candidate.claude_verdict, candidate.claude_rationale)
+                        logger.info(
+                            "CLAUDE EXIT: %s %s, %s: %s",
+                            trade.city_id, candidate.reason,
+                            candidate.claude_verdict,
+                            candidate.claude_rationale,
+                        )
     except Exception:
         logger.debug("Claude exit review failed", exc_info=True)
 
@@ -208,41 +216,84 @@ Respond JSON only: {{"verdict": "EXIT" or "HOLD", "rationale": "brief reason"}}"
                 import re
 
                 import httpx
-                prompt = f"""EXIT CHALLENGE: Claude recommends exiting this position. You may argue to HOLD, but ONLY if you can provide:
-1. A SPECIFIC meteorological catalyst that will occur before resolution
+
+                prompt = f"""EXIT CHALLENGE: Claude recommends \
+exiting this position. You may argue to HOLD, but ONLY if you \
+can provide:
+1. A SPECIFIC meteorological catalyst that will occur before \
+resolution
 2. A SPECIFIC timeframe for when the edge will recover
 3. Evidence from the model data that the thesis is still valid
 
-Generic arguments like "edge is still positive" or "market might overreact" are NOT sufficient to override an exit.
+Generic arguments like "edge is still positive" or \
+"market might overreact" are NOT sufficient to override an exit.
 
-Position: {trade.side} {trade.city_id} ${trade.size_usd:.0f}
-Exit reason: {candidate.reason} (edge: {candidate.original_edge:.1%} → {candidate.current_edge:.1%})
-Claude says: EXIT, {candidate.claude_rationale}
+Position: {trade.side} {trade.city_id} \
+${trade.size_usd:.0f}
+Exit reason: {candidate.reason} \
+(edge: {candidate.original_edge:.1%} \
+\u2192 {candidate.current_edge:.1%})
+Claude says: EXIT \u2014 {candidate.claude_rationale}
 
-If you cannot provide a specific catalyst with timeframe, you MUST agree with the exit.
+If you cannot provide a specific catalyst with timeframe, \
+you MUST agree with the exit.
 
 Respond JSON only:
-{{"verdict": "AGREE_EXIT" or "HOLD", "catalyst": "specific event or null", "timeframe": "hours until catalyst or null", "rationale": "brief reason"}}"""
+{{"verdict": "AGREE_EXIT" or "HOLD", \
+"catalyst": "specific event or null", \
+"timeframe": "hours until catalyst or null", \
+"rationale": "brief reason"}}"""
 
-                url = f"{GEMINI_API_URL}/{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
+                url = (
+                    f"{GEMINI_API_URL}/{GEMINI_MODEL}"
+                    f":generateContent?key={GEMINI_API_KEY}"
+                )
                 async with httpx.AsyncClient() as client:
-                    resp = await client.post(url, json={
-                        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-                        "generationConfig": {"maxOutputTokens": 500, "temperature": 0.3, "thinkingConfig": {"thinkingBudget": 0}},
-                    }, timeout=20.0)
+                    resp = await client.post(
+                        url,
+                        json={
+                            "contents": [{
+                                "role": "user",
+                                "parts": [{"text": prompt}],
+                            }],
+                            "generationConfig": {
+                                "maxOutputTokens": 500,
+                                "temperature": 0.3,
+                                "thinkingConfig": {
+                                    "thinkingBudget": 0,
+                                },
+                            },
+                        },
+                        timeout=20.0,
+                    )
                     if resp.status_code == 200:
-                        text = resp.json()["candidates"][0]["content"]["parts"][-1]["text"]
+                        data = resp.json()
+                        text = (
+                            data["candidates"][0]
+                            ["content"]["parts"][-1]["text"]
+                        )
                         text = re.sub(r"```json\s*", "", text)
                         text = re.sub(r"```\s*", "", text)
-                        match = re.search(r"\{.*\}", text.strip(), re.DOTALL)
+                        match = re.search(
+                            r"\{.*\}", text.strip(), re.DOTALL,
+                        )
                         if match:
                             result = json.loads(match.group())
-                            candidate.gemini_verdict = result.get("verdict", "AGREE_EXIT")
-                            candidate.gemini_rationale = result.get("rationale", "")
+                            candidate.gemini_verdict = result.get(
+                                "verdict", "AGREE_EXIT",
+                            )
+                            candidate.gemini_rationale = result.get(
+                                "rationale", "",
+                            )
                             catalyst = result.get("catalyst")
-                            logger.info("GEMINI EXIT: %s, %s (catalyst: %s): %s",
-                                        trade.city_id, candidate.gemini_verdict,
-                                        catalyst or "none", candidate.gemini_rationale)
+                            logger.info(
+                                "GEMINI EXIT: %s, %s "
+                                "(catalyst: %s): %s",
+                                trade.city_id,
+                                candidate.gemini_verdict,
+                                catalyst or "none",
+                                candidate.gemini_rationale,
+                            )
         except Exception:
             logger.debug("Gemini exit review failed", exc_info=True)
 

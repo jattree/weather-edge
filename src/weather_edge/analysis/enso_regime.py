@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import httpx
 
@@ -75,37 +75,49 @@ async def fetch_enso_state() -> ENSOState:
     if _cached_enso and _cache_expiry and now < _cache_expiry:
         return _cached_enso
 
-    # Try NOAA's ENSO data
-    try:
+    # Try NOAA's ENSO data (with retry, transient failures are common)
+    from weather_edge.retry import retry_async
+
+    async def _fetch_oni() -> float:
         async with httpx.AsyncClient() as client:
-            # CPC ENSO status page, parse the ONI value
             resp = await client.get(
                 "https://www.cpc.ncep.noaa.gov/data/indices/oni.ascii.txt",
                 timeout=10.0,
             )
             resp.raise_for_status()
             lines = resp.text.strip().split("\n")
-            # Last line has the most recent ONI value
-            # Format: YEAR SEASON APTS TOTAL  ONI
             last_line = lines[-1].split()
             if len(last_line) >= 4:
-                oni = float(last_line[-1])
-            else:
-                oni = 0.0
+                return float(last_line[-1])
+            return 0.0
+
+    try:
+        oni = await retry_async(
+            _fetch_oni,
+            attempts=3,
+            base_delay=2.0,
+            label="noaa_enso",
+        )
         try:
             from weather_edge.analysis.service_health import record_service_call
             record_service_call("noaa_cpc", True)
         except Exception:
-            pass
+            logger.debug("Failed to record NOAA health", exc_info=True)
     except Exception as e:
-        logger.debug("NOAA ENSO fetch failed: %s, using hardcoded March 2026 values", e)
+        logger.warning(
+            "NOAA ENSO fetch failed after retries: %s, using stale "
+            "fallback ONI=-0.5 (March 2026). This will drift over time.",
+            e,
+        )
         try:
             from weather_edge.analysis.service_health import record_service_call
             record_service_call("noaa_cpc", False)
         except Exception:
-            pass
-        # Fallback: known March 2026 state from CPC
-        oni = -0.5  # Declining La Nina
+            logger.debug("Failed to record NOAA failure", exc_info=True)
+        # Fallback: known March 2026 state from CPC.
+        # WARNING: this value will become stale. If this log line fires
+        # persistently, the ONI value needs manual update.
+        oni = -0.5
 
     # Determine phase from ONI
     if oni <= -0.5:
@@ -127,7 +139,10 @@ async def fetch_enso_state() -> ENSOState:
     )
 
     _cached_enso = state
-    _cache_expiry = now.replace(hour=0, minute=0, second=0) + __import__("datetime").timedelta(days=1)
+    _cache_expiry = (
+        now.replace(hour=0, minute=0, second=0)
+        + timedelta(days=1)
+    )
 
     logger.info(
         "ENSO state: %s (ONI=%.2f, transitioning=%s)",
