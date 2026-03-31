@@ -17,6 +17,20 @@ DEFAULT_DB_PATH = Path(__file__).parent.parent.parent / "weather_edge.db"
 
 
 def _ensure_tables(conn: sqlite3.Connection) -> None:
+    # Migrations: Add new columns if they don't exist
+    try:
+        conn.execute("ALTER TABLE sessions ADD COLUMN cumulative_gas REAL DEFAULT 0.0")
+    except sqlite3.OperationalError:
+        pass  # Column already exists
+    try:
+        conn.execute("ALTER TABLE live_trades ADD COLUMN gas_usd REAL DEFAULT 0.0")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        conn.execute("ALTER TABLE fills ADD COLUMN gas_usd REAL DEFAULT 0.0")
+    except sqlite3.OperationalError:
+        pass
+
     conn.executescript("""
         CREATE TABLE IF NOT EXISTS sessions (
             session_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -25,6 +39,7 @@ def _ensure_tables(conn: sqlite3.Connection) -> None:
             ended_at TEXT,
             final_pnl REAL,
             final_win_rate REAL,
+            cumulative_gas REAL DEFAULT 0.0,
             status TEXT DEFAULT 'active'
         );
 
@@ -91,6 +106,7 @@ def _ensure_tables(conn: sqlite3.Connection) -> None:
             size_usd REAL NOT NULL,
             is_maker BOOLEAN DEFAULT 1,
             fee_usd REAL DEFAULT 0,
+            gas_usd REAL DEFAULT 0,
             cost_basis REAL,
             proceeds REAL,
             pnl REAL,
@@ -119,6 +135,7 @@ def _ensure_tables(conn: sqlite3.Connection) -> None:
             size REAL NOT NULL,
             price REAL NOT NULL,
             fee_rate_bps INTEGER DEFAULT 0,
+            gas_usd REAL DEFAULT 0,
             is_maker INTEGER DEFAULT 1,
             filled_at TEXT NOT NULL,
             tx_hash TEXT,
@@ -363,12 +380,21 @@ class PersistentStore:
         ).fetchall()
         return [dict(r) for r in rows]
 
-    def get_open_order_for_market(self, market_id: str) -> dict | None:
-        """Check if there's already an open/partial order on this market."""
-        row = self.conn.execute(
-            "SELECT * FROM live_trades WHERE market_id = ? AND status IN ('open', 'partial') LIMIT 1",
-            (market_id,),
-        ).fetchone()
+    def get_open_order_for_market(self, market_id: str, side: str | None = None) -> dict | None:
+        """Check if there's already an open/partial order on this market.
+        
+        Args:
+            market_id: The condition_id.
+            side: Optional side to filter by (e.g. 'YES', 'NO', 'SELL').
+        """
+        query = "SELECT * FROM live_trades WHERE market_id = ? AND status IN ('open', 'partial')"
+        params = [market_id]
+        if side:
+            query += " AND side = ?"
+            params.append(side)
+        query += " LIMIT 1"
+        
+        row = self.conn.execute(query, params).fetchone()
         return dict(row) if row else None
 
     def get_live_stats(self) -> dict:
@@ -382,6 +408,7 @@ class PersistentStore:
                 SUM(CASE WHEN status IN ('open','partial') THEN size_usd ELSE 0 END) as capital_at_risk,
                 COALESCE(SUM(pnl), 0) as total_pnl,
                 COALESCE(SUM(fee_usd), 0) as total_fees,
+                COALESCE(SUM(gas_usd), 0) as total_gas,
                 MAX(pnl) as best_trade,
                 MIN(pnl) as worst_trade
             FROM live_trades
@@ -389,6 +416,7 @@ class PersistentStore:
         r = dict(row)
         total_resolved = (r["wins"] or 0) + (r["losses"] or 0)
         r["win_rate"] = (r["wins"] or 0) / total_resolved * 100 if total_resolved > 0 else 0
+        r["net_pnl"] = r["total_pnl"] - r["total_fees"] - r["total_gas"]
         return r
 
     # --- Fills & Positions (exchange truth) ---
@@ -397,16 +425,25 @@ class PersistentStore:
         self, fill_id: str, order_id: str, asset_id: str, condition_id: str,
         city_id: str, side: str, size: float, price: float,
         filled_at: str, tx_hash: str = "", is_maker: int = 1,
-        fee_rate_bps: int = 0, outcome: str = "", description: str = "",
+        fee_rate_bps: int = 0, gas_usd: float = 0.0,
+        outcome: str = "", description: str = "",
     ) -> None:
         self.conn.execute(
             """INSERT OR IGNORE INTO fills
                (id, order_id, asset_id, condition_id, city_id, side, size, price,
-                filled_at, tx_hash, is_maker, fee_rate_bps, outcome, description)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                filled_at, tx_hash, is_maker, fee_rate_bps, gas_usd, outcome, description)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (fill_id, order_id, asset_id, condition_id, city_id, side, size, price,
-             filled_at, tx_hash, is_maker, fee_rate_bps, outcome, description),
+             filled_at, tx_hash, is_maker, fee_rate_bps, gas_usd, outcome, description),
         )
+
+    def update_live_session_gas(self, session_id: int, gas_usd: float) -> None:
+        """Add gas cost to the session's cumulative gas total."""
+        self.conn.execute(
+            "UPDATE sessions SET cumulative_gas = cumulative_gas + ? WHERE session_id = ?",
+            (gas_usd, session_id),
+        )
+        self.conn.commit()
 
     def upsert_market_map(
         self, asset_id: str, condition_id: str, city_id: str = "",

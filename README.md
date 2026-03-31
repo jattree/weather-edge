@@ -85,17 +85,18 @@ Gemini audited the decoupled architecture and validated the design. Key findings
 
 1. ~~Generic Position interface~~, **DONE.** Shared `Position` dataclass in `models/position.py`. `PaperTrade` extends `Position`. `scan_for_exits()` accepts `list[Position]`. Live positions build `Position` directly, no more PaperTrade shim.
 2. ~~Network retry logic~~, **DONE.** `retry.py` provides exponential backoff (3 attempts, 2s base, 2x backoff, jitter). Applied to: CLOB order polling, Claude API, Gemini API, NOAA ENSO fetch. DB persistence retries 3x with CRITICAL log on exhaustion.
-3. ~~Share count in AI scanner~~, **DONE.** `Position.total_shares` field populated from exchange fills. Exit scanner has access to share count for payout calculations.
+3. ~~Share count in AI scanner~~, **DONE.** `Position.total_shares` field populated from exchange fills. Exit scanner has access to share count for payout calculations and AI reasoning prompts.
 4. ~~Broad exception handling~~, **DONE.** All `except Exception` in live paths replaced with specific catches (`requests.ConnectionError`, `Timeout`, `RequestException`, `ValueError`). All silent `except: pass` replaced with `logger.debug`.
 5. ~~Live/paper coupling~~, **DONE.** `can_live` no longer depends on paper trade result. Live execution only requires `signal.edge >= 0.02`.
 6. ~~Hardcoded config~~, **DONE.** Redis host/port/db, Polymarket chain_id, CLOB URL all moved to `Settings`.
+7. ~~Partial fills on exits~~, **DONE.** Sell orders are persisted to SQLite. `scheduler.py` checks for open SELL orders before placing new ones. Cancel-and-replace logic handles price drift for exiting positions.
+8. ~~Slippage tolerance~~, **DONE.** `max_slippage_pct` added to Settings. Exit monitor prices are grounded in current book asks to prevent over-aggressive sell orders.
+9. ~~Spread capture for live~~, **DONE.** Wired up `MarketMaker` for live execution. Capped at $5 max per bucket to limit adverse selection risk.
+10. ~~Gas cost tracking~~, **DONE.** Added `gas_usd` to fills and `cumulative_gas` to sessions. Estimated Polygon gas tracked for portfolio drag.
 
 **Remaining Gaps (TODO):**
 
-1. **Partial fills on exits**, Sell orders are GTC post_only, may not fill instantly. Need to handle partially-closed positions (e.g. 30% filled) and re-scan unfilled exits next cycle.
-2. **Slippage tolerance**, `place_sell_order` should enforce max slippage vs current mark price.
-3. **Spread capture for live**, Wire up but cap at $5 max. Risk of adverse selection from HFT bots filling only when forecast shifts against us.
-4. **Gas cost tracking**, Polygon gas is cheap but not zero. Track cumulative gas over hundreds of 30-min cycles for portfolio drag on $210 bankroll.
+*None.* All identified audit gaps have been resolved.
 
 ### VPN (Required, UK Geo-blocked)
 

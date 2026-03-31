@@ -143,6 +143,9 @@ def generate_daily_report(
         # AI performance
         "ai_stats": ai_stats,
 
+        # Live performance
+        "live_stats": _get_live_stats(paper_trader),
+
         # API health
         "api_health": api_health,
 
@@ -182,6 +185,16 @@ def _get_ai_stats() -> dict:
         }
     except Exception:
         return {"model": "unknown", "error": "could not load AI stats"}
+
+
+def _get_live_stats(paper_trader) -> dict:
+    """Get live trading stats if available."""
+    if hasattr(paper_trader, "store") and paper_trader.store:
+        try:
+            return paper_trader.store.get_live_stats()
+        except Exception as e:
+            logger.debug("Failed to fetch live stats for daily report: %s", e)
+    return {}
 
 
 def _get_api_health() -> list[dict]:

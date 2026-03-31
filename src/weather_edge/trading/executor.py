@@ -554,8 +554,10 @@ class TradeExecutor:
         token_id: str,
         shares: float,
         price: float,
+        market_id: str, # Required for DB persistence
         city_id: str = "",
         description: str = "",
+        reference_price: float | None = None,
     ) -> OrderResult | None:
         """Place a sell order to exit a position.
 
@@ -563,8 +565,10 @@ class TradeExecutor:
             token_id: The token to sell (YES or NO token we hold).
             shares: Number of shares to sell.
             price: Limit price (sell at this price or better).
+            market_id: The market condition_id (for DB persistence).
             city_id: For logging.
             description: For logging.
+            reference_price: Current market price for slippage check.
         """
         if is_kill_switch_active():
             logger.warning("KILL SWITCH ACTIVE, blocking sell for %s", city_id)
@@ -572,6 +576,19 @@ class TradeExecutor:
 
         shares = _floor_shares(shares)
         price = _round_price(price)
+
+        # Slippage guard: reject if limit price drifted too far from mark
+        if reference_price is not None:
+            from weather_edge.config import get_settings
+            max_slip = get_settings().max_slippage_pct
+            if reference_price > 0 and (reference_price - price) / reference_price > max_slip:
+                logger.warning(
+                    "SELL BLOCKED (slippage): %s price=%.3f ref=%.3f drift=%.1f%% > max=%.1f%%",
+                    city_id, price, reference_price,
+                    (reference_price - price) / reference_price * 100,
+                    max_slip * 100,
+                )
+                return None
 
         if shares < MIN_ORDER_SHARES:
             logger.info(
@@ -584,7 +601,7 @@ class TradeExecutor:
             logger.info("DRY RUN SELL: %s %.0f shares @ %.3f", city_id, shares, price)
             return OrderResult(
                 order_id="dry_run_sell",
-                market_id="",
+                market_id=market_id,
                 side="SELL",
                 size_usd=round(shares * price, 2),
                 size_shares=shares,
@@ -625,6 +642,42 @@ class TradeExecutor:
             if order_id and order_id != "unknown":
                 track_open_order(order_id)
 
+            # Persist to SQLite
+            from weather_edge.persistence import PersistentStore
+            from weather_edge.retry import retry_sync
+
+            def _persist_sell():
+                s = PersistentStore()
+                try:
+                    s.save_live_trade(
+                        order_id=order_id,
+                        market_id=market_id,
+                        token_id=token_id,
+                        city_id=city_id,
+                        side="SELL",
+                        limit_price=price,
+                        size_shares=shares,
+                        size_usd=round(shares * price, 2),
+                        description=description[:80],
+                        strategy="exit",
+                        is_maker=self.post_only,
+                    )
+                finally:
+                    s.close()
+
+            try:
+                retry_sync(
+                    _persist_sell,
+                    attempts=3,
+                    base_delay=0.5,
+                    label=f"persist_sell:{order_id[:16]}",
+                )
+            except Exception as e:
+                logger.critical(
+                    "GHOST SELL: sell order %s placed on exchange but DB write "
+                    "failed, %s", order_id, e,
+                )
+
             logger.info(
                 "LIVE SELL PLACED: %s %.0f shares @ %.3f ($%.2f) | order_id=%s",
                 city_id, shares, price, round(shares * price, 2), order_id,
@@ -632,7 +685,7 @@ class TradeExecutor:
 
             return OrderResult(
                 order_id=order_id,
-                market_id="",
+                market_id=market_id,
                 side="SELL",
                 size_usd=round(shares * price, 2),
                 size_shares=shares,
