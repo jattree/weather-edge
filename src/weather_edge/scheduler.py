@@ -614,6 +614,15 @@ async def run_cycle(
                     )
     logger.info("Book price fetch complete, placing trades...")
 
+    # Fetch live balance from exchange once before order loop
+    _live_balance: float | None = None
+    if live_executor and not live_executor.dry_run:
+        try:
+            _live_balance = await live_executor.check_balance()
+            logger.info("USDC balance: $%.2f", _live_balance or 0)
+        except Exception:
+            logger.warning("Failed to fetch live balance, will skip balance checks")
+
     for signal in all_signals:
         # Contract: verify taker fee doesn't eat >40% of projected alpha
         # This gate applies to TAKER orders only. Live executor uses post_only
@@ -657,14 +666,11 @@ async def run_cycle(
         # === LIVE EXECUTION (maker orders bypass fee gate, $0 maker fee) ===
         # Still require minimum raw edge, we're bypassing fee check, not edge check
         if live_executor and not live_executor.dry_run:
-            # Margin check, don't place if we can't afford it
-            portfolio = _portfolio_summary or {}
-            deployed = portfolio.get("total_deployed", 0)
-            available = (settings.bankroll - deployed) if deployed else settings.bankroll
-            if signal.recommended_size > available and available < 10:
+            # Margin check, use tracked live balance, not stale portfolio calc
+            if _live_balance is not None and signal.recommended_size > _live_balance:
                 logger.info(
-                    "MARGIN LIMIT: %s needs $%.0f but only $%.0f available, skipping",
-                    signal.city_id, signal.recommended_size, available,
+                    "BALANCE LIMIT: %s needs $%.0f but exchange balance is $%.2f, skipping",
+                    signal.city_id, signal.recommended_size, _live_balance,
                 )
                 continue
 
@@ -798,11 +804,16 @@ async def run_cycle(
                                 signal, token_id,
                             )
                             if result:
+                                # Track spending against live balance
+                                if _live_balance is not None:
+                                    _live_balance -= result.size_usd
+
                                 logger.info(
-                                    "LIVE: %s %s %s %.0f shares @ %.3f, %s",
+                                    "LIVE: %s %s %s %.0f shares @ %.3f, %s (bal=$%.2f)",
                                     result.status, signal.recommended_side.value,
                                     signal.city_id, result.size_shares,
                                     result.limit_price, result.order_id,
+                                    _live_balance or 0,
                                 )
 
                                 # --- LIVE SPREAD CAPTURE HEDGE ---
