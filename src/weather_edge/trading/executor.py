@@ -493,6 +493,99 @@ class TradeExecutor:
             logger.error("Stale order check failed: %s", e)
             return 0
 
+    async def place_sell_order(
+        self,
+        token_id: str,
+        shares: float,
+        price: float,
+        city_id: str = "",
+        description: str = "",
+    ) -> OrderResult | None:
+        """Place a sell order to exit a position.
+
+        Args:
+            token_id: The token to sell (YES or NO token we hold).
+            shares: Number of shares to sell.
+            price: Limit price (sell at this price or better).
+            city_id: For logging.
+            description: For logging.
+        """
+        if is_kill_switch_active():
+            logger.warning("KILL SWITCH ACTIVE, blocking sell for %s", city_id)
+            return None
+
+        shares = _floor_shares(shares)
+        price = _round_price(price)
+
+        if shares < MIN_ORDER_SHARES:
+            logger.info("SELL TOO SMALL: %s %.1f shares < %d min", city_id, shares, MIN_ORDER_SHARES)
+            return None
+
+        if self.dry_run or self._client is None:
+            logger.info("DRY RUN SELL: %s %.0f shares @ %.3f", city_id, shares, price)
+            return OrderResult(
+                order_id="dry_run_sell",
+                market_id="",
+                side="SELL",
+                size_usd=round(shares * price, 2),
+                size_shares=shares,
+                limit_price=price,
+                status="dry_run",
+            )
+
+        try:
+            from py_clob_client.clob_types import OrderArgs, OrderType
+            from py_clob_client.order_builder.constants import SELL
+
+            order_args = OrderArgs(
+                token_id=token_id,
+                price=price,
+                size=shares,
+                side=SELL,
+            )
+
+            loop = asyncio.get_running_loop()
+            signed_order = await loop.run_in_executor(
+                None, self._client.create_order, order_args,
+            )
+            response = await loop.run_in_executor(
+                None,
+                lambda: self._client.post_order(
+                    signed_order,
+                    orderType=OrderType.GTC,
+                    post_only=self.post_only,
+                ),
+            )
+
+            if not isinstance(response, dict):
+                response = {"raw": str(response)}
+
+            order_id = response.get("orderID", response.get("id", "unknown"))
+            status = response.get("status", "pending")
+
+            if order_id and order_id != "unknown":
+                track_open_order(order_id)
+
+            logger.info(
+                "LIVE SELL PLACED: %s %.0f shares @ %.3f ($%.2f) | order_id=%s",
+                city_id, shares, price, round(shares * price, 2), order_id,
+            )
+
+            return OrderResult(
+                order_id=order_id,
+                market_id="",
+                side="SELL",
+                size_usd=round(shares * price, 2),
+                size_shares=shares,
+                limit_price=price,
+                status="pending" if status != "REJECTED" else "rejected",
+                raw_response=response,
+            )
+
+        except Exception as e:
+            logger.error("LIVE SELL FAILED: %s, %s", city_id, e)
+            return None
+
     async def send_heartbeat(self) -> bool:
         """Send session heartbeat to prevent order auto-cancellation.
 

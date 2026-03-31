@@ -784,7 +784,39 @@ async def api_close_all():
     current_prices = {m.market_id: m.yes_price for m in markets if m.yes_price > 0}
 
     closed_pnl = paper_trader.close_all_positions(current_prices)
-    logger.info("Closed all positions. P&L from closes: $%.2f", closed_pnl)
+    logger.info("Closed all positions (paper). P&L from closes: $%.2f", closed_pnl)
+
+    # Also close all live positions on exchange
+    live_sells = 0
+    if live_executor and not live_executor.dry_run:
+        try:
+            # Cancel all open orders first
+            await live_executor.cancel_all_orders()
+            # Place sell orders for all positions
+            positions = paper_trader.store.get_positions()
+            for pos in positions:
+                asset_id = pos.get("asset_id", "")
+                shares = pos.get("total_shares", 0)
+                city = (pos.get("city_id") or "").upper()
+                # Sell at market price (use current YES price from discovery)
+                condition_id = pos.get("condition_id", "")
+                sell_price = current_prices.get(condition_id, 0.5)
+                if asset_id and shares >= 5:
+                    try:
+                        result = await live_executor.place_sell_order(
+                            token_id=asset_id,
+                            shares=shares,
+                            price=sell_price,
+                            city_id=city,
+                            description="CLOSE ALL",
+                        )
+                        if result:
+                            live_sells += 1
+                    except Exception as e:
+                        logger.error("Failed to sell %s: %s", city, e)
+            logger.info("CLOSE ALL: placed %d live sell orders", live_sells)
+        except Exception:
+            logger.exception("Live close-all failed")
 
     latest_state["trading_active"] = False
     latest_state["open_positions"] = 0
