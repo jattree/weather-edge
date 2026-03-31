@@ -218,6 +218,78 @@ async def sync_portfolio(executor, store, market_lookup: dict | None = None) -> 
     return summary
 
 
+async def fetch_polymarket_state(executor, wallet: str) -> dict:
+    """Fetch complete portfolio state from Polymarket APIs.
+
+    Returns a dict with:
+        balance: USDC cash available
+        positions: list of position dicts from Data API
+        open_orders: list of open orders from CLOB API
+        market_value: sum of currentValue across positions
+        cost_basis: sum of initialValue across positions
+        unrealized_pnl: market_value - cost_basis
+        portfolio_value: balance + market_value
+        position_count: number of active positions (size > 0)
+    """
+    import httpx
+
+    result = {
+        "balance": 0.0,
+        "positions": [],
+        "open_orders": [],
+        "market_value": 0.0,
+        "cost_basis": 0.0,
+        "unrealized_pnl": 0.0,
+        "portfolio_value": 0.0,
+        "position_count": 0,
+    }
+
+    # 1. Cash balance from CLOB API (authenticated)
+    try:
+        balance = await executor.check_balance()
+        result["balance"] = round(balance or 0, 2)
+    except Exception:
+        logger.warning("Failed to fetch balance from exchange")
+
+    # 2. Positions from Data API (public, uses proxy wallet)
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(
+                "https://data-api.polymarket.com/positions",
+                params={"user": wallet.lower(), "sizeThreshold": 0},
+                timeout=15.0,
+            )
+            if resp.status_code == 200:
+                result["positions"] = resp.json()
+    except Exception:
+        logger.warning("Failed to fetch positions from Polymarket Data API")
+
+    # 3. Open orders from CLOB API (authenticated)
+    try:
+        loop = asyncio.get_running_loop()
+        orders = await loop.run_in_executor(None, executor._client.get_orders)
+        if isinstance(orders, dict):
+            orders = orders.get("data", orders.get("results", []))
+        result["open_orders"] = [o for o in orders if o.get("status") == "LIVE"]
+    except Exception:
+        logger.warning("Failed to fetch open orders from CLOB API")
+
+    # Compute aggregates
+    for p in result["positions"]:
+        size = float(p.get("size", 0))
+        if size > 0:
+            result["position_count"] += 1
+        result["market_value"] += float(p.get("currentValue", 0))
+        result["cost_basis"] += float(p.get("initialValue", 0))
+
+    result["market_value"] = round(result["market_value"], 2)
+    result["cost_basis"] = round(result["cost_basis"], 2)
+    result["unrealized_pnl"] = round(result["market_value"] - result["cost_basis"], 2)
+    result["portfolio_value"] = round(result["balance"] + result["market_value"], 2)
+
+    return result
+
+
 async def sync_market_map_from_discovery(store, markets) -> int:
     """Update market_map from Polymarket market discovery.
 

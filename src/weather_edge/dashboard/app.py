@@ -413,126 +413,24 @@ async def _run_dashboard_cycle_inner(run_ai: bool = True) -> None:
     # Include live trading data, Polymarket APIs are source of truth
     if live_executor and not live_executor.dry_run:
         try:
-            live_balance = await live_executor.check_balance()
-            fills = paper_trader.store.get_fills(limit=100)
+            from weather_edge.trading.portfolio_sync import fetch_polymarket_state
+            # Proxy wallet is the on-chain address that holds positions
+            proxy = "0xe23940d70793b441c9f949741daa65289947fadb"
+            pm = await fetch_polymarket_state(live_executor, proxy)
 
-            # Get positions + values from Polymarket Data API (source of truth)
-            wallet = settings.polymarket_wallet.lower()
-            pm_positions = []
-            market_value = 0.0
-            cost_basis = 0.0
-            try:
-                async with httpx.AsyncClient() as val_client:
-                    resp = await val_client.get(
-                        "https://data-api.polymarket.com/positions",
-                        params={"user": wallet, "sizeThreshold": 0},
-                        timeout=15.0,
-                    )
-                    if resp.status_code == 200:
-                        pm_positions = resp.json()
-                        market_value = sum(float(p.get("currentValue", 0)) for p in pm_positions)
-                        cost_basis = sum(float(p.get("initialValue", 0)) for p in pm_positions)
-            except Exception:
-                logger.debug("Failed to fetch positions from Polymarket Data API")
-
-            portfolio_value = round((live_balance or 0) + market_value, 2)
-            unrealized_pnl = round(market_value - cost_basis, 2)
-            active_positions = len([p for p in pm_positions if float(p.get("size", 0)) > 0])
-
-            # Update live pool stats
-            for strat in ["core", "penny", "spread", "exit"]:
-                l_trades = paper_trader.store.conn.execute(
-                    "SELECT pnl, size_usd, status FROM live_trades WHERE strategy = ?",
-                    (strat,)
-                ).fetchall()
-                l_pnl = sum(r[0] or 0 for r in l_trades if r[2] in ("won", "lost"))
-                l_at_risk = sum(r[1] or 0 for r in l_trades if r[2] in ("open", "partial"))
-                if strat in latest_state["pools"]:
-                    latest_state["pools"][strat]["live_pnl"] = round(l_pnl, 2)
-                    latest_state["pools"][strat]["live_at_risk"] = round(l_at_risk, 2)
-
-            # Build trade log from fills with resolution countdown
+            # Build position list for dashboard
             import re as _re
-            live_trade_log = []
-            for f in fills:
-                filled_at = f.get("filled_at", "")
-                try:
-                    time_str = filled_at.split("T")[1][:8] if "T" in filled_at else filled_at[-8:]
-                except Exception:
-                    time_str = filled_at
-
-                # Extract target date from description for resolution countdown
-                resolves_at = None
-                resolves_in = ""
-                desc = f.get("description") or ""
-                city_id_str = (f.get("city_id") or "").lower()
-                date_match = _re.search(r"on (\w+ \d+)\??$", desc)
-                if date_match and not f.get("is_settled"):
-                    try:
-                        from dateutil.parser import parse as _parse_date
-                        target_date = _parse_date(date_match.group(1) + " 2026").date()
-                        # Look up city timezone for resolution time
-                        tz_name = None
-                        for ce, cc in CITIES.items():
-                            if ce.value == city_id_str:
-                                tz_name = cc.timezone
-                                break
-                        if tz_name and _HAS_ZONEINFO:
-                            tz = zoneinfo.ZoneInfo(tz_name)
-                            local_midnight = datetime(
-                                target_date.year, target_date.month, target_date.day,
-                                0, 0, 0, tzinfo=tz,
-                            ) + timedelta(days=1, hours=2)
-                            resolution_dt = local_midnight.astimezone(timezone.utc)
-                        else:
-                            resolution_dt = datetime(
-                                target_date.year, target_date.month, target_date.day,
-                                2, 0, 0, tzinfo=timezone.utc,
-                            ) + timedelta(days=1)
-                        now = datetime.now(timezone.utc)
-                        delta = resolution_dt - now
-                        resolves_at = resolution_dt.isoformat()
-                        if delta.total_seconds() <= 0:
-                            resolves_in = "OVERDUE"
-                        elif delta.days > 0:
-                            resolves_in = f"{delta.days}d {delta.seconds // 3600}h"
-                        else:
-                            hours = delta.seconds // 3600
-                            minutes = (delta.seconds % 3600) // 60
-                            resolves_in = f"{hours}h {minutes:02d}m" if hours > 0 else f"{minutes}m"
-                    except Exception:
-                        pass
-
-                live_trade_log.append({
-                    "side": f.get("side", ""),
-                    "city": (f.get("city_id") or "").upper(),
-                    "description": desc,
-                    "size": round(f.get("size", 0) * f.get("price", 0), 2),
-                    "pnl": None,
-                    "time": time_str,
-                    "status": "settled" if f.get("is_settled") else "filled",
-                    "tier": "core",
-                    "price": f.get("price", 0),
-                    "shares": f.get("size", 0),
-                    "outcome": f.get("outcome", ""),
-                    "is_maker": f.get("is_maker", 1),
-                    "resolves_at": resolves_at,
-                    "resolves_in": resolves_in,
-                })
-
-            # Build positions list from Polymarket Data API
             position_list = []
-            for p in pm_positions:
+            for p in pm["positions"]:
                 size = float(p.get("size", 0))
                 if size <= 0:
                     continue
                 cur_val = float(p.get("currentValue", 0))
                 init_val = float(p.get("initialValue", 0))
                 title = p.get("title", "")
-                # Extract city from title
-                import re as _re2
-                city_match = _re2.search(r"in (\w[\w\s]+?) (?:be |on )", title)
+                city_match = _re.search(r"in (\w[\w\s]+?) (?:be |on )", title)
                 city_name = city_match.group(1) if city_match else ""
+                pnl = float(p.get("cashPnl", 0))
                 position_list.append({
                     "city": city_name.upper()[:3] if city_name else "",
                     "side": p.get("outcome", ""),
@@ -540,22 +438,37 @@ async def _run_dashboard_cycle_inner(run_ai: bool = True) -> None:
                     "avg_price": round(init_val / size, 3) if size > 0 else 0,
                     "cost_basis": round(init_val, 2),
                     "current_value": round(cur_val, 2),
+                    "pnl": round(pnl, 2),
                     "description": title,
+                })
+
+            # Build open orders list for dashboard
+            open_order_list = []
+            for o in pm["open_orders"]:
+                open_order_list.append({
+                    "id": str(o.get("id", ""))[:16],
+                    "side": o.get("side", ""),
+                    "price": float(o.get("price", 0)),
+                    "size": float(o.get("original_size", 0)),
+                    "filled": float(o.get("size_matched", 0)),
+                    "status": o.get("status", ""),
                 })
 
             latest_state["live"] = {
                 "enabled": True,
-                "balance": round(live_balance or 0, 2),
-                "portfolio_value": portfolio_value,
-                "available_cash": round(live_balance or 0, 2),
+                "balance": pm["balance"],
+                "portfolio_value": pm["portfolio_value"],
+                "available_cash": pm["balance"],
                 "positions": position_list,
-                "position_count": active_positions,
-                "trade_log": live_trade_log,
-                "trade_count": len(fills),
-                "cost_basis": round(cost_basis, 2),
-                "market_value": round(market_value, 2),
-                "capital_at_risk": round(market_value, 2),
-                "pnl": unrealized_pnl,
+                "position_count": pm["position_count"],
+                "open_orders": open_order_list,
+                "open_order_count": len(pm["open_orders"]),
+                "trade_log": [],  # TODO: build from activity API
+                "trade_count": 0,
+                "cost_basis": pm["cost_basis"],
+                "market_value": pm["market_value"],
+                "capital_at_risk": pm["market_value"],
+                "pnl": pm["unrealized_pnl"],
                 "total_fees": 0,
                 "max_shares": live_executor.max_shares,
             }
