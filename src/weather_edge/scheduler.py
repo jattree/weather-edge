@@ -530,7 +530,13 @@ async def run_cycle(
         # === LIVE EXECUTION (maker orders bypass fee gate, $0 maker fee) ===
         # Still require minimum raw edge, we're bypassing fee check, not edge check
         if live_executor and not live_executor.dry_run:
-            if (trade or fee_blocked) and signal.edge >= 0.02:
+            can_live = (trade or fee_blocked) and signal.edge >= 0.02
+            if not can_live and fee_blocked:
+                logger.debug(
+                    "LIVE SKIP: %s edge=%.3f size=$%.0f (need ≥2%% edge)",
+                    signal.city_id, signal.edge, signal.recommended_size,
+                )
+            if can_live:
                 m = market_by_id.get(signal.market_id)
                 if m:
                     # Pick the right token: YES token for YES side, NO token for NO side
