@@ -445,6 +445,14 @@ class PersistentStore:
             GROUP BY f.asset_id
             HAVING SUM(CASE WHEN f.side = 'BUY' THEN f.size ELSE -f.size END) > 0
         """)
+        # Backfill city_id from market_map for any positions missing it
+        self.conn.execute("""
+            UPDATE positions SET
+                city_id = (SELECT m.city_id FROM market_map m WHERE m.asset_id = positions.asset_id),
+                description = (SELECT m.description FROM market_map m WHERE m.asset_id = positions.asset_id),
+                outcome = (SELECT m.outcome FROM market_map m WHERE m.asset_id = positions.asset_id)
+            WHERE city_id = '' OR city_id IS NULL
+        """)
         self.conn.commit()
 
     def get_positions(self) -> list[dict]:
