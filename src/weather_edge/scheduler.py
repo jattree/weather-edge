@@ -156,6 +156,10 @@ async def run_cycle(
                 executor=live_executor,
                 store=paper_trader.store,
             )
+            # Rebuild positions again to pick up market_map city_ids
+            # (market_map was updated just before sync, but fills may have empty city_id)
+            paper_trader.store.rebuild_positions()
+            _portfolio_summary = paper_trader.store.get_portfolio_summary()
         except Exception:
             logger.exception("Portfolio sync failed, continuing with stale positions")
 
