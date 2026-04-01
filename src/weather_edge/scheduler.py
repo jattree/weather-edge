@@ -691,6 +691,31 @@ async def run_cycle(
         # === LIVE EXECUTION (maker orders bypass fee gate, $0 maker fee) ===
         # Still require minimum raw edge, we're bypassing fee check, not edge check
         if live_executor and not live_executor.dry_run:
+            # Cooldown: don't re-enter a market we recently fully exited
+            # Sell-half excluded (still holding shares, POSITION EXISTS catches it)
+            # Massive edge (>12%) bypasses cooldown for genuine model shifts
+            if store:
+                recent_exit = store.conn.execute(
+                    """SELECT 1 FROM live_trades
+                       WHERE market_id = ? AND side = 'SELL'
+                       AND description NOT LIKE 'SELL_HALF%%'
+                       AND datetime(placed_at) > datetime('now', '-4 hours')
+                       LIMIT 1""",
+                    (signal.market_id,),
+                ).fetchone()
+                if recent_exit:
+                    if signal.edge < 0.12:
+                        logger.info(
+                            "EXIT COOLDOWN: %s, exited <4h ago, edge=%.1f%% (need >12%% to bypass)",
+                            signal.city_id, signal.edge * 100,
+                        )
+                        continue
+                    else:
+                        logger.warning(
+                            "COOLDOWN BYPASS: %s, massive edge %.1f%% overrules 4h window",
+                            signal.city_id, signal.edge * 100,
+                        )
+
             # Margin check, use tracked live balance, not stale portfolio calc
             if _live_balance is not None and signal.recommended_size > _live_balance:
                 logger.info(
