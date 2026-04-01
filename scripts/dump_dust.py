@@ -42,14 +42,7 @@ async def main():
     )
     positions = r.json()
 
-    # Also get local positions for asset_id -> condition_id mapping
     store = PersistentStore()
-    local_pos = store.get_positions()
-    asset_to_condition = {}
-    asset_to_city = {}
-    for lp in local_pos:
-        asset_to_condition[lp["asset_id"]] = lp["condition_id"]
-        asset_to_city[lp["asset_id"]] = lp.get("city_id", "")
 
     sellable = []
     too_small = []
@@ -61,9 +54,12 @@ async def main():
         size = float(p.get("size", 0))
         mv = float(p.get("currentValue", 0))
         cur_price = float(p.get("curPrice", 0))
-        asset_id = p.get("asset_id", "")
+        # Polymarket API uses "asset" not "asset_id"
+        asset_id = p.get("asset", p.get("asset_id", ""))
+        condition_id = p.get("conditionId", "")
         title = (p.get("title", "") or "")[:55]
         outcome = p.get("outcome", "")
+        slug = p.get("slug", "")
 
         if size <= 0:
             zero_size.append(title)
@@ -72,8 +68,8 @@ async def main():
         if mv >= DUST_VALUE_THRESHOLD:
             continue  # Keep non-dust
 
-        condition_id = asset_to_condition.get(asset_id, "")
-        city_id = asset_to_city.get(asset_id, "")
+        # Extract city from slug (e.g. "highest-temperature-in-los-angeles-on-april-2-2026-60-61f")
+        city_id = slug.split("in-")[-1].split("-on-")[0].replace("-", "_") if slug else ""
 
         if size >= MIN_SELL_SHARES:
             sellable.append({
