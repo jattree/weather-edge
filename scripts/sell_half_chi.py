@@ -38,16 +38,19 @@ async def main():
     total_shares = chi_pos["total_shares"]
     half_shares = round(total_shares / 2, 0)
 
-    print("Found: {} shares, selling {}".format(total_shares, half_shares))
+    # Current market: ~$0.71/share. Sell at $0.69 to guarantee taker fill.
+    sell_price = 0.69
+
+    print("Found: {} shares, selling {} @ ${:.2f}".format(total_shares, half_shares, sell_price))
 
     result = await executor.place_sell_order(
         token_id=asset_id,
         shares=half_shares,
-        price=0.18,
+        price=sell_price,
         market_id=condition_id,
         city_id="chi",
         description="TAKE PROFIT: sell half CHI 40-41F",
-        force_taker=False,
+        force_taker=True,
     )
 
     if result:
