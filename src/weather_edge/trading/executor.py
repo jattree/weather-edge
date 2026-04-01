@@ -208,13 +208,14 @@ class TradeExecutor:
         )
 
         # Calculate limit price
-        # Taker: price at market to cross the spread and guarantee fill
+        # Taker: price ABOVE midpoint to cross the spread and guarantee fill
         # Maker: improve below market to rest on the book
         if force_taker:
+            # Add 1¢ above midpoint to ensure we cross the ask
             if signal.recommended_side.value == "YES":
-                limit_price = signal.market_prob
+                limit_price = signal.market_prob + 0.01
             else:
-                limit_price = 1.0 - signal.market_prob
+                limit_price = (1.0 - signal.market_prob) + 0.01
         else:
             if signal.recommended_side.value == "YES":
                 limit_price = signal.market_prob - improve_price_by
@@ -372,7 +373,7 @@ class TradeExecutor:
                         size_usd=actual_usd,
                         description=signal.description[:80],
                         strategy=getattr(signal, "strategy", "core"),
-                        is_maker=self.post_only,
+                        is_maker=use_post_only,
                     )
                 finally:
                     s.close()

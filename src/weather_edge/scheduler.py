@@ -774,21 +774,20 @@ async def run_cycle(
                             signal.city_id, signal.edge * 100,
                         )
 
+            # --- SWING BOT: Minimum position size ---
+            # No more $1-6 dust positions. $10 minimum forces concentration.
+            MIN_LIVE_SIZE = 10.0
+            if signal.recommended_size < MIN_LIVE_SIZE:
+                signal.recommended_size = MIN_LIVE_SIZE
+
             # Margin check, use tracked live balance, not stale portfolio calc
+            # Runs AFTER min size bump so $10 floor is respected
             if _live_balance is not None and signal.recommended_size > _live_balance:
                 logger.info(
                     "BALANCE LIMIT: %s needs $%.0f but exchange balance is $%.2f, skipping",
                     signal.city_id, signal.recommended_size, _live_balance,
                 )
                 continue
-
-            # Live is independent of paper, only requires minimum edge or spread strategy.
-            # Maker orders have $0 fees so fee gate doesn't apply.
-            # --- SWING BOT: Minimum position size ---
-            # No more $1-6 dust positions. $10 minimum forces concentration.
-            MIN_LIVE_SIZE = 10.0
-            if signal.recommended_size < MIN_LIVE_SIZE:
-                signal.recommended_size = MIN_LIVE_SIZE
 
             is_spread = getattr(signal, "strategy", "") == "spread"
             can_live = signal.edge >= 0.02 or is_spread
@@ -919,6 +918,14 @@ async def run_cycle(
                             # Edge 5-12%: maker (rest on book, cancel if unfilled)
                             # At tail prices (<10c), taker fee is negligible anyway
                             use_taker = signal.edge >= 0.12
+                            # Re-check fee gate for taker orders, maker is $0 fee
+                            # but taker pays real fees that could eat alpha
+                            if use_taker and fee_blocked:
+                                logger.info(
+                                    "FEE GATE TAKER: %s edge=%.1f%% but fee eats >40%% alpha, using maker",
+                                    signal.city_id, signal.edge * 100,
+                                )
+                                use_taker = False
                             if use_taker:
                                 logger.info(
                                     "TAKER ENTRY: %s edge=%.1f%%, crossing spread",
@@ -932,6 +939,8 @@ async def run_cycle(
                                 # Track spending against live balance
                                 if _live_balance is not None:
                                     _live_balance -= result.size_usd
+                                # Track position count for cap enforcement
+                                _active_position_count += 1
 
                                 logger.info(
                                     "LIVE: %s %s %s %s %.0f shares @ %.3f, %s (bal=$%.2f)",
