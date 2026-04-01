@@ -740,17 +740,19 @@ async def fast_exit_loop() -> None:
         await asyncio.sleep(FAST_EXIT_INTERVAL)
         if not trading_active or not live_executor or live_executor.dry_run:
             continue
+
+        # Auto-redeem doesn't need model probs, run before that check
+        try:
+            redeemed = await live_executor.redeem_positions()
+            if redeemed > 0:
+                logger.warning("AUTO-REDEEM: %d positions redeemed to USDC", redeemed)
+        except Exception:
+            logger.error("Auto-redeem failed", exc_info=True)
+
         if not _cached_model_probs:
             continue
 
         try:
-            # Auto-redeem winning positions back to USDC
-            try:
-                redeemed = await live_executor.redeem_positions()
-                if redeemed > 0:
-                    logger.warning("AUTO-REDEEM: %d positions redeemed to USDC", redeemed)
-            except Exception:
-                logger.error("Auto-redeem failed", exc_info=True)
 
             # Sync positions from exchange first, keeps dashboard fresh
             # and prevents trading on stale balance data
