@@ -1202,10 +1202,22 @@
             color: var(--text);
             transition: background var(--transition-fast);
             cursor: pointer;
+            position: relative;
         }
         .blotter-row:hover {
             background: var(--bg-card);
         }
+        .blotter-row .pnl-bar {
+            position: absolute;
+            left: 0;
+            top: 0;
+            bottom: 0;
+            opacity: 0.08;
+            pointer-events: none;
+            transition: width 0.3s ease;
+        }
+        .blotter-row .pnl-bar.positive { background: var(--green); }
+        .blotter-row .pnl-bar.negative { background: var(--red); }
 
         /* ---- HEAT MAP ---- */
         .heatmap-grid {
@@ -1921,8 +1933,8 @@
             </div>
         </div>
         <div class="header-stats">
-            <div class="stat">
-                <div class="stat-value cyan glow-cyan mono" id="portfolioValue">$2,000</div>
+            <div class="stat" style="min-width: 120px;">
+                <div class="stat-value cyan glow-cyan mono" id="portfolioValue" style="font-size: 22px; letter-spacing: -0.5px;">$2,000</div>
                 <div class="stat-label">Portfolio Value</div>
             </div>
             <div class="stat-divider"></div>
@@ -1931,21 +1943,21 @@
                 <div class="stat-label">Free Cash</div>
             </div>
             <div class="stat">
-                <div class="stat-value yellow mono" id="atRisk">$0</div>
+                <div class="stat-value mono" id="atRisk" style="color: var(--text-dim);">$0</div>
                 <div class="stat-label">Invested</div>
             </div>
             <div class="stat-divider"></div>
-            <div class="stat">
-                <div class="stat-value green glow-green mono num-transition" id="totalPnl">$0</div>
+            <div class="stat" style="min-width: 90px;">
+                <div class="stat-value green glow-green mono num-transition" id="totalPnl" style="font-size: 20px;">$0</div>
                 <div class="stat-label">P&amp;L</div>
             </div>
             <div class="stat">
-                <div class="stat-value mono" id="returnPct">0%</div>
+                <div class="stat-value mono" id="returnPct" style="font-size: 16px;">0%</div>
                 <div class="stat-label">Return</div>
             </div>
             <div class="stat-divider"></div>
             <div class="stat">
-                <div class="stat-value mono" id="winRate">0%</div>
+                <div class="stat-value mono" id="winRate" style="color: var(--text-muted);">0%</div>
                 <div class="stat-label">Win Rate</div>
             </div>
             <div class="stat">
@@ -1953,7 +1965,7 @@
                 <div class="stat-label">Positions</div>
             </div>
             <div class="stat">
-                <div class="stat-value cyan mono" id="cycleCount">0</div>
+                <div class="stat-value mono" id="cycleCount" style="color: var(--text-muted);">0</div>
                 <div class="stat-label">Cycles</div>
             </div>
             <div class="stat-divider"></div>
@@ -2861,6 +2873,38 @@
                 bottom.appendChild(confBar);
 
                 card.appendChild(header);
+
+                // Sparkline from trend data
+                var trend = city.trend || [];
+                if (trend.length >= 3) {
+                    var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+                    svg.setAttribute('width', '100%');
+                    svg.setAttribute('height', '16');
+                    svg.style.display = 'block';
+                    svg.style.margin = '2px 0';
+                    svg.style.opacity = '0.6';
+                    var tMin = Math.min.apply(null, trend);
+                    var tMax = Math.max.apply(null, trend);
+                    var tRange = tMax - tMin || 1;
+                    var pts = trend.map(function(v, i) {
+                        var x = (i / (trend.length - 1)) * 100;
+                        var y = 14 - ((v - tMin) / tRange) * 12;
+                        return x.toFixed(1) + ',' + y.toFixed(1);
+                    }).join(' ');
+                    var polyline = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
+                    var trendUp = trend[trend.length - 1] >= trend[0];
+                    polyline.setAttribute('points', pts);
+                    polyline.setAttribute('fill', 'none');
+                    polyline.setAttribute('stroke', trendUp ? '#22c55e' : '#ef4444');
+                    polyline.setAttribute('stroke-width', '1.5');
+                    polyline.setAttribute('stroke-linecap', 'round');
+                    polyline.setAttribute('stroke-linejoin', 'round');
+                    svg.setAttribute('viewBox', '0 0 100 16');
+                    svg.setAttribute('preserveAspectRatio', 'none');
+                    svg.appendChild(polyline);
+                    card.appendChild(svg);
+                }
+
                 card.appendChild(bottom);
                 listEl.appendChild(card);
 
@@ -3506,6 +3550,15 @@
                         resolvesCell.style.color = 'var(--cyan)';
                     } else {
                         resolvesCell.style.color = 'var(--text-muted)';
+                    }
+
+                    // P&L colour bar behind the row
+                    if (t.pnl != null && t.pnl !== 0) {
+                        var bar = el('div', 'pnl-bar ' + (t.pnl >= 0 ? 'positive' : 'negative'));
+                        var maxPnl = 50; // scale: $50 = full width
+                        var barWidth = Math.min(100, (Math.abs(t.pnl) / maxPnl) * 100);
+                        bar.style.width = barWidth + '%';
+                        row.appendChild(bar);
                     }
 
                     row.appendChild(idCell);
