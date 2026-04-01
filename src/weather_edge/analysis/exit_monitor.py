@@ -83,16 +83,6 @@ def _check_observation_confirms_bucket(trade: Position) -> bool:
         if not bucket:
             return False
 
-        # Only check positions resolving TODAY, don't apply today's weather
-        # to a position that resolves on April 3
-        date_match = re.search(r"on (\w+ \d+)\??$", desc)
-        if date_match:
-            from dateutil.parser import parse as _parse_date
-            now = datetime.now(timezone.utc)
-            target_date = _parse_date(date_match.group(1) + f" {now.year}").date()
-            if target_date != now.date():
-                return False  # Not today's market
-
         # Find the city config for timezone and coordinates
         try:
             city_enum = City(trade.city_id)
@@ -102,9 +92,19 @@ def _check_observation_confirms_bucket(trade: Position) -> bool:
         if not city_config:
             return False
 
-        # Check if we're past peak heat in the city's timezone
+        # Use city's LOCAL date for comparison, not UTC
         tz = zoneinfo.ZoneInfo(city_config.timezone)
         local_now = datetime.now(tz)
+
+        # Only check positions resolving TODAY in the city's timezone
+        date_match = re.search(r"on (\w+ \d+)\??$", desc)
+        if date_match:
+            from dateutil.parser import parse as _parse_date
+            target_date = _parse_date(date_match.group(1) + f" {local_now.year}").date()
+            if target_date != local_now.date():
+                return False  # Not today's market in this city's timezone
+
+        # Check if we're past peak heat
         if local_now.hour < PEAK_HEAT_HOUR:
             return False  # Too early, high might not be set yet
 
