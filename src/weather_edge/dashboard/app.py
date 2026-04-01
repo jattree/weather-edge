@@ -528,8 +528,9 @@ async def _run_dashboard_cycle_inner(run_ai: bool = True) -> None:
                         # Use city timezone for resolution time
                         resolution_dt = None
                         if city_name and _HAS_ZONEINFO:
+                            cn_lower = city_name.lower()
                             for ce, cc in CITIES.items():
-                                if cc.name.lower() == city_name.lower():
+                                if cc.name.lower() in cn_lower or cn_lower in cc.name.lower():
                                     tz = zoneinfo.ZoneInfo(cc.timezone)
                                     local_midnight = datetime(
                                         target_date.year, target_date.month, target_date.day,
