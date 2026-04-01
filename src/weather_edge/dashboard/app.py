@@ -445,8 +445,8 @@ async def _run_dashboard_cycle_inner(run_ai: bool = True) -> None:
                 cur_val = float(p.get("currentValue", 0))
                 init_val = float(p.get("initialValue", 0))
                 title = p.get("title", "")
-                city_match = _re.search(r"in (\w[\w\s]+?) (?:be |on )", title)
-                city_name = city_match.group(1) if city_match else ""
+                city_match = _re.search(r"in (.+?) (?:be |on )", title)
+                city_name = city_match.group(1).strip() if city_match else ""
                 pnl = float(p.get("cashPnl", 0))
                 position_list.append({
                     "city": city_name.upper()[:3] if city_name else "",
@@ -509,8 +509,8 @@ async def _run_dashboard_cycle_inner(run_ai: bool = True) -> None:
                 # Determine tier from entry price
                 tier = "tail" if avg_price <= 0.06 else "core"
 
-                # Extract city from title: "Will the highest temperature in Dallas be..."
-                city_match = _re.search(r"in ([A-Z][a-z ]+?) (?:be |on )", title)
+                # Extract city from title: "Will the highest temperature in Buenos Aires be..."
+                city_match = _re.search(r"in (.+?) (?:be |on )", title)
                 city_name = city_match.group(1).strip() if city_match else ""
 
                 # Extract resolution date from title: "on April 1?"
@@ -522,14 +522,29 @@ async def _run_dashboard_cycle_inner(run_ai: bool = True) -> None:
                         from dateutil.parser import parse as _parse_date
                         now = datetime.now(timezone.utc)
                         target_date = _parse_date(date_match.group(1) + f" {now.year}").date()
-                        # If parsed date is far in the past, it's probably next year
                         if (now.date() - target_date).days > 180:
                             target_date = _parse_date(date_match.group(1) + f" {now.year + 1}").date()
-                        # Resolution = target date + 1 day + 2h buffer
-                        resolution_dt = datetime(
-                            target_date.year, target_date.month, target_date.day,
-                            2, 0, 0, tzinfo=timezone.utc,
-                        ) + timedelta(days=1)
+
+                        # Use city timezone for resolution time
+                        resolution_dt = None
+                        if city_name and _HAS_ZONEINFO:
+                            for ce, cc in CITIES.items():
+                                if cc.name.lower() == city_name.lower():
+                                    tz = zoneinfo.ZoneInfo(cc.timezone)
+                                    local_midnight = datetime(
+                                        target_date.year, target_date.month, target_date.day,
+                                        0, 0, 0, tzinfo=tz,
+                                    ) + timedelta(days=1, hours=2)
+                                    resolution_dt = local_midnight.astimezone(timezone.utc)
+                                    break
+
+                        # Fallback to UTC+2h if no timezone match
+                        if resolution_dt is None:
+                            resolution_dt = datetime(
+                                target_date.year, target_date.month, target_date.day,
+                                2, 0, 0, tzinfo=timezone.utc,
+                            ) + timedelta(days=1)
+
                         delta = resolution_dt - now
                         resolves_seconds = delta.total_seconds()
                         if resolves_seconds <= 0:
