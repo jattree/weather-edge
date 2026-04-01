@@ -474,6 +474,16 @@ async def _run_dashboard_cycle_inner(run_ai: bool = True) -> None:
             # Build trade log from positions (has resolution status) + activity (has timestamps)
             trade_log_live = []
 
+            # Build activity lookup: conditionId → earliest timestamp
+            import re as _re
+            activity_times = {}
+            for a in pm.get("activity", []):
+                cid = a.get("conditionId", "")
+                ts = a.get("timestamp", 0)
+                if cid and ts:
+                    if cid not in activity_times or ts < activity_times[cid]:
+                        activity_times[cid] = ts
+
             # Positions → blotter entries with won/lost/open status
             for p in pm["positions"]:
                 size = float(p.get("size", 0))
@@ -484,6 +494,7 @@ async def _run_dashboard_cycle_inner(run_ai: bool = True) -> None:
                 redeemable = p.get("redeemable", False)
                 title = p.get("title", "")
                 outcome = p.get("outcome", "")
+                cid = p.get("conditionId", "")
 
                 # Determine status
                 if redeemable and cur_val == 0:
@@ -498,19 +509,58 @@ async def _run_dashboard_cycle_inner(run_ai: bool = True) -> None:
                 # Determine tier from entry price
                 tier = "tail" if avg_price <= 0.06 else "core"
 
+                # Extract city from title: "Will the highest temperature in Dallas be..."
+                city_match = _re.search(r"in ([A-Z][a-z ]+?) (?:be |on )", title)
+                city_name = city_match.group(1).strip() if city_match else ""
+
+                # Extract resolution date from title: "on April 1?"
+                resolves_in = ""
+                date_match = _re.search(r"on (\w+ \d+)\??$", title)
+                if date_match and status == "open":
+                    try:
+                        from dateutil.parser import parse as _parse_date
+                        target_date = _parse_date(date_match.group(1) + " 2026").date()
+                        now = datetime.now(timezone.utc)
+                        # Resolution = target date + 1 day + 2h buffer
+                        resolution_dt = datetime(
+                            target_date.year, target_date.month, target_date.day,
+                            2, 0, 0, tzinfo=timezone.utc,
+                        ) + timedelta(days=1)
+                        delta = resolution_dt - now
+                        if delta.total_seconds() <= 0:
+                            resolves_in = "OVERDUE"
+                        elif delta.days > 0:
+                            resolves_in = f"{delta.days}d {delta.seconds // 3600}h"
+                        else:
+                            hours = delta.seconds // 3600
+                            minutes = (delta.seconds % 3600) // 60
+                            resolves_in = f"{hours}h {minutes:02d}m" if hours > 0 else f"{minutes}m"
+                    except Exception:
+                        pass
+
+                # Timestamp from activity API
+                entry_ts = activity_times.get(cid, 0)
+                time_str = ""
+                if entry_ts:
+                    try:
+                        time_str = datetime.fromtimestamp(entry_ts, tz=timezone.utc).strftime("%H:%M:%S")
+                    except Exception:
+                        pass
+
                 trade_log_live.append({
                     "side": outcome or "YES",
-                    "city": "",
+                    "city": city_name,
                     "description": title,
                     "size": round(init_val, 2),
                     "pnl": round(cash_pnl, 2),
-                    "time": "",
+                    "time": time_str,
                     "status": status,
                     "tier": tier,
                     "price": avg_price,
                     "shares": size,
                     "outcome": outcome,
                     "current_value": round(cur_val, 2),
+                    "resolves_in": resolves_in,
                 })
 
             # Sort: open first, then won, then lost
