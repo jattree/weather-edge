@@ -99,6 +99,13 @@ The system trades real money on Polymarket via the CLOB API.
 | Parallel Open-Meteo fetching (semaphore 10) | Done |
 | Parallel Gamma API discovery (5 pages concurrent) | Done |
 | Portfolio value = market value (not cost basis) | Done |
+| Polymarket Data API as SOA (positions, P&L, activity) | Done |
+| Order reconciliation against CLOB every 2 min | Done |
+| Z-score guard (reject core bets >2 std devs from mean) | Done |
+| Adaptive sniper (30s during model drops, 180s otherwise) | Done |
+| Dashboard: city sparklines, P&L bars, data freshness | Done |
+| Dashboard: spread-vs-edge warnings on signals | Done |
+| Paper mode toggle (PAPER_MODE setting) | Done |
 
 ### VPN (Required -- UK Geo-blocked)
 
@@ -320,6 +327,9 @@ OPENMETEO_PAID_TIER=true
 ## TODO
 
 - **Mobile responsive layout**, single-column view for phone with portfolio value, P&L, active alerts, and urgent positions. Currently unusable on mobile.
+- **AI Decisions tab layout**, risk factors/rationale stacking in one row instead of per-decision. CSS/rendering bug.
+- **P&L chart**, portfolio value plotted over time from fast exit loop data (every 2 min). Single line chart.
+- **Blotter description column**, position title not mapped to description field in blotter rows.
 
 ## License
 
