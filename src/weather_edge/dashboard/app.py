@@ -744,7 +744,7 @@ async def fast_exit_loop() -> None:
             continue
 
         try:
-            # Auto-redeem any winning positions back to USDC
+            # Auto-redeem winning positions back to USDC
             try:
                 redeemed = await live_executor.redeem_positions()
                 if redeemed > 0:

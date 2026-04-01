@@ -799,12 +799,22 @@ class TradeExecutor:
                     return 0
                 positions = resp.json()
 
-            redeemable = [p for p in positions if p.get("redeemable")]
+            redeemable = [p for p in positions if p.get("redeemable") and float(p.get("size", 0)) > 0]
             if not redeemable:
                 return 0
 
-            # Connect to Polygon
-            w3 = Web3(Web3.HTTPProvider("https://polygon-rpc.com"))
+            # Connect to Polygon (try multiple RPCs)
+            w3 = None
+            for rpc in ["https://1rpc.io/matic", "https://rpc.ankr.com/polygon", "https://polygon.llamarpc.com"]:
+                try:
+                    w3 = Web3(Web3.HTTPProvider(rpc, request_kwargs={"timeout": 15}))
+                    if w3.is_connected():
+                        break
+                except Exception:
+                    continue
+            if not w3 or not w3.is_connected():
+                logger.error("REDEEM: cannot connect to Polygon RPC")
+                return 0
             account = w3.eth.account.from_key(self._private_key)
 
             # CTF contract ABI (just redeemPositions)
