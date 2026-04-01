@@ -855,8 +855,12 @@ class TradeExecutor:
                 try:
                     cid_bytes = Web3.to_bytes(hexstr=condition_id)
                     # outcomeIndex 0 (YES) → index_set [1], outcomeIndex 1 (NO) → index_set [2]
-                    outcome_index = int(pos.get("outcomeIndex", 0))
-                    index_sets = [1 << outcome_index]  # 1 for YES, 2 for NO
+                    outcome_index = pos.get("outcomeIndex")
+                    if outcome_index is not None:
+                        index_sets = [1 << int(outcome_index)]
+                    else:
+                        # Fallback: derive from outcome string
+                        index_sets = [2] if pos.get("outcome", "").lower() == "no" else [1]
 
                     tx = adapter.functions.redeemPositions(
                         USDC, PARENT_COLLECTION, cid_bytes, index_sets,
