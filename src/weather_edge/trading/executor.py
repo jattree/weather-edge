@@ -771,3 +771,105 @@ class TradeExecutor:
         except (ValueError, KeyError) as e:
             logger.warning("Heartbeat parse error: %s", e)
             return False
+
+    async def redeem_positions(self) -> int:
+        """Redeem all resolved (winning) positions back to USDC.
+
+        Calls the Polymarket CTF contract's redeemPositions function
+        on Polygon for each redeemable position.
+
+        Returns number of positions redeemed.
+        """
+        if self.dry_run or not self._private_key:
+            return 0
+
+        try:
+            import httpx
+            from web3 import Web3
+
+            # Find redeemable positions from Data API
+            proxy = "0xe23940d70793b441c9f949741daa65289947fadb"
+            async with httpx.AsyncClient() as client:
+                resp = await client.get(
+                    "https://data-api.polymarket.com/positions",
+                    params={"user": proxy, "sizeThreshold": 0},
+                    timeout=15.0,
+                )
+                if resp.status_code != 200:
+                    return 0
+                positions = resp.json()
+
+            redeemable = [p for p in positions if p.get("redeemable")]
+            if not redeemable:
+                return 0
+
+            # Connect to Polygon
+            w3 = Web3(Web3.HTTPProvider("https://polygon-rpc.com"))
+            account = w3.eth.account.from_key(self._private_key)
+
+            # CTF contract ABI (just redeemPositions)
+            CTF_ADDRESS = "0x4D97DCd97eC945f40cF65F87097ACe5EA0476045"
+            CTF_ABI = [{
+                "name": "redeemPositions",
+                "type": "function",
+                "inputs": [
+                    {"name": "collateralToken", "type": "address"},
+                    {"name": "parentCollectionId", "type": "bytes32"},
+                    {"name": "conditionId", "type": "bytes32"},
+                    {"name": "indexSets", "type": "uint256[]"},
+                ],
+                "outputs": [],
+            }]
+
+            ctf = w3.eth.contract(
+                address=Web3.to_checksum_address(CTF_ADDRESS),
+                abi=CTF_ABI,
+            )
+
+            USDC = Web3.to_checksum_address("0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174")
+            PARENT_COLLECTION = b"\x00" * 32
+            redeemed = 0
+
+            for pos in redeemable:
+                condition_id = pos.get("conditionId", "")
+                if not condition_id:
+                    continue
+
+                try:
+                    cid_bytes = Web3.to_bytes(hexstr=condition_id)
+                    # Index sets: [1, 2] means redeem both YES (index 0) and NO (index 1)
+                    index_sets = [1, 2]
+
+                    tx = ctf.functions.redeemPositions(
+                        USDC, PARENT_COLLECTION, cid_bytes, index_sets,
+                    ).build_transaction({
+                        "from": account.address,
+                        "nonce": w3.eth.get_transaction_count(account.address),
+                        "gas": 200000,
+                        "gasPrice": w3.eth.gas_price,
+                        "chainId": 137,
+                    })
+
+                    signed = account.sign_transaction(tx)
+                    tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
+                    receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=30)
+
+                    if receipt.status == 1:
+                        title = pos.get("title", "")[:50]
+                        value = float(pos.get("currentValue", 0))
+                        logger.warning(
+                            "REDEEMED: %s, $%.2f returned to wallet (tx: %s)",
+                            title, value, tx_hash.hex()[:16],
+                        )
+                        redeemed += 1
+                    else:
+                        logger.error("REDEEM FAILED: tx reverted for %s", condition_id[:16])
+
+                except Exception as e:
+                    logger.error("REDEEM ERROR: %s, %s", condition_id[:16], e)
+
+            return redeemed
+
+        except Exception as e:
+            logger.error("Redemption failed: %s", e)
+            return 0
