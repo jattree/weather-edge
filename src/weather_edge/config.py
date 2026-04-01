@@ -372,6 +372,7 @@ class Settings(BaseSettings):
     live_max_shares: float = 0  # 0=unlimited. Set to 5/20/50 for graduated testing
     polymarket_chain_id: int = 137  # Polygon mainnet
     max_slippage_pct: float = 0.02  # Max 2% price movement for exit orders
+    max_core_zscore: float = 2.0  # Reject core bets >2 std devs from consensus mean
 
     # Redis (hot-path cache, kill switch, heartbeats)
     redis_host: str = "localhost"

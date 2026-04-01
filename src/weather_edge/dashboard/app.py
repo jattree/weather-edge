@@ -233,6 +233,7 @@ async def _run_dashboard_cycle_inner(run_ai: bool = True) -> None:
             "icao": city_config.icao,
             "forecasts": {},
             "models": {},
+            "fetched_at": None,
         }
 
         # Use cached forecasts from run_cycle
@@ -240,6 +241,10 @@ async def _run_dashboard_cycle_inner(run_ai: bool = True) -> None:
         if not forecasts:
             forecasts = forecast_cache.get((city_id, today), [])
         if forecasts:
+            oldest_fetch = min((f.fetched_at for f in forecasts if hasattr(f, 'fetched_at')), default=None)
+            if oldest_fetch:
+                city_info["fetched_at"] = oldest_fetch.isoformat()
+
             for f in forecasts:
                 if f.temp_max_c is not None:
                     city_info["models"][f.model_name] = {
@@ -317,6 +322,7 @@ async def _run_dashboard_cycle_inner(run_ai: bool = True) -> None:
             "tier": s.confidence_tier.value,
             "confidence": s.model_confidence,
             "description": s.description[:60],
+            "spread": getattr(s, "spread", 0.0),
         }
         for s in sorted(all_signals, key=lambda x: abs(x.edge), reverse=True)
     ]
