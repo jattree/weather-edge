@@ -241,9 +241,9 @@ async def _run_dashboard_cycle_inner(run_ai: bool = True) -> None:
         if not forecasts:
             forecasts = forecast_cache.get((city_id, today), [])
         if forecasts:
-            oldest_fetch = min((f.fetched_at for f in forecasts if hasattr(f, 'fetched_at')), default=None)
-            if oldest_fetch:
-                city_info["fetched_at"] = oldest_fetch.isoformat()
+            newest_fetch = max((f.fetched_at for f in forecasts if hasattr(f, 'fetched_at')), default=None)
+            if newest_fetch:
+                city_info["fetched_at"] = newest_fetch.isoformat()
 
             for f in forecasts:
                 if f.temp_max_c is not None:
