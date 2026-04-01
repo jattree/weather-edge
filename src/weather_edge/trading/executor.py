@@ -803,17 +803,20 @@ class TradeExecutor:
             if not redeemable:
                 return 0
 
-            # Connect to Polygon (try multiple RPCs)
+            # Connect to Polygon
             w3 = None
-            for rpc in ["https://1rpc.io/matic", "https://rpc.ankr.com/polygon", "https://polygon.llamarpc.com"]:
+            for rpc in ["https://1rpc.io/matic", "https://rpc-mainnet.matic.quiknode.pro"]:
                 try:
-                    w3 = Web3(Web3.HTTPProvider(rpc, request_kwargs={"timeout": 15}))
-                    if w3.is_connected():
-                        break
-                except Exception:
-                    continue
-            if not w3 or not w3.is_connected():
-                logger.error("REDEEM: cannot connect to Polygon RPC")
+                    w3 = Web3(Web3.HTTPProvider(rpc, request_kwargs={"timeout": 30}))
+                    # Test connection with a lightweight call
+                    w3.eth.block_number
+                    logger.info("REDEEM: connected to %s", rpc)
+                    break
+                except Exception as e:
+                    logger.debug("REDEEM: %s failed, %s", rpc, e)
+                    w3 = None
+            if not w3:
+                logger.error("REDEEM: cannot connect to any Polygon RPC")
                 return 0
             account = w3.eth.account.from_key(self.private_key)
 
