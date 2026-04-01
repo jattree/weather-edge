@@ -106,6 +106,7 @@ The system trades real money on Polymarket via the CLOB API.
 | Dashboard: city sparklines, P&L bars, data freshness | Done |
 | Dashboard: spread-vs-edge warnings on signals | Done |
 | Paper mode toggle (PAPER_MODE setting) | Done |
+| Auto sell-half (up 40%+ with negative edge, sell half) | Done |
 
 ### VPN (Required -- UK Geo-blocked)
 
