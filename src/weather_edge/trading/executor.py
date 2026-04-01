@@ -211,11 +211,14 @@ class TradeExecutor:
         # Taker: price ABOVE midpoint to cross the spread and guarantee fill
         # Maker: improve below market to rest on the book
         if force_taker:
-            # Add 1¢ above midpoint to ensure we cross the ask
+            # Price aggressively above midpoint to guarantee crossing the ask.
+            # Weather market spreads are typically 1-3¢. Using +3¢ ensures we
+            # cross even wider spreads. On Polymarket, limit buys fill at the
+            # ask price (not our limit), so overshoot just means guaranteed fill.
             if signal.recommended_side.value == "YES":
-                limit_price = signal.market_prob + 0.01
+                limit_price = signal.market_prob + 0.03
             else:
-                limit_price = (1.0 - signal.market_prob) + 0.01
+                limit_price = (1.0 - signal.market_prob) + 0.03
         else:
             if signal.recommended_side.value == "YES":
                 limit_price = signal.market_prob - improve_price_by

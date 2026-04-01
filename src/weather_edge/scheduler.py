@@ -935,7 +935,9 @@ async def run_cycle(
                             result = await live_executor.place_limit_order(
                                 signal, token_id, force_taker=use_taker,
                             )
-                            if result:
+                            if result and result.status not in (
+                                "rejected", "post_only_reject", "too_small",
+                            ):
                                 # Track spending against live balance
                                 if _live_balance is not None:
                                     _live_balance -= result.size_usd
