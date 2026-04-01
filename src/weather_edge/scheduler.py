@@ -157,6 +157,26 @@ async def run_cycle(
         today = date.today()
         target_dates = [today, today + timedelta(days=1), today + timedelta(days=2)]
 
+    # --- SWING BOT: 36h horizon filter ---
+    # Block entries on markets resolving too soon. We get front-run by bots
+    # with fresher NWS data on short-dated markets. Our bias correction edge
+    # is strongest at 48-72h where model ensembles still disagree.
+    now_utc = datetime.now(timezone.utc)
+    min_horizon = timedelta(hours=36)
+    original_dates = list(target_dates)
+    target_dates = [
+        d for d in target_dates
+        if datetime.combine(d + timedelta(days=1), datetime.min.time()).replace(
+            tzinfo=timezone.utc,
+        ) - now_utc >= min_horizon
+    ]
+    blocked = set(original_dates) - set(target_dates)
+    if blocked:
+        logger.info(
+            "HORIZON FILTER: blocked %s (resolve < 36h)",
+            ", ".join(str(d) for d in sorted(blocked)),
+        )
+
     # Contract: verify EMOS calibration is active at cycle start
     emos_check = validate_emos_active(
         SPREAD_INFLATION_FACTOR, MAX_BUCKET_PROBABILITY,
@@ -648,6 +668,39 @@ async def run_cycle(
         except Exception:
             logger.warning("Failed to fetch live balance, will skip balance checks")
 
+    # --- SWING BOT: USDC floor ---
+    # Don't place ANY new live orders if balance is below $20.
+    # Prevents deploying dust into marginal trades. Capital comes back
+    # via resolution/redemption, then we re-enter on high-conviction 48h+ signals.
+    USDC_FLOOR = 20.0
+    _usdc_floor_block = (
+        live_executor
+        and not live_executor.dry_run
+        and _live_balance is not None
+        and _live_balance < USDC_FLOOR
+    )
+    if _usdc_floor_block:
+        logger.warning(
+            "USDC FLOOR: $%.2f < $%.0f minimum, blocking all new live entries",
+            _live_balance, USDC_FLOOR,
+        )
+
+    # --- SWING BOT: Position cap (Rule of 12) ---
+    # Concentrate capital into 10-12 high-conviction bets instead of
+    # spraying $1-6 across 46 positions. Fewer positions = bigger sizes = real P&L.
+    MAX_POSITIONS = 12
+    _active_position_count = 0
+    if store and live_executor and not live_executor.dry_run:
+        try:
+            _active_position_count = store.get_portfolio_summary().get("position_count", 0)
+            if _active_position_count >= MAX_POSITIONS:
+                logger.warning(
+                    "POSITION CAP: %d/%d active positions, blocking new live entries",
+                    _active_position_count, MAX_POSITIONS,
+                )
+        except Exception:
+            pass
+
     for signal in all_signals:
         # Contract: verify taker fee doesn't eat >40% of projected alpha
         # This gate applies to TAKER orders only. Live executor uses post_only
@@ -690,7 +743,12 @@ async def run_cycle(
 
         # === LIVE EXECUTION (maker orders bypass fee gate, $0 maker fee) ===
         # Still require minimum raw edge, we're bypassing fee check, not edge check
-        if live_executor and not live_executor.dry_run:
+        if (
+            live_executor
+            and not live_executor.dry_run
+            and not _usdc_floor_block
+            and _active_position_count < MAX_POSITIONS
+        ):
             # Cooldown: don't re-enter a market we recently fully exited
             # Sell-half excluded (still holding shares, POSITION EXISTS catches it)
             # Massive edge (>12%) bypasses cooldown for genuine model shifts
@@ -726,6 +784,12 @@ async def run_cycle(
 
             # Live is independent of paper, only requires minimum edge or spread strategy.
             # Maker orders have $0 fees so fee gate doesn't apply.
+            # --- SWING BOT: Minimum position size ---
+            # No more $1-6 dust positions. $10 minimum forces concentration.
+            MIN_LIVE_SIZE = 10.0
+            if signal.recommended_size < MIN_LIVE_SIZE:
+                signal.recommended_size = MIN_LIVE_SIZE
+
             is_spread = getattr(signal, "strategy", "") == "spread"
             can_live = signal.edge >= 0.02 or is_spread
             if not can_live:
@@ -850,8 +914,19 @@ async def run_cycle(
                                         )
 
                         try:
+                            # --- SWING BOT: Hybrid entry ---
+                            # Edge >= 12%: taker (cross spread, pay fee, secure alpha)
+                            # Edge 5-12%: maker (rest on book, cancel if unfilled)
+                            # At tail prices (<10c), taker fee is negligible anyway
+                            use_taker = signal.edge >= 0.12
+                            if use_taker:
+                                logger.info(
+                                    "TAKER ENTRY: %s edge=%.1f%%, crossing spread",
+                                    signal.city_id, signal.edge * 100,
+                                )
+
                             result = await live_executor.place_limit_order(
-                                signal, token_id,
+                                signal, token_id, force_taker=use_taker,
                             )
                             if result:
                                 # Track spending against live balance
@@ -859,7 +934,8 @@ async def run_cycle(
                                     _live_balance -= result.size_usd
 
                                 logger.info(
-                                    "LIVE: %s %s %s %.0f shares @ %.3f, %s (bal=$%.2f)",
+                                    "LIVE: %s %s %s %s %.0f shares @ %.3f, %s (bal=$%.2f)",
+                                    "TAKER" if use_taker else "MAKER",
                                     result.status, signal.recommended_side.value,
                                     signal.city_id, result.size_shares,
                                     result.limit_price, result.order_id,
