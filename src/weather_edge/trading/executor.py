@@ -780,7 +780,7 @@ class TradeExecutor:
 
         Returns number of positions redeemed.
         """
-        if self.dry_run or not self._private_key:
+        if self.dry_run or not self.private_key:
             return 0
 
         try:
@@ -815,7 +815,7 @@ class TradeExecutor:
             if not w3 or not w3.is_connected():
                 logger.error("REDEEM: cannot connect to Polygon RPC")
                 return 0
-            account = w3.eth.account.from_key(self._private_key)
+            account = w3.eth.account.from_key(self.private_key)
 
             # CTF contract ABI (just redeemPositions)
             CTF_ADDRESS = "0x4D97DCd97eC945f40cF65F87097ACe5EA0476045"
