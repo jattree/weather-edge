@@ -60,6 +60,7 @@ def _check_observation_confirms_bucket(trade: Position) -> bool:
     Returns True if observation confirms our bucket (should HOLD).
     """
     try:
+        import re
         import zoneinfo
 
         import httpx
@@ -71,10 +72,26 @@ def _check_observation_confirms_bucket(trade: Position) -> bool:
         from weather_edge.config import CITIES
         from weather_edge.models.enums import City
 
+        # Only applies to YES positions, if actual is in bucket, YES wins.
+        # For NO positions, actual in bucket means we're LOSING, don't block exit.
+        if trade.side == "NO":
+            return False
+
         # Parse the bucket from description
-        bucket = parse_bucket_from_description(trade.description or "")
+        desc = trade.description or ""
+        bucket = parse_bucket_from_description(desc)
         if not bucket:
             return False
+
+        # Only check positions resolving TODAY, don't apply today's weather
+        # to a position that resolves on April 3
+        date_match = re.search(r"on (\w+ \d+)\??$", desc)
+        if date_match:
+            from dateutil.parser import parse as _parse_date
+            now = datetime.now(timezone.utc)
+            target_date = _parse_date(date_match.group(1) + f" {now.year}").date()
+            if target_date != now.date():
+                return False  # Not today's market
 
         # Find the city config for timezone and coordinates
         try:
@@ -115,7 +132,7 @@ def _check_observation_confirms_bucket(trade: Position) -> bool:
         if in_bucket:
             logger.info(
                 "OBSERVATION GUARD: %s actual max %.1f°C is IN bucket %s, HOLD to resolution",
-                trade.city_id, daily_max_c, trade.description[:50] if trade.description else "",
+                trade.city_id, daily_max_c, desc[:50],
             )
         return in_bucket
 
