@@ -155,7 +155,12 @@ async def run_cycle(
 
     if target_dates is None:
         today = date.today()
-        target_dates = [today, today + timedelta(days=1), today + timedelta(days=2)]
+        target_dates = [
+            today,
+            today + timedelta(days=1),
+            today + timedelta(days=2),
+            today + timedelta(days=3),
+        ]
 
     # --- SWING BOT: 36h horizon filter ---
     # Block entries on markets resolving too soon. We get front-run by bots
@@ -287,7 +292,7 @@ async def run_cycle(
             fetch_ai_forecasts_batch,
         )
         market_cities = list({city_id for city_id, _ in market_groups})
-        tomorrow = target_dates[1] if len(target_dates) > 1 else target_dates[0]
+        tomorrow = target_dates[1] if len(target_dates) > 1 else (target_dates[0] if target_dates else date.today() + timedelta(days=1))
         ai_batch = await fetch_ai_forecasts_batch(market_cities, tomorrow)
         ai_forecasts = ai_batch
         if ai_batch:
@@ -1198,27 +1203,27 @@ async def run_cycle(
                                     except Exception as e:
                                         logger.error("LIVE EXIT FAILED: %s, %s", city_id_str, e)
 
-                # Record exit decision to AI Decisions tab
-                from weather_edge.analysis.claude_reasoning import _decision_history
-                _decision_history.insert(0, {
-                    "time": datetime.now(timezone.utc).strftime("%H:%M:%S"),
-                    "city": candidate.trade.city_id.upper(),
-                    "decision": "EXIT" if candidate.final_decision == "EXIT" else "HOLD",
-                    "signal": (
-                        f"[EXIT CHECK] {candidate.reason}: "
-                        f"{candidate.trade.description[:40]}"
-                    ),
-                    "adjustment": round(candidate.current_edge, 2),
-                    "rationale": candidate.claude_rationale or "No AI review",
-                    "risk_factors": [candidate.gemini_rationale or ""],
-                    "source": "exit_monitor",
-                })
+                        # Record exit decision to AI Decisions tab
+                        from weather_edge.analysis.claude_reasoning import _decision_history
+                        _decision_history.insert(0, {
+                            "time": datetime.now(timezone.utc).strftime("%H:%M:%S"),
+                            "city": candidate.trade.city_id.upper(),
+                            "decision": "EXIT" if candidate.final_decision == "EXIT" else "HOLD",
+                            "signal": (
+                                f"[EXIT CHECK] {candidate.reason}: "
+                                f"{candidate.trade.description[:40]}"
+                            ),
+                            "adjustment": round(candidate.current_edge, 2),
+                            "rationale": candidate.claude_rationale or "No AI review",
+                            "risk_factors": [candidate.gemini_rationale or ""],
+                            "source": "exit_monitor",
+                        })
     except Exception:
         logger.error("EXIT MONITOR CRASHED, check traceback", exc_info=True)
 
     # Also fetch forecasts for cities without active markets (monitoring)
     # But only for tomorrow (not all dates) to save API calls
-    tomorrow = target_dates[1] if len(target_dates) > 1 else target_dates[0]
+    tomorrow = target_dates[1] if len(target_dates) > 1 else (target_dates[0] if target_dates else date.today() + timedelta(days=1))
     for city_id in City:
         if (city_id, tomorrow) not in _forecast_cache:
             forecasts = await fetch_city_forecasts(city_id, tomorrow)
