@@ -374,6 +374,11 @@ class Settings(BaseSettings):
     max_slippage_pct: float = 0.02  # Max 2% price movement for exit orders
     max_core_zscore: float = 2.0  # Reject core bets >2 std devs from consensus mean
 
+    # Sell-half profit taking
+    sell_half_gain_pct: float = 0.40  # Trigger when unrealized gain > 40%
+    sell_half_min_usd: float = 10.0  # Skip if sell value < $10 (spread eats profit)
+    sell_half_edge_max: float = 0.0  # Only trigger when edge < 0 (market moved, models didn't)
+
     # Redis (hot-path cache, kill switch, heartbeats)
     redis_host: str = "localhost"
     redis_port: int = 6379

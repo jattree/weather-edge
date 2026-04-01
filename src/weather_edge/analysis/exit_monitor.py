@@ -138,6 +138,22 @@ def scan_for_exits(
             reason = "profit_cap"
             urgency = "low"
 
+        # 3. Sell-half: position up big but models don't support it
+        if not reason:
+            from weather_edge.config import settings as _cfg
+            unrealized_gain = (market_price - trade.entry_price) / trade.entry_price if trade.entry_price > 0 else 0
+            if trade.side == "NO":
+                unrealized_gain = ((1.0 - market_price) - (1.0 - trade.entry_price)) / (1.0 - trade.entry_price) if trade.entry_price < 1.0 else 0
+            sell_value = trade.total_shares * market_price * 0.5
+            if trade.side == "NO":
+                sell_value = trade.total_shares * (1.0 - market_price) * 0.5
+
+            if (unrealized_gain >= _cfg.sell_half_gain_pct
+                    and current_edge <= _cfg.sell_half_edge_max
+                    and sell_value >= _cfg.sell_half_min_usd):
+                reason = "sell_half"
+                urgency = "low"
+
         if reason:
             candidates.append(ExitCandidate(
                 trade=trade,
