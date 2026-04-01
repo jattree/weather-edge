@@ -107,6 +107,7 @@ The system trades real money on Polymarket via the CLOB API.
 | Dashboard: spread-vs-edge warnings on signals | Done |
 | Paper mode toggle (PAPER_MODE setting) | Done |
 | Auto sell-half (up 40%+ with negative edge, sell half) | Done |
+| Exit cooldown (4h block on re-entry after full exit, 12%+ edge bypass) | Done |
 
 ### VPN (Required -- UK Geo-blocked)
 
