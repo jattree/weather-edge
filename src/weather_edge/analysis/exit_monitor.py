@@ -139,6 +139,7 @@ def scan_for_exits(
             urgency = "low"
 
         # 3. Sell-half: position up big but models don't support it
+        #    Only fires once per position, skips if shares < 2x minimum (already trimmed)
         if not reason:
             from weather_edge.config import settings as _cfg
             unrealized_gain = (market_price - trade.entry_price) / trade.entry_price if trade.entry_price > 0 else 0
@@ -148,9 +149,13 @@ def scan_for_exits(
             if trade.side == "NO":
                 sell_value = trade.total_shares * (1.0 - market_price) * 0.5
 
+            # Guard: need enough shares to sell half and still hold minimum
+            min_shares_for_half = 10.0  # 2x Polymarket minimum (5 shares)
+
             if (unrealized_gain >= _cfg.sell_half_gain_pct
                     and current_edge <= _cfg.sell_half_edge_max
-                    and sell_value >= _cfg.sell_half_min_usd):
+                    and sell_value >= _cfg.sell_half_min_usd
+                    and trade.total_shares >= min_shares_for_half):
                 reason = "sell_half"
                 urgency = "low"
 
