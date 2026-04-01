@@ -38,8 +38,9 @@ async def main():
     total_shares = chi_pos["total_shares"]
     half_shares = round(total_shares / 2, 0)
 
-    # Current market: ~$0.71/share. Sell at $0.69 to guarantee taker fill.
-    sell_price = 0.69
+    # Current market: ~$0.71/share. Sell at $0.60 to guarantee fill even in thin book.
+    # Polymarket fills at best bid, not our limit, we just need to cross it.
+    sell_price = 0.60
 
     print("Found: {} shares, selling {} @ ${:.2f}".format(total_shares, half_shares, sell_price))
 
@@ -55,7 +56,7 @@ async def main():
 
     if result:
         print("SELL ORDER PLACED: {}".format(result.order_id))
-        print("  {} shares @ $0.18 = ${:.2f}".format(half_shares, half_shares * 0.18))
+        print("  {} shares @ ~${:.2f} = ~${:.2f}".format(half_shares, sell_price, half_shares * sell_price))
     else:
         print("SELL ORDER FAILED")
 
