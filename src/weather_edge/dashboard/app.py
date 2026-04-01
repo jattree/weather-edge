@@ -820,6 +820,26 @@ async def fast_exit_loop() -> None:
                     if not asset_id:
                         continue
 
+                    # Observation guard: don't emergency-exit if actual temp
+                    # confirms our bucket, the "bad edge" is just stale models
+                    try:
+                        from weather_edge.analysis.exit_monitor import (
+                            _check_observation_confirms_bucket,
+                        )
+                        from weather_edge.models.position import Position
+                        _pos_check = Position(
+                            city_id=city,
+                            description=pos.get("description", ""),
+                        )
+                        if _check_observation_confirms_bucket(_pos_check):
+                            logger.info(
+                                "EMERGENCY BLOCKED: %s observation confirms bucket, holding",
+                                city,
+                            )
+                            continue
+                    except Exception:
+                        pass  # If check fails, proceed with emergency exit
+
                     logger.warning(
                         "EMERGENCY EXIT: %s edge=%.1f%% (threshold=%.0f%%), "
                         "selling %d shares as taker",
