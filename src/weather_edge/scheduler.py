@@ -997,7 +997,21 @@ async def run_cycle(
                         if candidate.final_decision == "EXIT":
                             city_id_str = candidate.trade.city_id
                             market_id = candidate.trade.market_id
-                            
+
+                            # Sell-half guard: skip if already trimmed or has pending sell
+                            if candidate.reason == "sell_half":
+                                existing = store.get_open_order_for_market(market_id, side="SELL")
+                                if existing:
+                                    logger.info("SELL_HALF SKIP: %s has open sell order", city_id_str)
+                                    continue
+                                past_trim = store.conn.execute(
+                                    "SELECT 1 FROM live_trades WHERE market_id = ? AND description LIKE 'SELL_HALF%' LIMIT 1",
+                                    (market_id,),
+                                ).fetchone()
+                                if past_trim:
+                                    logger.info("SELL_HALF SKIP: %s already trimmed", city_id_str)
+                                    continue
+
                             # 1. Cancel any open BUY orders for this market if we are exiting
                             open_buy = store.get_open_order_for_market(market_id)
                             if open_buy and open_buy.get("side") in ("YES", "NO"):
