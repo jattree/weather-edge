@@ -1,6 +1,7 @@
 """Early exit monitor, checks if open positions should be closed before resolution.
 
 Runs each cycle after new model data arrives. Checks:
+0. Observation guard: if past peak heat and actual temp is in our bucket, HOLD
 1. Edge inversion (model flipped against us by >7%)
 2. Profit cap (price hit 88%+ on core bets, model <94%)
 3. Pattern bust (detected pattern invalidated)
@@ -19,6 +20,9 @@ from weather_edge.analysis.contracts import validate_penny_no_exit
 from weather_edge.models.position import Position
 
 logger = logging.getLogger(__name__)
+
+# Peak heat hours, after this local time, daily high is essentially locked
+PEAK_HEAT_HOUR = 15  # 3pm local
 
 # Thresholds (per Gemini validation)
 EDGE_INVERSION_THRESHOLD = -0.07  # Exit when edge flips worse than -7%
@@ -46,6 +50,80 @@ class ExitCandidate:
     final_decision: str | None = None  # "EXIT" or "HOLD"
 
 
+def _check_observation_confirms_bucket(trade: Position) -> bool:
+    """Check if actual weather observation confirms our position's bucket.
+
+    After peak heat (3pm local), the daily high is locked. If the observed
+    max temperature falls in our bucket, models are irrelevant, hold to
+    resolution for the full $1 payout.
+
+    Returns True if observation confirms our bucket (should HOLD).
+    """
+    try:
+        import zoneinfo
+
+        import httpx
+
+        from weather_edge.analysis.resolver import (
+            actual_falls_in_bucket,
+            parse_bucket_from_description,
+        )
+        from weather_edge.config import CITIES
+        from weather_edge.models.enums import City
+
+        # Parse the bucket from description
+        bucket = parse_bucket_from_description(trade.description or "")
+        if not bucket:
+            return False
+
+        # Find the city config for timezone and coordinates
+        try:
+            city_enum = City(trade.city_id)
+        except ValueError:
+            return False
+        city_config = CITIES.get(city_enum)
+        if not city_config:
+            return False
+
+        # Check if we're past peak heat in the city's timezone
+        tz = zoneinfo.ZoneInfo(city_config.timezone)
+        local_now = datetime.now(tz)
+        if local_now.hour < PEAK_HEAT_HOUR:
+            return False  # Too early, high might not be set yet
+
+        # Fetch current observation from Open-Meteo
+        resp = httpx.get(
+            "https://api.open-meteo.com/v1/forecast",
+            params={
+                "latitude": city_config.latitude,
+                "longitude": city_config.longitude,
+                "daily": "temperature_2m_max",
+                "timezone": city_config.timezone,
+                "forecast_days": 1,
+            },
+            timeout=10.0,
+        )
+        if resp.status_code != 200:
+            return False
+
+        data = resp.json()
+        daily_max_c = data.get("daily", {}).get("temperature_2m_max", [None])[0]
+        if daily_max_c is None:
+            return False
+
+        in_bucket = actual_falls_in_bucket(daily_max_c, bucket)
+        if in_bucket:
+            logger.info(
+                "OBSERVATION GUARD: %s actual max %.1f°C is IN bucket %s, HOLD to resolution",
+                trade.city_id, daily_max_c, trade.description[:50] if trade.description else "",
+            )
+        return in_bucket
+
+    except Exception:
+        logger.debug("Observation check failed for %s", trade.city_id, exc_info=True)
+        return False
+
+
 def scan_for_exits(
     open_trades: list[Position],
     market_prices: dict[str, float],
@@ -67,6 +145,11 @@ def scan_for_exits(
         # Contract: never exit penny bets (hold to resolution)
         penny_check = validate_penny_no_exit(trade.entry_price, PENNY_ENTRY_MAX)
         if not penny_check.valid:
+            continue
+
+        # Observation guard: if past peak heat and actual temp confirms
+        # our bucket, hold to resolution, models are irrelevant at this point
+        if _check_observation_confirms_bucket(trade):
             continue
 
         # Skip spread trades
