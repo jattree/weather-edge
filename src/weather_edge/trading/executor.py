@@ -820,9 +820,9 @@ class TradeExecutor:
                 return 0
             account = w3.eth.account.from_key(self.private_key)
 
-            # CTF contract ABI (just redeemPositions)
-            CTF_ADDRESS = "0x4D97DCd97eC945f40cF65F87097ACe5EA0476045"
-            CTF_ABI = [{
+            # NegRisk Adapter, weather markets use neg-risk, not plain CTF
+            NEG_RISK_ADDRESS = "0xC5d563A36AE78145C45a50134d48A1215220f80a"
+            NEG_RISK_ABI = [{
                 "name": "redeemPositions",
                 "type": "function",
                 "inputs": [
@@ -834,14 +834,18 @@ class TradeExecutor:
                 "outputs": [],
             }]
 
-            ctf = w3.eth.contract(
-                address=Web3.to_checksum_address(CTF_ADDRESS),
-                abi=CTF_ABI,
+            adapter = w3.eth.contract(
+                address=Web3.to_checksum_address(NEG_RISK_ADDRESS),
+                abi=NEG_RISK_ABI,
             )
 
             USDC = Web3.to_checksum_address("0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174")
             PARENT_COLLECTION = b"\x00" * 32
             redeemed = 0
+
+            # Fetch nonce once, increment locally to avoid "nonce too low"
+            nonce = w3.eth.get_transaction_count(account.address, "pending")
+            gas_price = w3.eth.gas_price
 
             for pos in redeemable:
                 condition_id = pos.get("conditionId", "")
@@ -850,29 +854,33 @@ class TradeExecutor:
 
                 try:
                     cid_bytes = Web3.to_bytes(hexstr=condition_id)
-                    # Index sets: [1, 2] means redeem both YES (index 0) and NO (index 1)
-                    index_sets = [1, 2]
+                    # outcomeIndex 0 (YES) → index_set [1], outcomeIndex 1 (NO) → index_set [2]
+                    outcome_index = int(pos.get("outcomeIndex", 0))
+                    index_sets = [1 << outcome_index]  # 1 for YES, 2 for NO
 
-                    tx = ctf.functions.redeemPositions(
+                    tx = adapter.functions.redeemPositions(
                         USDC, PARENT_COLLECTION, cid_bytes, index_sets,
                     ).build_transaction({
                         "from": account.address,
-                        "nonce": w3.eth.get_transaction_count(account.address),
-                        "gas": 200000,
-                        "gasPrice": w3.eth.gas_price,
+                        "nonce": nonce,
+                        "gas": 300000,
+                        "gasPrice": gas_price,
                         "chainId": 137,
                     })
 
                     signed = account.sign_transaction(tx)
                     tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
+                    nonce += 1  # Increment for next transaction
+
                     receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=30)
 
                     if receipt.status == 1:
                         title = pos.get("title", "")[:50]
                         value = float(pos.get("currentValue", 0))
+                        outcome = pos.get("outcome", "?")
                         logger.warning(
-                            "REDEEMED: %s, $%.2f returned to wallet (tx: %s)",
-                            title, value, tx_hash.hex()[:16],
+                            "REDEEMED: %s (%s), $%.2f returned to wallet (tx: %s)",
+                            title, outcome, value, tx_hash.hex()[:16],
                         )
                         redeemed += 1
                     else:
