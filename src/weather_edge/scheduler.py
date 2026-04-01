@@ -1046,13 +1046,17 @@ async def run_cycle(
                                         # High urgency: use taker mode to guarantee fill
                                         # Low/medium: use maker (post_only) to save fees
                                         urgent = candidate.urgency == "high"
+                                        # Sell half for sell_half reason, full for everything else
+                                        sell_shares = position["total_shares"]
+                                        if candidate.reason == "sell_half":
+                                            sell_shares = max(MIN_SELL_SHARES, round(sell_shares / 2, 0))
                                         sell_result = await live_executor.place_sell_order(
                                             token_id=asset_id,
-                                            shares=position["total_shares"],
+                                            shares=sell_shares,
                                             price=candidate.current_market_price,
                                             market_id=market_id,
                                             city_id=city_id_str,
-                                            description=f"EXIT: {candidate.reason}",
+                                            description=f"{'SELL_HALF' if candidate.reason == 'sell_half' else 'EXIT'}: {candidate.reason}",
                                             reference_price=candidate.current_market_price,
                                             force_taker=urgent,
                                         )
