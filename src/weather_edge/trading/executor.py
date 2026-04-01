@@ -184,13 +184,15 @@ class TradeExecutor:
         signal: Signal,
         token_id: str,
         improve_price_by: float = 0.005,
+        force_taker: bool = False,
     ) -> OrderResult | None:
-        """Place a post-only limit order to avoid taker fees.
+        """Place a limit order (maker by default, taker if forced).
 
         Args:
             signal: The trading signal.
             token_id: Polymarket token ID for YES or NO.
             improve_price_by: How much to improve the limit price vs midpoint.
+            force_taker: If True, cross the spread as taker (pays fee, guarantees fill).
         """
         # === KILL SWITCH CHECK ===
         if is_kill_switch_active():
@@ -205,11 +207,19 @@ class TradeExecutor:
             signal.market_prob, signal.recommended_size,
         )
 
-        # Calculate limit price with improvement
-        if signal.recommended_side.value == "YES":
-            limit_price = signal.market_prob - improve_price_by
+        # Calculate limit price
+        # Taker: price at market to cross the spread and guarantee fill
+        # Maker: improve below market to rest on the book
+        if force_taker:
+            if signal.recommended_side.value == "YES":
+                limit_price = signal.market_prob
+            else:
+                limit_price = 1.0 - signal.market_prob
         else:
-            limit_price = (1.0 - signal.market_prob) - improve_price_by
+            if signal.recommended_side.value == "YES":
+                limit_price = signal.market_prob - improve_price_by
+            else:
+                limit_price = (1.0 - signal.market_prob) - improve_price_by
 
         limit_price = _round_price(limit_price)
 
@@ -297,12 +307,14 @@ class TradeExecutor:
 
             # Step 2: Post to exchange (network-bound)
             # post_only=True ensures maker status; orderType=GTC keeps it resting
+            # force_taker overrides to cross the spread (pays fee, guarantees fill)
+            use_post_only = False if force_taker else self.post_only
             response = await loop.run_in_executor(
                 None,
                 lambda: self._client.post_order(
                     signed_order,
                     orderType=OrderType.GTC,
-                    post_only=self.post_only,
+                    post_only=use_post_only,
                 ),
             )
 
