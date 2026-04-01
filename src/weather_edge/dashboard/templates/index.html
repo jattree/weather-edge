@@ -2256,8 +2256,8 @@
          * ================================================================ */
         var allTrades = [];
         var blotterFilter = 'all';
-        var blotterSortCol = 'time';
-        var blotterSortAsc = false;
+        var blotterSortCol = 'resolves_in';
+        var blotterSortAsc = true;
 
         /* ================================================================
          *  PANE SPLITTER (drag to resize top/bottom)
@@ -3447,11 +3447,13 @@
             /* Sort */
             var sortKey = blotterSortCol;
             function parseResolvesMinutes(s) {
-                if (!s || s === 'OVERDUE') return -1;
-                var h = 0, m = 0;
+                if (!s || s === '--') return 999999;
+                if (s === 'OVERDUE') return -1;
+                var d = 0, h = 0, m = 0;
+                var dm = s.match(/(\d+)d/); if (dm) d = parseInt(dm[1]);
                 var hm = s.match(/(\d+)h/); if (hm) h = parseInt(hm[1]);
                 var mm = s.match(/(\d+)m/); if (mm) m = parseInt(mm[1]);
-                return h * 60 + m;
+                return d * 1440 + h * 60 + m;
             }
             filtered.sort(function(a, b) {
                 var va = a[sortKey], vb = b[sortKey];
