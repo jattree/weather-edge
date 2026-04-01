@@ -744,6 +744,14 @@ async def fast_exit_loop() -> None:
             continue
 
         try:
+            # Auto-redeem any winning positions back to USDC
+            try:
+                redeemed = await live_executor.redeem_positions()
+                if redeemed > 0:
+                    logger.warning("AUTO-REDEEM: %d positions redeemed to USDC", redeemed)
+            except Exception:
+                logger.debug("Auto-redeem failed", exc_info=True)
+
             # Sync positions from exchange first, keeps dashboard fresh
             # and prevents trading on stale balance data
             from weather_edge.trading.portfolio_sync import sync_portfolio
