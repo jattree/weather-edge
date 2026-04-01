@@ -204,7 +204,12 @@ async def _run_dashboard_cycle_inner(run_ai: bool = True) -> None:
 
     today = date.today()
     tomorrow = today + timedelta(days=1)
-    target_dates = [today, tomorrow]
+    target_dates = [
+        today,
+        tomorrow,
+        today + timedelta(days=2),
+        today + timedelta(days=3),
+    ]
 
     # Track competitor performance
     await competitor_tracker.update_all()
