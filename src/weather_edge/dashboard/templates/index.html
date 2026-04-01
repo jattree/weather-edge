@@ -392,6 +392,14 @@
             background: var(--cyan-dim);
             box-shadow: inset 0 0 0 1px rgba(6, 182, 212, 0.06);
         }
+        .city-card.stale-data-warning {
+            border-color: rgba(239, 68, 68, 0.5);
+            background: linear-gradient(135deg, transparent 0%, rgba(239, 68, 68, 0.05) 100%);
+        }
+        .city-card.stale-data-warning.active {
+            border-color: var(--red);
+            background: var(--red-dim);
+        }
         .city-header {
             display: flex;
             justify-content: space-between;
@@ -462,6 +470,16 @@
             color: var(--text-dim);
             min-width: 26px;
             text-align: right;
+        }
+
+        /* ---- SPREAD WARNING ---- */
+        .spread-warning {
+            color: var(--orange) !important;
+            font-weight: 700 !important;
+        }
+        .spread-warning::after {
+            content: ' ⚠️';
+            font-size: 10px;
         }
 
         /* ---- MODEL CONSENSUS ---- */
@@ -2682,7 +2700,7 @@
             var header = el('div');
             setStyle(header, {
                 display: 'grid',
-                gridTemplateColumns: '50px 35px 60px 60px 65px 55px 50px 50px',
+                gridTemplateColumns: '40px 35px 50px 50px 45px 55px 50px 45px 40px',
                 gap: '6px',
                 padding: '6px 0',
                 borderBottom: '1px solid var(--border)',
@@ -2691,21 +2709,28 @@
                 textTransform: 'uppercase',
                 letterSpacing: '1px'
             });
-            ['City', 'Side', 'Model', 'Market', 'Edge', 'Conf', 'Size', 'Tier'].forEach(function(h) {
+            ['City', 'Side', 'Model', 'Market', 'Sprd', 'Edge', 'Conf', 'Size', 'Tier'].forEach(function(h) {
                 header.appendChild(el('span', null, h));
             });
             container.appendChild(header);
 
             tradeable.forEach(function(s) {
-                var row = el('div');
+                var isSpreadDangerous = (s.spread > Math.abs(s.edge) * 0.8);
+                var rowClass = 'signal-row';
+                if (isSpreadDangerous) {
+                    rowClass += ' spread-warning-row';
+                }
+
+                var row = el('div', rowClass);
                 setStyle(row, {
                     display: 'grid',
-                    gridTemplateColumns: '50px 35px 60px 60px 65px 55px 50px 50px',
+                    gridTemplateColumns: '40px 35px 50px 50px 45px 55px 50px 45px 40px',
                     gap: '6px',
                     padding: '5px 0',
                     borderBottom: '1px solid var(--border-subtle)',
                     fontFamily: '"JetBrains Mono", monospace',
-                    alignItems: 'center'
+                    alignItems: 'center',
+                    opacity: isSpreadDangerous ? '0.7' : '1'
                 });
 
                 var city = el('span', null, (s.city_id || '').toUpperCase());
@@ -2719,6 +2744,13 @@
 
                 var market = el('span', null, s.market_prob.toFixed(3));
                 market.style.color = 'var(--text-dim)';
+
+                var spread = el('span', null, (s.spread * 100).toFixed(1) + '¢');
+                if (isSpreadDangerous) {
+                    spread.className = 'spread-warning';
+                } else {
+                    spread.style.color = 'var(--text-dim)';
+                }
 
                 var edge = el('span', null, (s.edge >= 0 ? '+' : '') + (s.edge * 100).toFixed(1) + '%');
                 setStyle(edge, {
@@ -2747,6 +2779,7 @@
                 row.appendChild(side);
                 row.appendChild(model);
                 row.appendChild(market);
+                row.appendChild(spread);
                 row.appendChild(edge);
                 row.appendChild(conf);
                 row.appendChild(size);
@@ -2770,7 +2803,18 @@
                 var conf = td ? td.confidence : null;
                 var isUp = temp !== null && temp > 0;
 
-                var card = el('div', 'city-card' + (id === selectedCity ? ' active' : ''));
+                var isStale = false;
+                if (city.fetched_at) {
+                    var ageMs = Date.now() - new Date(city.fetched_at).getTime();
+                    if (ageMs > 4 * 60 * 60 * 1000) { // 4 hours
+                        isStale = true;
+                    }
+                }
+
+                var cardClasses = 'city-card';
+                if (id === selectedCity) cardClasses += ' active';
+                if (isStale) cardClasses += ' stale-data-warning';
+                var card = el('div', cardClasses);
                 card.setAttribute('data-city', id);
 
                 var header = el('div', 'city-header');
@@ -2836,7 +2880,28 @@
 
             var labelEl = document.getElementById('modelCityLabel');
             while (labelEl.firstChild) labelEl.removeChild(labelEl.firstChild);
-            labelEl.appendChild(document.createTextNode(city.name + ' (' + city.icao + ')'));
+            
+            var titleSpan = el('span', null, city.name + ' (' + city.icao + ')');
+            labelEl.appendChild(titleSpan);
+
+            if (city.fetched_at) {
+                var fetchDate = new Date(city.fetched_at);
+                var ageMinutes = Math.floor((Date.now() - fetchDate.getTime()) / 60000);
+                var ageText = ageMinutes < 60 ? ageMinutes + 'm' : Math.floor(ageMinutes / 60) + 'h ' + (ageMinutes % 60) + 'm';
+                
+                var freshnessSpan = el('span', null, '  \u2022  Updated: ' + ageText + ' ago');
+                freshnessSpan.style.marginLeft = 'auto';
+                freshnessSpan.style.fontSize = '9px';
+                if (ageMinutes > 240) {
+                    freshnessSpan.style.color = 'var(--red)';
+                    freshnessSpan.style.fontWeight = '700';
+                } else if (ageMinutes > 120) {
+                    freshnessSpan.style.color = 'var(--orange)';
+                } else {
+                    freshnessSpan.style.color = 'var(--text-dim)';
+                }
+                labelEl.appendChild(freshnessSpan);
+            }
 
             var models = city.models || {};
             var keys = Object.keys(models);

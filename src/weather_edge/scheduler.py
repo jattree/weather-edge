@@ -431,6 +431,9 @@ async def run_cycle(
                 if ai_div:
                     adjusted_conf = min(1.0, adjusted_conf * ai_div["confidence_multiplier"])
 
+                # Estimate spread from Gamma prices
+                estimated_spread = max(0.0, 1.0 - (market.yes_price + market.no_price))
+
                 signal = calculate_edge(
                     market_id=market.market_id,
                     model_prob=model_prob,
@@ -440,7 +443,29 @@ async def run_cycle(
                     hours_to_resolution=hours_to,
                     city_id=city_id.value,
                     description=market.question[:80],
+                    spread=estimated_spread,
                 )
+
+                # Z-score guard: reject core bets on buckets too far from consensus
+                # Tail/penny bets (entry <=6c) are exempt, they're designed as lottery tickets
+                if signal.strategy != "tail" and market_prob > 0.06:
+                    bucket_center = None
+                    if market.threshold_dir == "range" and market.threshold_low_c is not None and market.threshold_high_c is not None:
+                        bucket_center = (market.threshold_low_c + market.threshold_high_c) / 2
+                    elif market.threshold_dir in ("gte", "lte") and market.threshold_value is not None:
+                        bucket_center = market.threshold_value
+
+                    if bucket_center is not None and consensus.std_dev > 0:
+                        zscore = abs(bucket_center - consensus.weighted_mean) / consensus.std_dev
+                        if zscore > settings.max_core_zscore:
+                            logger.info(
+                                "ZSCORE REJECT: %s %s, bucket=%.1f°C mean=%.1f°C std=%.1f z=%.1f (max=%.1f)",
+                                city_id.value, market.question[:40],
+                                bucket_center, consensus.weighted_mean,
+                                consensus.std_dev, zscore, settings.max_core_zscore,
+                            )
+                            continue
+
                 all_signals.append(signal)
 
     # === Claude + Gemini reasoning layer ===

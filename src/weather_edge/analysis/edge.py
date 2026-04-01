@@ -38,6 +38,7 @@ class Signal:
     # Extra context
     city_id: str = ""
     description: str = ""
+    spread: float = 0.0      # Bid-ask spread size
     hours_to_resolution: float | None = None
     strategy: str = "core"  # "core" or "tail"
 
@@ -77,6 +78,7 @@ def calculate_edge(
     hours_to_resolution: float | None = None,
     city_id: str = "",
     description: str = "",
+    spread: float = 0.0,
 ) -> Signal:
     """Calculate edge and optimal position size.
 
@@ -198,6 +200,7 @@ def calculate_edge(
         taker_fee=round(taker_fee_usd, 4),
         city_id=city_id,
         description=description,
+        spread=spread,
         strategy=strategy,
         hours_to_resolution=hours_to_resolution,
     )
