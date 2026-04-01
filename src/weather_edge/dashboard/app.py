@@ -228,15 +228,13 @@ async def _run_dashboard_cycle_inner(run_ai: bool = True) -> None:
     city_data = {}
     for city_id in City:
         city_config = CITIES[city_id]
-        # Get forecast trend from Redis for sparkline
+        # Get forecast trend from Redis for sparkline (newest-first, reverse for display)
         trend = []
         try:
-            import json as _json
-            import redis as _redis
-            _r = _redis.Redis()
-            _trend_raw = _r.get(f"trend:{city_id.value}")
-            if _trend_raw:
-                trend = _json.loads(_trend_raw)
+            from weather_edge.live_state import get_json
+            trend_data = get_json(f"trend:{city_id.value}")
+            if trend_data and isinstance(trend_data, list):
+                trend = list(reversed(trend_data))  # chronological order for sparkline
         except Exception:
             pass
 
