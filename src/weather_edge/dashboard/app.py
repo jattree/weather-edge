@@ -750,7 +750,7 @@ async def fast_exit_loop() -> None:
                 if redeemed > 0:
                     logger.warning("AUTO-REDEEM: %d positions redeemed to USDC", redeemed)
             except Exception:
-                logger.debug("Auto-redeem failed", exc_info=True)
+                logger.error("Auto-redeem failed", exc_info=True)
 
             # Sync positions from exchange first, keeps dashboard fresh
             # and prevents trading on stale balance data
