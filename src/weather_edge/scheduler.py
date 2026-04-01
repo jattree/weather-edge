@@ -292,8 +292,9 @@ async def run_cycle(
             fetch_ai_forecasts_batch,
         )
         market_cities = list({city_id for city_id, _ in market_groups})
-        tomorrow = target_dates[1] if len(target_dates) > 1 else (target_dates[0] if target_dates else date.today() + timedelta(days=1))
-        ai_batch = await fetch_ai_forecasts_batch(market_cities, tomorrow)
+        # Use earliest target date for GraphCast (not [1] which may be wrong after horizon filter)
+        ai_target = target_dates[0] if target_dates else date.today() + timedelta(days=1)
+        ai_batch = await fetch_ai_forecasts_batch(market_cities, ai_target)
         ai_forecasts = ai_batch
         if ai_batch:
             logger.info("GraphCast: %d city forecasts fetched", len(ai_batch))
