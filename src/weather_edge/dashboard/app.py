@@ -515,19 +515,24 @@ async def _run_dashboard_cycle_inner(run_ai: bool = True) -> None:
 
                 # Extract resolution date from title: "on April 1?"
                 resolves_in = ""
+                resolves_seconds = 999999  # for sorting (large = far away)
                 date_match = _re.search(r"on (\w+ \d+)\??$", title)
                 if date_match and status == "open":
                     try:
                         from dateutil.parser import parse as _parse_date
-                        target_date = _parse_date(date_match.group(1) + " 2026").date()
                         now = datetime.now(timezone.utc)
+                        target_date = _parse_date(date_match.group(1) + f" {now.year}").date()
+                        # If parsed date is far in the past, it's probably next year
+                        if (now.date() - target_date).days > 180:
+                            target_date = _parse_date(date_match.group(1) + f" {now.year + 1}").date()
                         # Resolution = target date + 1 day + 2h buffer
                         resolution_dt = datetime(
                             target_date.year, target_date.month, target_date.day,
                             2, 0, 0, tzinfo=timezone.utc,
                         ) + timedelta(days=1)
                         delta = resolution_dt - now
-                        if delta.total_seconds() <= 0:
+                        resolves_seconds = delta.total_seconds()
+                        if resolves_seconds <= 0:
                             resolves_in = "OVERDUE"
                         elif delta.days > 0:
                             resolves_in = f"{delta.days}d {delta.seconds // 3600}h"
@@ -561,11 +566,15 @@ async def _run_dashboard_cycle_inner(run_ai: bool = True) -> None:
                     "outcome": outcome,
                     "current_value": round(cur_val, 2),
                     "resolves_in": resolves_in,
+                    "_sort_seconds": resolves_seconds,
                 })
 
-            # Sort: open first, then won, then lost
+            # Sort: open positions by resolution time (soonest first), then won, then lost
             status_order = {"open": 0, "won": 1, "lost": 2, "sold": 3}
-            trade_log_live.sort(key=lambda t: (status_order.get(t["status"], 9), -t["size"]))
+            trade_log_live.sort(key=lambda t: (
+                status_order.get(t["status"], 9),
+                t.get("_sort_seconds", 999999),
+            ))
 
             latest_state["live"] = {
                 "enabled": True,
