@@ -228,12 +228,25 @@ async def _run_dashboard_cycle_inner(run_ai: bool = True) -> None:
     city_data = {}
     for city_id in City:
         city_config = CITIES[city_id]
+        # Get forecast trend from Redis for sparkline
+        trend = []
+        try:
+            import json as _json
+            import redis as _redis
+            _r = _redis.Redis()
+            _trend_raw = _r.get(f"trend:{city_id.value}")
+            if _trend_raw:
+                trend = _json.loads(_trend_raw)
+        except Exception:
+            pass
+
         city_info = {
             "name": city_config.name,
             "icao": city_config.icao,
             "forecasts": {},
             "models": {},
             "fetched_at": None,
+            "trend": trend,
         }
 
         # Use cached forecasts from run_cycle

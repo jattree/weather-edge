@@ -317,6 +317,10 @@ OPENMETEO_PAID_TIER=true
 | POST | `/api/kill-switch` | Emergency stop + cancel all exchange orders |
 | WS | `/ws` | Real-time state updates |
 
+## TODO
+
+- **Mobile responsive layout**, single-column view for phone with portfolio value, P&L, active alerts, and urgent positions. Currently unusable on mobile.
+
 ## License
 
 Private. Not for redistribution.
