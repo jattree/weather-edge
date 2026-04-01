@@ -685,10 +685,10 @@ async def run_cycle(
             _live_balance, USDC_FLOOR,
         )
 
-    # --- SWING BOT: Position cap (Rule of 12) ---
-    # Concentrate capital into 10-12 high-conviction bets instead of
-    # spraying $1-6 across 46 positions. Fewer positions = bigger sizes = real P&L.
-    MAX_POSITIONS = 12
+    # --- SWING BOT: Position cap (Rule of 20) ---
+    # Survival tier: $5 minimums need more slots for inventory agility.
+    # Raise to 20 once extra capital lands, drop back to 12 at $630+ bankroll.
+    MAX_POSITIONS = 20
     _active_position_count = 0
     if store and live_executor and not live_executor.dry_run:
         try:
@@ -775,8 +775,8 @@ async def run_cycle(
                         )
 
             # --- SWING BOT: Minimum position size ---
-            # No more $1-6 dust positions. $10 minimum forces concentration.
-            MIN_LIVE_SIZE = 10.0
+            # Survival tier: $5 min until bankroll > $500, then raise to $10.
+            MIN_LIVE_SIZE = 5.0
             if signal.recommended_size < MIN_LIVE_SIZE:
                 signal.recommended_size = MIN_LIVE_SIZE
 
@@ -917,13 +917,14 @@ async def run_cycle(
                             # Edge >= 12%: taker (cross spread, pay fee, secure alpha)
                             # Edge 5-12%: maker (rest on book, cancel if unfilled)
                             # At tail prices (<10c), taker fee is negligible anyway
-                            use_taker = signal.edge >= 0.12
+                            use_taker = signal.edge >= 0.08
                             # Re-check fee gate for taker orders, maker is $0 fee
                             # but taker pays real fees that could eat alpha
-                            if use_taker and fee_blocked:
+                            # At $5 bets, taker fee is ~10c, skip fee gate, not worth the miss
+                            if use_taker and fee_blocked and signal.recommended_size > 20:
                                 logger.info(
-                                    "FEE GATE TAKER: %s edge=%.1f%% but fee eats >40%% alpha, using maker",
-                                    signal.city_id, signal.edge * 100,
+                                    "FEE GATE TAKER: %s edge=%.1f%% but fee eats >40%% alpha on $%.0f, using maker",
+                                    signal.city_id, signal.edge * 100, signal.recommended_size,
                                 )
                                 use_taker = False
                             if use_taker:
