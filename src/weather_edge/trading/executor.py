@@ -916,7 +916,7 @@ class TradeExecutor:
                     # Submit via Polymarket Relayer (gasless, executes from proxy)
                     async with httpx.AsyncClient() as http:
                         submit_resp = await http.post(
-                            relayer_url,
+                            f"{relayer_url}/submit",
                             json={
                                 "to": CTF_ADDRESS,
                                 "data": calldata,
