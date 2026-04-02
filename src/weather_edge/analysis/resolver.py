@@ -35,6 +35,10 @@ EXACT_PATTERN_C = re.compile(r"be\s+(\d+)\s*°\s*C\s+on\s+", re.IGNORECASE)
 # Open-Meteo archive API, always use free tier (customer archive needs Professional plan)
 ARCHIVE_API_URL = "https://archive-api.open-meteo.com/v1/archive"
 
+# Cache native Fahrenheit max from METAR to avoid F↔C conversion rounding errors.
+# Key: (city_id, target_date_str) → native max_f value
+_metar_native_f_cache: dict[tuple[str, str], float | None] = {}
+
 
 async def fetch_resolved_markets() -> dict[str, bool]:
     """Query Polymarket Gamma API for recently resolved weather markets.
@@ -146,13 +150,19 @@ async def check_nws_observations(city_id: str, target_date: date) -> float | Non
     city_config = CITIES[city_enum]
 
     # --- Primary: IEM METAR station observation ---
+    # Fetch both native C and F to avoid conversion rounding errors.
+    # Store native_f on the trade for Fahrenheit markets so the resolver
+    # can round(max_f) directly instead of round(c_to_f(max_c)).
     try:
-        from weather_edge.fetchers.metar import fetch_station_tmax
-        temp_c = await fetch_station_tmax(city_config.icao, target_date)
+        from weather_edge.fetchers.metar import fetch_station_tmax_both
+        temp_c, temp_f = await fetch_station_tmax_both(city_config.icao, target_date)
         if temp_c is not None:
+            # Store native F max in a module-level cache for the resolver
+            _metar_native_f_cache[(city_id, str(target_date))] = temp_f
             logger.info(
-                "METAR obs for %s on %s: %.1f°C (%.1f°F) [station %s]",
-                city_id, target_date, temp_c, c_to_f(temp_c), city_config.icao,
+                "METAR obs for %s on %s: %.1f°C / %.1f°F [station %s]",
+                city_id, target_date, temp_c,
+                temp_f if temp_f else c_to_f(temp_c), city_config.icao,
             )
             # Backfill actual value in forecast snapshots
             try:
@@ -275,23 +285,42 @@ def parse_bucket_from_description(
     return None
 
 
-def actual_falls_in_bucket(actual_temp_c: float, bucket: BucketInfo) -> bool:
+def actual_falls_in_bucket(
+    actual_temp_c: float,
+    bucket: BucketInfo,
+    *,
+    native_f: float | None = None,
+    is_hkg: bool = False,
+) -> bool:
     """Check if an actual temperature falls within a bucket's range.
 
-    Compares in native units to avoid floating-point conversion errors.
+    Polymarket resolves against Wunderground's displayed value, which is
+    rounded to whole degrees. We round in the market's NATIVE unit to
+    avoid F↔C conversion rounding errors.
+
+    HKG is special: HK Observatory resolves to 0.1°C precision, so
+    we compare the raw decimal value without rounding.
 
     Args:
-        actual_temp_c: Actual observed temperature in Celsius.
+        actual_temp_c: Actual observed temperature in Celsius (raw METAR).
         bucket: BucketInfo from parse_bucket_from_description.
+        native_f: Native Fahrenheit max from METAR (avoids C→F→round error).
+        is_hkg: True for Hong Kong (0.1°C precision, no rounding).
 
     Returns:
         True if the actual temperature falls in this bucket.
     """
-    # Convert actual to bucket's native unit
     if bucket.unit == "fahrenheit":
-        actual = _c_to_f(actual_temp_c)
-    else:
+        # Use native F reading when available to avoid conversion rounding
+        if native_f is not None:
+            actual = round(native_f)
+        else:
+            actual = round(_c_to_f(actual_temp_c))
+    elif is_hkg:
+        # HK Observatory: 0.1°C precision, no rounding
         actual = actual_temp_c
+    else:
+        actual = round(actual_temp_c)
 
     low, high = bucket.low, bucket.high
 
@@ -433,7 +462,12 @@ async def resolve_open_trades(paper_trader: PaperTrader) -> int:
             continue
 
         # Determine if YES won (actual temp falls in this bucket)
-        yes_won = actual_falls_in_bucket(actual_temp_c, bucket)
+        # Use native F max and HKG flag for correct rounding
+        native_f = _metar_native_f_cache.get((city_id, str(target_date)))
+        is_hkg = city_id == "hkg"
+        yes_won = actual_falls_in_bucket(
+            actual_temp_c, bucket, native_f=native_f, is_hkg=is_hkg,
+        )
         paper_trader.resolve_trade(trade, outcome_yes=yes_won)
         resolved_count += 1
 
