@@ -102,7 +102,10 @@ def main():
     parser.add_argument("--days", type=int, default=90, help="Days of history to compare")
     args = parser.parse_args()
 
-    end = date(2025, 12, 31)  # Use 2025 data (confirmed available on IEM)
+    # Use the most recent 90 days ending yesterday.
+    # IEM ASOS may not have the very latest days, that's OK, fewer samples.
+    # Updated 2026-04-01: was Oct-Dec 2025, now Jan-Mar 2026 for seasonal relevance.
+    end = date.today() - timedelta(days=1)  # yesterday
     start = end - timedelta(days=args.days)
 
     conn = sqlite3.connect(str(DB_PATH))

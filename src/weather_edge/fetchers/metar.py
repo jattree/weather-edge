@@ -25,6 +25,11 @@ logger = logging.getLogger(__name__)
 IEM_ASOS_URL = "https://mesonet.agron.iastate.edu/cgi-bin/request/asos.py"
 
 
+# Minimum hourly readings required to trust a daily max.
+# Prevents bad resolution from sparse/incomplete station data.
+MIN_READINGS = 12
+
+
 async def fetch_station_tmax(
     icao: str,
     target_date: date,
@@ -34,20 +39,14 @@ async def fetch_station_tmax(
     """Fetch observed daily high temperature from METAR station data.
 
     Returns temperature in Celsius, or None if unavailable.
-    The ICAO code should match the Polymarket resolution station
-    (e.g., KLGA for NYC, ZGSZ for Shenzhen, RJTT for Tokyo).
-
-    IEM uses the raw ICAO code for international stations and
-    strips the K prefix for US stations internally, but accepts
-    full ICAO codes for all.
+    Fetches both tmpf and tmpc from IEM to avoid F→C conversion
+    errors that can flip whole-degree rounding buckets.
     """
-    # IEM accepts ICAO codes directly (KLGA, EGLC, RJTT, etc.)
-    # For US stations, strip the K prefix
     station_id = icao[1:] if icao.startswith("K") else icao
 
     params = {
         "station": station_id,
-        "data": "tmpf",
+        "data": "tmpf,tmpc",
         "year1": target_date.year,
         "month1": target_date.month,
         "day1": target_date.day,
@@ -72,31 +71,115 @@ async def fetch_station_tmax(
             logger.warning("IEM METAR fetch failed for %s on %s: %s", icao, target_date, e)
             return None
 
-    # Parse CSV: columns are station, valid, tmpf
     content = resp.text
     reader = csv.DictReader(io.StringIO(content))
 
     temps_f: list[float] = []
+    temps_c: list[float] = []
     for row in reader:
         tmpf = row.get("tmpf", "M")
+        tmpc = row.get("tmpc", "M")
         if tmpf and tmpf != "M":
             try:
                 temps_f.append(float(tmpf))
             except ValueError:
-                continue
+                pass
+        if tmpc and tmpc != "M":
+            try:
+                temps_c.append(float(tmpc))
+            except ValueError:
+                pass
 
-    if not temps_f:
-        logger.debug("No METAR observations for %s on %s", icao, target_date)
+    readings = max(len(temps_f), len(temps_c))
+    if readings < MIN_READINGS:
+        logger.debug(
+            "Insufficient METAR readings for %s on %s: %d < %d",
+            icao, target_date, readings, MIN_READINGS,
+        )
         return None
 
-    max_f = max(temps_f)
-    max_c = (max_f - 32.0) * 5.0 / 9.0
+    # Use native Celsius when available (avoids F→C conversion rounding errors)
+    if temps_c:
+        max_c = max(temps_c)
+    elif temps_f:
+        max_c = (max(temps_f) - 32.0) * 5.0 / 9.0
+    else:
+        return None
+
+    max_f = max(temps_f) if temps_f else max_c * 9.0 / 5.0 + 32.0
 
     logger.info(
-        "METAR obs for %s on %s: %.1f°F (%.1f°C) from %d readings",
-        icao, target_date, max_f, max_c, len(temps_f),
+        "METAR obs for %s on %s: %.1f°F / %.1f°C from %d readings",
+        icao, target_date, max_f, max_c, readings,
     )
     return max_c
+
+
+async def fetch_station_tmax_both(
+    icao: str,
+    target_date: date,
+    *,
+    timeout: float = 20.0,
+) -> tuple[float | None, float | None]:
+    """Fetch daily max in both native Celsius AND native Fahrenheit.
+
+    Returns (max_c, max_f) from their respective native METAR fields.
+    This avoids F↔C conversion rounding errors: for Fahrenheit markets,
+    round(max_f) directly instead of round(c_to_f(max_c)).
+    """
+    station_id = icao[1:] if icao.startswith("K") else icao
+
+    params = {
+        "station": station_id,
+        "data": "tmpf,tmpc",
+        "year1": target_date.year,
+        "month1": target_date.month,
+        "day1": target_date.day,
+        "year2": target_date.year,
+        "month2": target_date.month,
+        "day2": target_date.day,
+        "tz": "Etc/UTC",
+        "format": "onlycomma",
+        "latlon": "no",
+        "elev": "no",
+        "missing": "M",
+        "trace": "T",
+        "direct": "no",
+        "report_type": "3",
+    }
+
+    async with httpx.AsyncClient() as client:
+        try:
+            resp = await client.get(IEM_ASOS_URL, params=params, timeout=timeout)
+            resp.raise_for_status()
+        except (httpx.HTTPError, httpx.TimeoutException) as e:
+            logger.warning("IEM METAR fetch failed for %s on %s: %s", icao, target_date, e)
+            return None, None
+
+    reader = csv.DictReader(io.StringIO(resp.text))
+    temps_f: list[float] = []
+    temps_c: list[float] = []
+    for row in reader:
+        tmpf = row.get("tmpf", "M")
+        tmpc = row.get("tmpc", "M")
+        if tmpf and tmpf != "M":
+            try:
+                temps_f.append(float(tmpf))
+            except ValueError:
+                pass
+        if tmpc and tmpc != "M":
+            try:
+                temps_c.append(float(tmpc))
+            except ValueError:
+                pass
+
+    readings = max(len(temps_f), len(temps_c))
+    if readings < MIN_READINGS:
+        return None, None
+
+    max_c = max(temps_c) if temps_c else None
+    max_f = max(temps_f) if temps_f else None
+    return max_c, max_f
 
 
 async def fetch_station_tmax_range(
@@ -115,7 +198,7 @@ async def fetch_station_tmax_range(
 
     params = {
         "station": station_id,
-        "data": "tmpf",
+        "data": "tmpf,tmpc",
         "year1": start_date.year,
         "month1": start_date.month,
         "day1": start_date.day,
@@ -141,22 +224,40 @@ async def fetch_station_tmax_range(
             return {}
 
     reader = csv.DictReader(io.StringIO(resp.text))
-    daily_temps: dict[str, list[float]] = defaultdict(list)
+    daily_temps_c: dict[str, list[float]] = defaultdict(list)
+    daily_temps_f: dict[str, list[float]] = defaultdict(list)
 
     for row in reader:
         ts = row.get("valid", "")
+        if not ts:
+            continue
+        d = ts[:10]
+        tmpc = row.get("tmpc", "M")
         tmpf = row.get("tmpf", "M")
-        if ts and tmpf and tmpf != "M":
-            d = ts[:10]
+        if tmpc and tmpc != "M":
             try:
-                daily_temps[d].append(float(tmpf))
+                daily_temps_c[d].append(float(tmpc))
             except ValueError:
-                continue
+                pass
+        if tmpf and tmpf != "M":
+            try:
+                daily_temps_f[d].append(float(tmpf))
+            except ValueError:
+                pass
 
     result: dict[str, float] = {}
-    for d, temps in daily_temps.items():
-        max_f = max(temps)
-        result[d] = (max_f - 32.0) * 5.0 / 9.0
+    all_dates = set(daily_temps_c.keys()) | set(daily_temps_f.keys())
+    for d in all_dates:
+        c_temps = daily_temps_c.get(d, [])
+        f_temps = daily_temps_f.get(d, [])
+        readings = max(len(c_temps), len(f_temps))
+        if readings < MIN_READINGS:
+            continue
+        # Prefer native Celsius to avoid conversion rounding errors
+        if c_temps:
+            result[d] = max(c_temps)
+        elif f_temps:
+            result[d] = (max(f_temps) - 32.0) * 5.0 / 9.0
 
     logger.info(
         "METAR range for %s: %d days with data (%s to %s)",

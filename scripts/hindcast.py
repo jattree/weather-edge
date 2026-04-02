@@ -1,31 +1,37 @@
 """Hindcast script, bootstrap Brier weights from historical data.
 
-Pulls 90 days of historical model forecasts and actual observations
-from Open-Meteo, populates forecast_snapshots table. This gives the
-adaptive weighting engine thousands of data points instantly instead
-of waiting months for live trading to accumulate them.
+Pulls 90 days of historical model forecasts and actual observations,
+populates forecast_snapshots table. This gives the adaptive weighting
+engine thousands of data points instantly instead of waiting months
+for live trading to accumulate them.
 
 Usage:
     .venv/bin/python scripts/hindcast.py [--days 90] [--city nyc]
+
+Observation sources (in priority order):
+    1. IEM ASOS (METAR station data), same source as Wunderground,
+       which Polymarket resolves against. This is the correct ground
+       truth for bias correction.
+    2. Open-Meteo archive API (fallback), gridded reanalysis data.
+       ~0.9°C MAE vs station readings with 67% rounding mismatch.
+       Only used when METAR data is unavailable.
 
 Open-Meteo historical forecast API:
     https://historical-forecast-api.open-meteo.com/v1/forecast
     - Free tier, no API key needed
     - Archives model runs for the past ~3 months
     - Returns what each model predicted on a given date
-
-Open-Meteo archive API (observations):
-    https://archive-api.open-meteo.com/v1/archive
-    - Free tier
-    - Returns actual observed temperatures
 """
 from __future__ import annotations
 
 import argparse
+import csv
+import io
 import logging
 import sqlite3
 import sys
 import time
+from collections import defaultdict
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -46,8 +52,10 @@ logger = logging.getLogger(__name__)
 # Historical forecast API (what did models predict?)
 # Paid tier gets higher rate limits, free tier is 5K req/day
 HIST_FORECAST_URL = "https://historical-forecast-api.open-meteo.com/v1/forecast"
-# Archive API (what actually happened?), always free
+# Archive API (what actually happened?), always free, but gridded reanalysis
 ARCHIVE_URL = "https://archive-api.open-meteo.com/v1/archive"
+# IEM ASOS, actual METAR station observations (same as Wunderground)
+IEM_ASOS_URL = "https://mesonet.agron.iastate.edu/cgi-bin/request/asos.py"
 # Paid API key (optional, speeds up requests, no rate-limit risk)
 OPENMETEO_API_KEY = "W8ZEnxSiyS61KSh8"
 
@@ -97,10 +105,143 @@ def fetch_historical_forecast(
     return None
 
 
+def fetch_metar_observation(
+    icao: str, target_date: date,
+) -> float | None:
+    """Fetch actual observed daily high from METAR station data.
+
+    Uses IEM ASOS archive, the same raw METAR/ASOS data that
+    Weather Underground displays. Polymarket resolves against
+    Wunderground, so this is the correct ground truth.
+
+    Returns daily max temperature in Celsius, or None if unavailable.
+    """
+    # US stations: strip K prefix (KDAL -> DAL). International: use as-is.
+    station_id = icao[1:] if icao.startswith("K") else icao
+
+    try:
+        resp = httpx.get(
+            IEM_ASOS_URL,
+            params={
+                "station": station_id,
+                "data": "tmpf",
+                "year1": target_date.year,
+                "month1": target_date.month,
+                "day1": target_date.day,
+                "year2": target_date.year,
+                "month2": target_date.month,
+                "day2": target_date.day,
+                "tz": "Etc/UTC",
+                "format": "onlycomma",
+                "latlon": "no",
+                "elev": "no",
+                "missing": "M",
+                "trace": "T",
+                "direct": "no",
+                "report_type": "3",
+            },
+            timeout=20,
+            follow_redirects=True,
+        )
+        if resp.status_code != 200:
+            return None
+
+        reader = csv.DictReader(io.StringIO(resp.text))
+        temps_f: list[float] = []
+        for row in reader:
+            tmpf = row.get("tmpf", "M")
+            if tmpf and tmpf != "M":
+                try:
+                    temps_f.append(float(tmpf))
+                except ValueError:
+                    continue
+
+        if not temps_f:
+            return None
+
+        max_f = max(temps_f)
+        return (max_f - 32.0) * 5.0 / 9.0
+    except Exception:
+        return None
+
+
+def fetch_batch_metar_observations(
+    icao: str, start: date, end: date,
+) -> dict[str, float]:
+    """Fetch daily max temperatures from METAR station data for a date range.
+
+    Returns dict mapping ISO date string -> tmax in Celsius.
+    Single API call for the whole range, much more efficient than per-day.
+    """
+    station_id = icao[1:] if icao.startswith("K") else icao
+
+    try:
+        resp = httpx.get(
+            IEM_ASOS_URL,
+            params={
+                "station": station_id,
+                "data": "tmpf",
+                "year1": start.year,
+                "month1": start.month,
+                "day1": start.day,
+                "year2": end.year,
+                "month2": end.month,
+                "day2": end.day,
+                "tz": "Etc/UTC",
+                "format": "onlycomma",
+                "latlon": "no",
+                "elev": "no",
+                "missing": "M",
+                "trace": "T",
+                "direct": "no",
+                "report_type": "3",
+            },
+            timeout=30,
+            follow_redirects=True,
+        )
+        if resp.status_code != 200:
+            return {}
+
+        reader = csv.DictReader(io.StringIO(resp.text))
+        daily_temps: dict[str, list[float]] = defaultdict(list)
+
+        for row in reader:
+            ts = row.get("valid", "")
+            tmpf = row.get("tmpf", "M")
+            if ts and tmpf and tmpf != "M":
+                d = ts[:10]  # Extract YYYY-MM-DD from timestamp
+                try:
+                    daily_temps[d].append(float(tmpf))
+                except ValueError:
+                    continue
+
+        result: dict[str, float] = {}
+        for d, temps in daily_temps.items():
+            max_f = max(temps)
+            result[d] = (max_f - 32.0) * 5.0 / 9.0
+
+        return result
+    except Exception:
+        return {}
+
+
 def fetch_actual_observation(
     lat: float, lon: float, target_date: date,
+    icao: str | None = None,
 ) -> float | None:
-    """Fetch actual observed high temperature for a date."""
+    """Fetch actual observed high temperature for a date.
+
+    Tries METAR station data first (correct ground truth for Polymarket),
+    falls back to Open-Meteo archive (gridded reanalysis) if unavailable.
+    """
+    # Primary: METAR station observation
+    if icao:
+        result = fetch_metar_observation(icao, target_date)
+        if result is not None:
+            return result
+        logger.debug("METAR unavailable for %s on %s, falling back to Open-Meteo", icao, target_date)
+
+    # Fallback: Open-Meteo archive (gridded reanalysis)
     try:
         resp = httpx.get(
             ARCHIVE_URL,
@@ -127,33 +268,53 @@ def fetch_actual_observation(
 
 def fetch_batch_observations(
     lat: float, lon: float, start: date, end: date,
+    icao: str | None = None,
 ) -> dict[str, float]:
-    """Fetch actual observations for a date range (one API call)."""
-    try:
-        resp = httpx.get(
-            ARCHIVE_URL,
-            params={
-                "latitude": lat,
-                "longitude": lon,
-                "daily": "temperature_2m_max",
-                "start_date": str(start),
-                "end_date": str(end),
-            },
-            timeout=30,
-            follow_redirects=True,
-        )
-        if resp.status_code != 200:
-            return {}
-        data = resp.json()
-        dates = data.get("daily", {}).get("time", [])
-        temps = data.get("daily", {}).get("temperature_2m_max", [])
-        result = {}
-        for d, t in zip(dates, temps):
-            if t is not None:
-                result[d] = float(t)
-        return result
-    except Exception:
-        return {}
+    """Fetch actual observations for a date range.
+
+    Tries METAR station data first (correct ground truth for Polymarket),
+    fills gaps from Open-Meteo archive (gridded reanalysis) if needed.
+    """
+    result: dict[str, float] = {}
+
+    # Primary: METAR station observations
+    if icao:
+        result = fetch_batch_metar_observations(icao, start, end)
+        if result:
+            logger.info("  METAR (%s): %d days of station data", icao, len(result))
+
+    # Fallback: fill any missing days from Open-Meteo archive
+    # Generate expected date range to check for gaps
+    expected_days = (end - start).days + 1
+    if len(result) < expected_days:
+        try:
+            resp = httpx.get(
+                ARCHIVE_URL,
+                params={
+                    "latitude": lat,
+                    "longitude": lon,
+                    "daily": "temperature_2m_max",
+                    "start_date": str(start),
+                    "end_date": str(end),
+                },
+                timeout=30,
+                follow_redirects=True,
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                dates = data.get("daily", {}).get("time", [])
+                temps = data.get("daily", {}).get("temperature_2m_max", [])
+                om_filled = 0
+                for d, t in zip(dates, temps):
+                    if t is not None and d not in result:
+                        result[d] = float(t)
+                        om_filled += 1
+                if om_filled:
+                    logger.info("  Open-Meteo fallback: filled %d missing days", om_filled)
+        except Exception:
+            pass
+
+    return result
 
 
 def fetch_batch_forecasts(
@@ -245,9 +406,10 @@ def run_hindcast(
             logger.info("  Already have %d dates, skipping", existing)
             continue
 
-        # Fetch actual observations in one batch
+        # Fetch actual observations in one batch (METAR primary, Open-Meteo fallback)
         actuals = fetch_batch_observations(
             config.latitude, config.longitude, start_date, end_date,
+            icao=config.icao,
         )
         logger.info("  Fetched %d actual observations", len(actuals))
         time.sleep(0.5)  # Rate limit

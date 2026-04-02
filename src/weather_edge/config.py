@@ -184,6 +184,14 @@ CITIES: dict[City, CityConfig] = {
         regional_models=[],
         temp_unit="celsius",
     ),
+    # WARNING: HKG resolution mismatch.
+    # Polymarket resolves HKG from HK Observatory (Tsim Sha Tsui, central Kowloon):
+    #   https://www.weather.gov.hk/en/cis/climat.htm, "Absolute Daily Max (deg. C)"
+    # HK Observatory reports to ONE DECIMAL PLACE (e.g., 28.1C), not whole degrees.
+    # VHHH (Chek Lap Kok airport) is ~15km away, different microclimate (coastal
+    # reclaimed land vs urban heat island). Expect higher systematic error here.
+    # TODO: Either find HK Observatory data programmatically, or reduce position
+    # sizing for HKG to account for the station mismatch.
     City.HKG: CityConfig(
         city_id=City.HKG,
         name="Hong Kong",
