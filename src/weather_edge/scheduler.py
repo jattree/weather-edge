@@ -692,9 +692,9 @@ async def run_cycle(
         )
 
     # --- SWING BOT: Position cap ---
-    # Temporarily raised to 65 while April 1 markets resolve + auto-redeem fix.
-    # TODO: drop back to 20 once position count clears (or 12 at $630+ bankroll).
-    MAX_POSITIONS = 65
+    # Rule of 20: $5 minimums need enough slots for inventory agility.
+    # Drop to 12 at $630+ bankroll.
+    MAX_POSITIONS = 20
     _active_position_count = 0
     if store and live_executor and not live_executor.dry_run:
         try:

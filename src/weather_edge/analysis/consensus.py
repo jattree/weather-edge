@@ -10,7 +10,7 @@ from scipy import stats
 from weather_edge.analysis.bias_correction import apply_bias_correction
 from weather_edge.config import get_model_weights
 from weather_edge.fetchers.openmeteo import ForecastResult
-from weather_edge.models.enums import City, MarketType, WeatherModel
+from weather_edge.models.enums import City, WeatherModel
 
 logger = logging.getLogger(__name__)
 
@@ -19,12 +19,16 @@ logger = logging.getLogger(__name__)
 # Models are correlated (shared physics + initial conditions) so spread is artificially narrow.
 
 # Spread inflation factor: multiply raw std_dev by this before computing probabilities.
-# Professional forecasting uses 1.5-2.2x. We use 2.0x per Gemini recommendation.
-SPREAD_INFLATION_FACTOR = 2.0
+# Professional forecasting uses 1.5-2.2x. Reduced from 2.0 to 1.3 after METAR
+# recalibration showed we were over-inflating uncertainty, spreading probability
+# across too many buckets and killing real edges.
+SPREAD_INFLATION_FACTOR = 1.3
 
-# Bias shrinkage: apply only this fraction of the 30-day bias correction.
-# Full correction overfits to the average; 50% is a standard "shrinkage" approach.
-BIAS_SHRINKAGE = 0.5
+# Bias shrinkage: apply this fraction of the bias correction.
+# Raised from 0.5 to 0.9, now that the hindcast is calibrated against METAR
+# (the actual resolution source), we can trust the bias numbers much more.
+# Old value (0.5) was leaving ~half the systematic error uncorrected.
+BIAS_SHRINKAGE = 0.9
 
 # Probability cap: never assign more than this to a single 2°F bucket >12h out.
 # A >90% single-bucket probability is "likely broken" per Gemini.
@@ -77,8 +81,10 @@ CLIMATOLOGICAL_STD = {"temp_max_c": 6.0}
 
 # EMOS minimum variance floor: even when models perfectly agree,
 # instrument error + microclimate fluctuations create irreducible uncertainty.
-# ~1.2°C for temperature accounts for NWS station measurement precision.
-EMOS_VARIANCE_FLOOR_C = 1.2
+# Reduced from 1.2 to 0.7, the old floor was wider than the bucket itself
+# (1°C), guaranteeing that even a perfect forecast got diluted across buckets.
+# 0.7°C reflects actual METAR measurement noise without over-inflating.
+EMOS_VARIANCE_FLOOR_C = 0.7
 
 # Normalization ranges for confidence calculation
 CONFIDENCE_NORMALIZATION: dict[str, float] = {
