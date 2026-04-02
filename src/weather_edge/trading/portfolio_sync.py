@@ -193,6 +193,42 @@ async def sync_portfolio(executor, store, market_lookup: dict | None = None) -> 
     # Step 2: Rebuild positions from fills
     store.rebuild_positions()
 
+    # Step 2b: Zero out resolved positions not on Polymarket anymore.
+    # After market resolution, tokens are burned or redeemed. The fills
+    # ledger still shows buys without offsetting sells, inflating the
+    # position count. Cross-reference with the Data API to clean up.
+    try:
+        import httpx as _httpx
+        async with _httpx.AsyncClient() as _client:
+            _resp = await _client.get(
+                "https://data-api.polymarket.com/positions",
+                params={"user": (executor.wallet_address or our_address).lower(), "sizeThreshold": 0},
+                timeout=15.0,
+            )
+            if _resp.status_code == 200:
+                api_positions = _resp.json()
+                active_cids = {
+                    p.get("conditionId")
+                    for p in api_positions
+                    if float(p.get("size", 0)) > 0
+                }
+                # Zero out DB positions that Polymarket no longer shows
+                db_positions = store.conn.execute(
+                    "SELECT condition_id FROM positions WHERE total_shares > 0"
+                ).fetchall()
+                cleaned = 0
+                for row in db_positions:
+                    if row["condition_id"] not in active_cids:
+                        store.conn.execute(
+                            "UPDATE positions SET total_shares = 0 WHERE condition_id = ?",
+                            (row["condition_id"],),
+                        )
+                        cleaned += 1
+                if cleaned > 0:
+                    logger.info("POSITION CLEANUP: zeroed %d resolved positions", cleaned)
+    except Exception:
+        logger.debug("Position cleanup against Data API failed", exc_info=True)
+
     # Step 3: Reconcile live_trades against exchange order status
     # Every "open" or "partial" order in our DB must be verified against
     # what the exchange actually says. Prevents stale local state from
