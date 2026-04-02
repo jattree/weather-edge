@@ -819,7 +819,6 @@ class TradeExecutor:
             from eth_account.messages import encode_defunct
             from eth_utils import keccak, to_bytes, to_checksum_address
             from hexbytes import HexBytes
-            from py_builder_signing_sdk.config import BuilderApiKeyCreds, BuilderConfig
             from web3 import Web3
 
             from weather_edge.config import settings as cfg
@@ -853,32 +852,10 @@ class TradeExecutor:
                 "REDEEM: EOA=%s proxy=%s", eoa_address[:10] + "...", proxy_address[:10] + "..."
             )
 
-            # ── Builder auth config ────────────────────────────────────
-            # Use CLOB API creds (auto-derived during executor init)
-            _api_key = self.api_key or ""
-            _api_secret = self.api_secret or ""
-            _api_passphrase = self.api_passphrase or ""
-
-            # If no explicit creds, try to get from the initialized CLOB client
-            if not (_api_key and _api_secret and _api_passphrase):
-                if self._client and hasattr(self._client, "creds"):
-                    c = self._client.creds
-                    if c:
-                        _api_key = getattr(c, "api_key", "") or ""
-                        _api_secret = getattr(c, "api_secret", "") or ""
-                        _api_passphrase = getattr(c, "api_passphrase", "") or ""
-
-            if not (_api_key and _api_secret and _api_passphrase):
-                logger.error("REDEEM: API creds (key/secret/passphrase) not available")
+            # ── Auth config ────────────────────────────────────────────
+            if not self.relayer_api_key:
+                logger.error("REDEEM: relayer API key not configured")
                 return 0
-
-            builder_config = BuilderConfig(
-                local_builder_creds=BuilderApiKeyCreds(
-                    key=_api_key,
-                    secret=_api_secret,
-                    passphrase=_api_passphrase,
-                )
-            )
 
             # ── Fetch redeemable positions ─────────────────────────────
             async with httpx.AsyncClient() as http:
@@ -1091,23 +1068,23 @@ class TradeExecutor:
                         "metadata": f"redeem:{condition_id[:16]}",
                     }
 
-                    # Generate builder auth headers
+                    # Auth: use Relayer API key (simple headers)
                     body_str = _json.dumps(tx_request)
-                    headers_obj = builder_config.generate_builder_headers(
-                        "POST", "/submit", body_str
-                    )
-                    if headers_obj is None:
-                        logger.error("REDEEM: failed to generate builder headers")
-                        continue
-                    builder_headers = headers_obj.to_dict()
-                    builder_headers["Content-Type"] = "application/json"
+                    submit_headers = {
+                        "Content-Type": "application/json",
+                        "POLY_ADDRESS": eoa_address.lower(),
+                        "POLY_SIGNATURE": signature,
+                        "POLY_TIMESTAMP": str(int(datetime.now(timezone.utc).timestamp())),
+                        "POLY_NONCE": str(nonce),
+                        "POLY_API_KEY": self.relayer_api_key or "",
+                    }
 
                     # Submit to relayer
                     async with httpx.AsyncClient() as http:
                         submit_resp = await http.post(
                             f"{relayer_url}/submit",
                             content=body_str,
-                            headers=builder_headers,
+                            headers=submit_headers,
                             timeout=30.0,
                         )
 
