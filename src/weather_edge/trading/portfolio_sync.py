@@ -225,6 +225,7 @@ async def sync_portfolio(executor, store, market_lookup: dict | None = None) -> 
                         )
                         cleaned += 1
                 if cleaned > 0:
+                    store.commit()
                     logger.info("POSITION CLEANUP: zeroed %d resolved positions", cleaned)
     except Exception:
         logger.debug("Position cleanup against Data API failed", exc_info=True)
