@@ -793,39 +793,116 @@ class TradeExecutor:
     async def redeem_positions(self) -> int:
         """Redeem all resolved (winning) positions back to USDC.
 
-        Uses Polymarket's Relayer API to execute CTF.redeemPositions
-        from the proxy wallet. The relayer pays gas (gasless for us).
+        Uses Polymarket's Relayer API with proper PROXY wallet signing flow:
+        1. Fetch redeemable positions from Data API
+        2. Pre-check on-chain resolution via payoutDenominator
+        3. Encode CTF.redeemPositions calldata
+        4. Wrap in proxy((uint8,address,uint256,bytes)[]) encoding
+        5. Get relay payload (nonce + relay address) from relayer
+        6. Build proxy struct hash (rlx: prefix + fields + keccak256)
+        7. Sign with EIP-191 personal sign
+        8. Submit with builder API key auth headers
+        9. Poll for confirmation
 
         Returns number of positions redeemed.
         """
         if self.dry_run or not self.private_key:
             return 0
-        if not self.relayer_api_key:
-            logger.debug("REDEEM: no relayer API key configured, skipping")
-            return 0
 
         try:
+            import json as _json
+
             import httpx
+            from eth_abi import encode as abi_encode
+            from eth_abi.packed import encode_packed
+            from eth_account import Account
+            from eth_account.messages import encode_defunct
+            from eth_utils import keccak, to_bytes, to_checksum_address
+            from hexbytes import HexBytes
+            from py_builder_signing_sdk.config import BuilderApiKeyCreds, BuilderConfig
             from web3 import Web3
 
-            proxy = self.wallet_address or "0xe23940d70793b441c9f949741daa65289947fadb"
+            from weather_edge.config import settings as cfg
 
-            # Find redeemable positions from Data API
+            # ── Constants ──────────────────────────────────────────────
+            ctf_addr = "0x4D97DCd97eC945f40cF65F87097ACe5EA0476045"
+            usdc_addr = "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174"
+            parent_collection = b"\x00" * 32
+            proxy_factory = "0xaB45c5A4B0c941a2F231C04C3f49182e1A254052"
+            relay_hub = "0xD216153c06E857cD7f72665E0aF1d7D82172F494"
+            proxy_init_code_hash = (
+                "0xd21df8dc65880a8606f09fe0ce3df9b8869287ab0b058be05aa9e8af6330a00b"
+            )
+            default_gas_limit = 500_000
+
+            relayer_url = cfg.polymarket_relayer_url.rstrip("/")
+
+            # ── Derive addresses ───────────────────────────────────────
+            account = Account.from_key(self.private_key)
+            eoa_address = account.address  # checksummed
+
+            # Derive proxy wallet address (CREATE2 with packed salt)
+            salt = keccak(encode_packed(["address"], [eoa_address]))
+            bytecode_hash = to_bytes(hexstr=proxy_init_code_hash)
+            factory_bytes = to_bytes(hexstr=proxy_factory)
+            proxy_address = to_checksum_address(
+                keccak(b"\xff" + factory_bytes + salt + bytecode_hash)[-20:].hex()
+            )
+
+            logger.info(
+                "REDEEM: EOA=%s proxy=%s", eoa_address[:10] + "...", proxy_address[:10] + "..."
+            )
+
+            # ── Builder auth config ────────────────────────────────────
+            # Use CLOB API creds (auto-derived during executor init)
+            _api_key = self.api_key or ""
+            _api_secret = self.api_secret or ""
+            _api_passphrase = self.api_passphrase or ""
+
+            # If no explicit creds, try to get from the initialized CLOB client
+            if not (_api_key and _api_secret and _api_passphrase):
+                if self._client and hasattr(self._client, "creds"):
+                    c = self._client.creds
+                    if c:
+                        _api_key = getattr(c, "api_key", "") or ""
+                        _api_secret = getattr(c, "api_secret", "") or ""
+                        _api_passphrase = getattr(c, "api_passphrase", "") or ""
+
+            if not (_api_key and _api_secret and _api_passphrase):
+                logger.error("REDEEM: API creds (key/secret/passphrase) not available")
+                return 0
+
+            builder_config = BuilderConfig(
+                local_builder_creds=BuilderApiKeyCreds(
+                    key=_api_key,
+                    secret=_api_secret,
+                    passphrase=_api_passphrase,
+                )
+            )
+
+            # ── Fetch redeemable positions ─────────────────────────────
             async with httpx.AsyncClient() as http:
                 resp = await http.get(
                     "https://data-api.polymarket.com/positions",
-                    params={"user": proxy, "sizeThreshold": 0},
+                    params={"user": proxy_address.lower(), "sizeThreshold": 0},
                     timeout=15.0,
                 )
                 if resp.status_code != 200:
+                    logger.error("REDEEM: Data API returned %d", resp.status_code)
                     return 0
                 positions = resp.json()
 
-            redeemable = [p for p in positions if p.get("redeemable") and float(p.get("size", 0)) > 0]
+            redeemable = [
+                p for p in positions
+                if p.get("redeemable") and float(p.get("size", 0)) > 0
+            ]
             if not redeemable:
+                logger.debug("REDEEM: no redeemable positions found")
                 return 0
 
-            # Connect to Polygon for on-chain resolution checks
+            logger.info("REDEEM: found %d redeemable positions", len(redeemable))
+
+            # ── On-chain resolution pre-check ──────────────────────────
             w3 = None
             for rpc in ["https://1rpc.io/matic", "https://rpc-mainnet.matic.quiknode.pro"]:
                 try:
@@ -835,11 +912,7 @@ class TradeExecutor:
                 except Exception:
                     w3 = None
 
-            CTF_ADDRESS = "0x4D97DCd97eC945f40cF65F87097ACe5EA0476045"
-            USDC = "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174"
-            PARENT_COLLECTION = b"\x00" * 32
-
-            REDEEM_ABI = [{
+            redeem_abi = [{
                 "name": "redeemPositions",
                 "type": "function",
                 "inputs": [
@@ -850,8 +923,7 @@ class TradeExecutor:
                 ],
                 "outputs": [],
             }]
-
-            CTF_CHECK_ABI = [{
+            ctf_check_abi = [{
                 "name": "payoutDenominator",
                 "type": "function",
                 "stateMutability": "view",
@@ -861,15 +933,59 @@ class TradeExecutor:
 
             w3_encode = w3 or Web3()
             ctf_contract = w3_encode.eth.contract(
-                address=Web3.to_checksum_address(CTF_ADDRESS),
-                abi=REDEEM_ABI + CTF_CHECK_ABI,
+                address=Web3.to_checksum_address(ctf_addr),
+                abi=redeem_abi + ctf_check_abi,
             )
 
-            account = w3_encode.eth.account.from_key(self.private_key)
-            eoa_address = account.address.lower()
+            # ── Helper: encode proxy transaction data ──────────────────
+            def _encode_proxy_txn_data(
+                call_to: str, calldata_hex: str, value: int = 0
+            ) -> str:
+                """Encode a single call into proxy((uint8,address,uint256,bytes)[])."""
+                fn_selector = keccak(b"proxy((uint8,address,uint256,bytes)[])")[:4]
+                data_bytes = to_bytes(hexstr=calldata_hex)
+                # type_code=1 means Call (not DelegateCall)
+                tuples = [(1, to_checksum_address(call_to), value, data_bytes)]
+                encoded = abi_encode(["(uint8,address,uint256,bytes)[]"], [tuples])
+                return "0x" + (fn_selector + encoded).hex()
 
+            # ── Helper: create proxy struct hash ───────────────────────
+            def _proxy_struct_hash(
+                from_addr: str,
+                to_addr: str,
+                data_hex: str,
+                gas_price: str,
+                gas_limit: str,
+                nonce: str,
+                relay_addr: str,
+            ) -> bytes:
+                """Build the rlx: prefixed hash for proxy signing."""
+                data_bytes = to_bytes(hexstr=data_hex)
+                message = (
+                    b"rlx:"
+                    + HexBytes(from_addr)          # 20 bytes
+                    + HexBytes(to_addr)             # 20 bytes
+                    + data_bytes                    # variable
+                    + int(0).to_bytes(32, "big")    # txFee = 0
+                    + int(gas_price).to_bytes(32, "big")
+                    + int(gas_limit).to_bytes(32, "big")
+                    + int(nonce).to_bytes(32, "big")
+                    + HexBytes(relay_hub)           # 20 bytes
+                    + HexBytes(relay_addr)          # 20 bytes
+                )
+                return keccak(message)
+
+            # ── Helper: sign with EIP-191 personal sign ────────────────
+            def _sign_hash(msg_hash: bytes) -> str:
+                """Sign a hash using EIP-191 (personal_sign), return hex sig."""
+                msg = encode_defunct(HexBytes(msg_hash))
+                sig = Account.sign_message(msg, self.private_key).signature.hex()
+                if not sig.startswith("0x"):
+                    sig = "0x" + sig
+                return sig
+
+            # ── Process each redeemable position ───────────────────────
             redeemed = 0
-            relayer_url = "https://relayer-v2.polymarket.com"
 
             for pos in redeemable:
                 condition_id = pos.get("conditionId", "")
@@ -882,10 +998,13 @@ class TradeExecutor:
                     # Pre-check: is the condition resolved on-chain?
                     if w3:
                         try:
-                            denom = ctf_contract.functions.payoutDenominator(cid_bytes).call()
+                            denom = ctf_contract.functions.payoutDenominator(
+                                cid_bytes
+                            ).call()
                             if denom == 0:
                                 logger.debug(
-                                    "REDEEM SKIP: %s not resolved on-chain (payoutDenominator=0)",
+                                    "REDEEM SKIP: %s not resolved on-chain "
+                                    "(payoutDenominator=0)",
                                     condition_id[:16],
                                 )
                                 continue
@@ -897,14 +1016,16 @@ class TradeExecutor:
                     if outcome_index is not None:
                         index_sets = [1 << int(outcome_index)]
                     else:
-                        index_sets = [2] if pos.get("outcome", "").lower() == "no" else [1]
+                        index_sets = (
+                            [2] if pos.get("outcome", "").lower() == "no" else [1]
+                        )
 
-                    # Encode calldata targeting the CTF contract
+                    # Encode CTF.redeemPositions calldata
                     calldata = ctf_contract.encode_abi(
                         "redeemPositions",
                         [
-                            Web3.to_checksum_address(USDC),
-                            PARENT_COLLECTION,
+                            Web3.to_checksum_address(usdc_addr),
+                            parent_collection,
                             cid_bytes,
                             index_sets,
                         ],
@@ -913,44 +1034,172 @@ class TradeExecutor:
                     title = pos.get("title", "")[:50]
                     size = float(pos.get("size", 0))
 
-                    # Submit via Polymarket Relayer (gasless, executes from proxy)
+                    # Wrap in proxy encoding
+                    proxy_data = _encode_proxy_txn_data(ctf_addr, calldata)
+
+                    # Get relay payload (nonce + relay address)
+                    async with httpx.AsyncClient() as http:
+                        relay_resp = await http.get(
+                            f"{relayer_url}/relay-payload",
+                            params={
+                                "address": eoa_address,
+                                "type": "PROXY",
+                            },
+                            timeout=15.0,
+                        )
+                        if relay_resp.status_code != 200:
+                            logger.error(
+                                "REDEEM: relay-payload failed %d: %s",
+                                relay_resp.status_code,
+                                relay_resp.text[:200],
+                            )
+                            continue
+                        relay_payload = relay_resp.json()
+
+                    nonce = str(relay_payload["nonce"])
+                    relay_address = relay_payload["address"]
+                    gas_limit = str(default_gas_limit)
+
+                    # Build struct hash and sign
+                    struct_hash = _proxy_struct_hash(
+                        from_addr=eoa_address,
+                        to_addr=proxy_factory,
+                        data_hex=proxy_data,
+                        gas_price="0",
+                        gas_limit=gas_limit,
+                        nonce=nonce,
+                        relay_addr=relay_address,
+                    )
+                    signature = _sign_hash(struct_hash)
+
+                    # Build the transaction request body
+                    tx_request = {
+                        "type": "PROXY",
+                        "from": eoa_address,
+                        "to": to_checksum_address(proxy_factory),
+                        "proxyWallet": proxy_address,
+                        "data": proxy_data,
+                        "nonce": nonce,
+                        "signature": signature,
+                        "signatureParams": {
+                            "gasPrice": "0",
+                            "gasLimit": gas_limit,
+                            "relayerFee": "0",
+                            "relayHub": to_checksum_address(relay_hub),
+                            "relay": relay_address,
+                        },
+                        "metadata": f"redeem:{condition_id[:16]}",
+                    }
+
+                    # Generate builder auth headers
+                    body_str = _json.dumps(tx_request)
+                    headers_obj = builder_config.generate_builder_headers(
+                        "POST", "/submit", body_str
+                    )
+                    if headers_obj is None:
+                        logger.error("REDEEM: failed to generate builder headers")
+                        continue
+                    builder_headers = headers_obj.to_dict()
+                    builder_headers["Content-Type"] = "application/json"
+
+                    # Submit to relayer
                     async with httpx.AsyncClient() as http:
                         submit_resp = await http.post(
                             f"{relayer_url}/submit",
-                            json={
-                                "to": CTF_ADDRESS,
-                                "data": calldata,
-                                "value": "0",
-                            },
-                            headers={
-                                "RELAYER_API_KEY": self.relayer_api_key,
-                                "RELAYER_API_KEY_ADDRESS": eoa_address,
-                                "Content-Type": "application/json",
-                            },
+                            content=body_str,
+                            headers=builder_headers,
                             timeout=30.0,
                         )
 
-                        if submit_resp.status_code in (200, 201):
-                            result = submit_resp.json()
-                            tx_id = result.get("id", result.get("transactionId", "?"))
+                    if submit_resp.status_code in (200, 201):
+                        result = submit_resp.json()
+                        tx_id = result.get(
+                            "transactionID", result.get("id", "?")
+                        )
+                        logger.warning(
+                            "REDEEM SUBMITTED: %s (%.1f shares, indexSets=%s) "
+                            ", relayer tx: %s",
+                            title, size, index_sets, str(tx_id)[:24],
+                        )
+
+                        # Poll for confirmation (up to 60s)
+                        confirmed = await self._poll_relayer_tx(
+                            relayer_url, tx_id, timeout=60
+                        )
+                        if confirmed:
                             logger.warning(
-                                "REDEEM SUBMITTED: %s (%.1f shares), relayer tx: %s",
-                                title, size, str(tx_id)[:20],
+                                "REDEEM CONFIRMED: %s, tx: %s", title, str(tx_id)[:24]
                             )
-                            redeemed += 1
                         else:
-                            logger.error(
-                                "REDEEM REJECTED: %s, %d %s",
-                                condition_id[:16],
-                                submit_resp.status_code,
-                                submit_resp.text[:200],
+                            logger.warning(
+                                "REDEEM PENDING (unconfirmed after poll): %s, tx: %s",
+                                title, str(tx_id)[:24],
                             )
 
+                        redeemed += 1
+                    else:
+                        logger.error(
+                            "REDEEM REJECTED: %s, %d %s",
+                            condition_id[:16],
+                            submit_resp.status_code,
+                            submit_resp.text[:300],
+                        )
+
                 except Exception as e:
-                    logger.error("REDEEM ERROR: %s, %s", condition_id[:16], e)
+                    logger.error(
+                        "REDEEM ERROR: %s, %s", condition_id[:16], e, exc_info=True
+                    )
 
             return redeemed
 
-        except Exception as e:
-            logger.error("Redemption failed: %s", e)
+        except ImportError as e:
+            logger.error("Redemption import error (missing dependency): %s", e)
             return 0
+        except Exception as e:
+            logger.error("Redemption failed: %s", e, exc_info=True)
+            return 0
+
+    async def _poll_relayer_tx(
+        self, relayer_url: str, tx_id: str, timeout: int = 60
+    ) -> bool:
+        """Poll relayer for transaction confirmation.
+
+        Returns True if confirmed/mined, False if timed out or failed.
+        """
+        import httpx
+
+        poll_interval = 3.0
+        elapsed = 0.0
+        terminal_states = {"STATE_MINED", "STATE_CONFIRMED"}
+        fail_states = {"STATE_FAILED", "STATE_INVALID"}
+
+        while elapsed < timeout:
+            try:
+                async with httpx.AsyncClient() as http:
+                    resp = await http.get(
+                        f"{relayer_url}/transaction",
+                        params={"id": tx_id},
+                        timeout=10.0,
+                    )
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        # Response is a list of transactions
+                        txns = data if isinstance(data, list) else [data]
+                        for txn in txns:
+                            state = txn.get("state", "")
+                            if state in terminal_states:
+                                return True
+                            if state in fail_states:
+                                tx_hash = txn.get("transactionHash", "?")
+                                logger.error(
+                                    "REDEEM TX FAILED: %s state=%s hash=%s",
+                                    tx_id[:16], state, tx_hash,
+                                )
+                                return False
+            except Exception as e:
+                logger.debug("REDEEM poll error: %s", e)
+
+            await asyncio.sleep(poll_interval)
+            elapsed += poll_interval
+
+        return False
