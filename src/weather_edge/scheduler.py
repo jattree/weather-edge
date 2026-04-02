@@ -697,6 +697,37 @@ async def run_cycle(
     _active_position_count = 0
     if store and live_executor and not live_executor.dry_run:
         try:
+            # Clean resolved positions before counting. rebuild_positions()
+            # re-creates them from fills every cycle, so we must clean every
+            # time before reading the count.
+            import httpx as _httpx
+            _wallet = (live_executor.wallet_address or "").lower()
+            async with _httpx.AsyncClient() as _hc:
+                _pr = await _hc.get(
+                    "https://data-api.polymarket.com/positions",
+                    params={"user": _wallet, "sizeThreshold": 0},
+                    timeout=15.0,
+                )
+                if _pr.status_code == 200:
+                    _active_cids = {
+                        p.get("conditionId")
+                        for p in _pr.json()
+                        if float(p.get("size", 0)) > 0
+                    }
+                    _db_pos = store.conn.execute(
+                        "SELECT condition_id FROM positions WHERE total_shares > 0"
+                    ).fetchall()
+                    _cleaned = 0
+                    for _row in _db_pos:
+                        if _row["condition_id"] not in _active_cids:
+                            store.conn.execute(
+                                "UPDATE positions SET total_shares = 0 WHERE condition_id = ?",
+                                (_row["condition_id"],),
+                            )
+                            _cleaned += 1
+                    if _cleaned:
+                        store.commit()
+
             _active_position_count = store.get_portfolio_summary().get("position_count", 0)
             if _active_position_count >= MAX_POSITIONS:
                 logger.warning(
@@ -704,7 +735,7 @@ async def run_cycle(
                     _active_position_count, MAX_POSITIONS,
                 )
         except Exception:
-            pass
+            _active_position_count = store.get_portfolio_summary().get("position_count", 0)
 
     for signal in all_signals:
         # Contract: verify taker fee doesn't eat >40% of projected alpha
