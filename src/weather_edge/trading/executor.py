@@ -900,7 +900,7 @@ class TradeExecutor:
                         index_sets = [2] if pos.get("outcome", "").lower() == "no" else [1]
 
                     # Encode calldata targeting the CTF contract
-                    calldata = ctf_contract.encodeABI(
+                    calldata = ctf_contract.encode_abi(
                         fn_name="redeemPositions",
                         args=[
                             Web3.to_checksum_address(USDC),
