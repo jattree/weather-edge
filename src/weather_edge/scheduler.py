@@ -691,10 +691,10 @@ async def run_cycle(
             _live_balance, USDC_FLOOR,
         )
 
-    # --- SWING BOT: Position cap (Rule of 20) ---
-    # Survival tier: $5 minimums need more slots for inventory agility.
-    # Raise to 20 once extra capital lands, drop back to 12 at $630+ bankroll.
-    MAX_POSITIONS = 20
+    # --- SWING BOT: Position cap ---
+    # Temporarily raised to 65 while April 1 markets resolve + auto-redeem fix.
+    # TODO: drop back to 20 once position count clears (or 12 at $630+ bankroll).
+    MAX_POSITIONS = 65
     _active_position_count = 0
     if store and live_executor and not live_executor.dry_run:
         try:

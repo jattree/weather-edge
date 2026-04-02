@@ -365,6 +365,8 @@ class Settings(BaseSettings):
     polymarket_private_key: str = ""  # Polygon wallet private key (0x...)
     polymarket_wallet: str = ""  # Polygon wallet address
     polymarket_signature_type: int = 2  # 2=EOA, 1=proxy/Magic Link
+    polymarket_relayer_api_key: str = ""  # Relayer API key for gasless proxy tx
+    polymarket_relayer_url: str = "https://relayer-v2.polymarket.com"
 
     # Trading modes, can run both, either, or neither
     paper_mode: bool = True  # Run paper trading (simulated)

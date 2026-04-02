@@ -83,6 +83,7 @@ class TradeExecutor:
         dry_run: bool = True,
         post_only: bool = True,
         max_shares: float | None = None,
+        relayer_api_key: str | None = None,
     ):
         self.private_key = private_key
         self.wallet_address = wallet_address
@@ -93,6 +94,7 @@ class TradeExecutor:
         self.dry_run = dry_run
         self.post_only = post_only
         self.max_shares = max_shares  # For graduated testing (5/20/50/None)
+        self.relayer_api_key = relayer_api_key
         self._client = None
 
     async def initialize(self) -> None:
@@ -791,22 +793,26 @@ class TradeExecutor:
     async def redeem_positions(self) -> int:
         """Redeem all resolved (winning) positions back to USDC.
 
-        Calls the Polymarket CTF contract's redeemPositions function
-        on Polygon for each redeemable position.
+        Uses Polymarket's Relayer API to execute CTF.redeemPositions
+        from the proxy wallet. The relayer pays gas (gasless for us).
 
         Returns number of positions redeemed.
         """
         if self.dry_run or not self.private_key:
+            return 0
+        if not self.relayer_api_key:
+            logger.debug("REDEEM: no relayer API key configured, skipping")
             return 0
 
         try:
             import httpx
             from web3 import Web3
 
+            proxy = self.wallet_address or "0xe23940d70793b441c9f949741daa65289947fadb"
+
             # Find redeemable positions from Data API
-            proxy = "0xe23940d70793b441c9f949741daa65289947fadb"
-            async with httpx.AsyncClient() as client:
-                resp = await client.get(
+            async with httpx.AsyncClient() as http:
+                resp = await http.get(
                     "https://data-api.polymarket.com/positions",
                     params={"user": proxy, "sizeThreshold": 0},
                     timeout=15.0,
@@ -819,26 +825,21 @@ class TradeExecutor:
             if not redeemable:
                 return 0
 
-            # Connect to Polygon
+            # Connect to Polygon for on-chain resolution checks
             w3 = None
             for rpc in ["https://1rpc.io/matic", "https://rpc-mainnet.matic.quiknode.pro"]:
                 try:
                     w3 = Web3(Web3.HTTPProvider(rpc, request_kwargs={"timeout": 30}))
-                    # Test connection with a lightweight call
                     w3.eth.block_number
-                    logger.info("REDEEM: connected to %s", rpc)
                     break
-                except Exception as e:
-                    logger.debug("REDEEM: %s failed, %s", rpc, e)
+                except Exception:
                     w3 = None
-            if not w3:
-                logger.error("REDEEM: cannot connect to any Polygon RPC")
-                return 0
-            account = w3.eth.account.from_key(self.private_key)
 
-            # NegRisk Adapter, weather markets use neg-risk, not plain CTF
-            NEG_RISK_ADDRESS = "0xC5d563A36AE78145C45a50134d48A1215220f80a"
-            NEG_RISK_ABI = [{
+            CTF_ADDRESS = "0x4D97DCd97eC945f40cF65F87097ACe5EA0476045"
+            USDC = "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174"
+            PARENT_COLLECTION = b"\x00" * 32
+
+            REDEEM_ABI = [{
                 "name": "redeemPositions",
                 "type": "function",
                 "inputs": [
@@ -850,18 +851,25 @@ class TradeExecutor:
                 "outputs": [],
             }]
 
-            adapter = w3.eth.contract(
-                address=Web3.to_checksum_address(NEG_RISK_ADDRESS),
-                abi=NEG_RISK_ABI,
+            CTF_CHECK_ABI = [{
+                "name": "payoutDenominator",
+                "type": "function",
+                "stateMutability": "view",
+                "inputs": [{"name": "conditionId", "type": "bytes32"}],
+                "outputs": [{"name": "", "type": "uint256"}],
+            }]
+
+            w3_encode = w3 or Web3()
+            ctf_contract = w3_encode.eth.contract(
+                address=Web3.to_checksum_address(CTF_ADDRESS),
+                abi=REDEEM_ABI + CTF_CHECK_ABI,
             )
 
-            USDC = Web3.to_checksum_address("0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174")
-            PARENT_COLLECTION = b"\x00" * 32
-            redeemed = 0
+            account = w3_encode.eth.account.from_key(self.private_key)
+            eoa_address = account.address.lower()
 
-            # Fetch nonce once, increment locally to avoid "nonce too low"
-            nonce = w3.eth.get_transaction_count(account.address, "pending")
-            gas_price = w3.eth.gas_price
+            redeemed = 0
+            relayer_url = "https://relayer-v2.polymarket.com"
 
             for pos in redeemable:
                 condition_id = pos.get("conditionId", "")
@@ -870,41 +878,73 @@ class TradeExecutor:
 
                 try:
                     cid_bytes = Web3.to_bytes(hexstr=condition_id)
-                    # outcomeIndex 0 (YES) → index_set [1], outcomeIndex 1 (NO) → index_set [2]
+
+                    # Pre-check: is the condition resolved on-chain?
+                    if w3:
+                        try:
+                            denom = ctf_contract.functions.payoutDenominator(cid_bytes).call()
+                            if denom == 0:
+                                logger.debug(
+                                    "REDEEM SKIP: %s not resolved on-chain (payoutDenominator=0)",
+                                    condition_id[:16],
+                                )
+                                continue
+                        except Exception:
+                            pass
+
+                    # Build index_sets
                     outcome_index = pos.get("outcomeIndex")
                     if outcome_index is not None:
                         index_sets = [1 << int(outcome_index)]
                     else:
-                        # Fallback: derive from outcome string
                         index_sets = [2] if pos.get("outcome", "").lower() == "no" else [1]
 
-                    tx = adapter.functions.redeemPositions(
-                        USDC, PARENT_COLLECTION, cid_bytes, index_sets,
-                    ).build_transaction({
-                        "from": account.address,
-                        "nonce": nonce,
-                        "gas": 300000,
-                        "gasPrice": gas_price,
-                        "chainId": 137,
-                    })
+                    # Encode calldata targeting the CTF contract
+                    calldata = ctf_contract.encodeABI(
+                        fn_name="redeemPositions",
+                        args=[
+                            Web3.to_checksum_address(USDC),
+                            PARENT_COLLECTION,
+                            cid_bytes,
+                            index_sets,
+                        ],
+                    )
 
-                    signed = account.sign_transaction(tx)
-                    tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
-                    nonce += 1  # Increment for next transaction
+                    title = pos.get("title", "")[:50]
+                    size = float(pos.get("size", 0))
 
-                    receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=30)
-
-                    if receipt.status == 1:
-                        title = pos.get("title", "")[:50]
-                        value = float(pos.get("currentValue", 0))
-                        outcome = pos.get("outcome", "?")
-                        logger.warning(
-                            "REDEEMED: %s (%s), $%.2f returned to wallet (tx: %s)",
-                            title, outcome, value, tx_hash.hex()[:16],
+                    # Submit via Polymarket Relayer (gasless, executes from proxy)
+                    async with httpx.AsyncClient() as http:
+                        submit_resp = await http.post(
+                            relayer_url,
+                            json={
+                                "to": CTF_ADDRESS,
+                                "data": calldata,
+                                "value": "0",
+                            },
+                            headers={
+                                "RELAYER-API-KEY": self.relayer_api_key,
+                                "RELAYER-API-KEY-ADDRESS": eoa_address,
+                                "Content-Type": "application/json",
+                            },
+                            timeout=30.0,
                         )
-                        redeemed += 1
-                    else:
-                        logger.error("REDEEM FAILED: tx reverted for %s", condition_id[:16])
+
+                        if submit_resp.status_code in (200, 201):
+                            result = submit_resp.json()
+                            tx_id = result.get("id", result.get("transactionId", "?"))
+                            logger.warning(
+                                "REDEEM SUBMITTED: %s (%.1f shares), relayer tx: %s",
+                                title, size, str(tx_id)[:20],
+                            )
+                            redeemed += 1
+                        else:
+                            logger.error(
+                                "REDEEM REJECTED: %s, %d %s",
+                                condition_id[:16],
+                                submit_resp.status_code,
+                                submit_resp.text[:200],
+                            )
 
                 except Exception as e:
                     logger.error("REDEEM ERROR: %s, %s", condition_id[:16], e)
