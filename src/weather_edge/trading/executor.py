@@ -923,8 +923,8 @@ class TradeExecutor:
                                 "value": "0",
                             },
                             headers={
-                                "RELAYER-API-KEY": self.relayer_api_key,
-                                "RELAYER-API-KEY-ADDRESS": eoa_address,
+                                "RELAYER_API_KEY": self.relayer_api_key,
+                                "RELAYER_API_KEY_ADDRESS": eoa_address,
                                 "Content-Type": "application/json",
                             },
                             timeout=30.0,
