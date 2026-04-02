@@ -901,8 +901,8 @@ class TradeExecutor:
 
                     # Encode calldata targeting the CTF contract
                     calldata = ctf_contract.encode_abi(
-                        fn_name="redeemPositions",
-                        args=[
+                        "redeemPositions",
+                        [
                             Web3.to_checksum_address(USDC),
                             PARENT_COLLECTION,
                             cid_bytes,
