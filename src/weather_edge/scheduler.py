@@ -692,9 +692,10 @@ async def run_cycle(
         )
 
     # --- SWING BOT: Position cap ---
-    # Rule of 20: $5 minimums need enough slots for inventory agility.
-    # Drop to 12 at $630+ bankroll.
-    MAX_POSITIONS = 20
+    # DB tracks all fills including resolved positions. Polymarket may show
+    # fewer active positions. Cap set to 45 to allow new entries while
+    # legacy positions clear. Drop to 20 once position count normalises.
+    MAX_POSITIONS = 45
     _active_position_count = 0
     if store and live_executor and not live_executor.dry_run:
         try:
