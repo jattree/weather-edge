@@ -1040,7 +1040,7 @@ class TradeExecutor:
                     # Build struct hash and sign
                     struct_hash = _proxy_struct_hash(
                         from_addr=eoa_address,
-                        to_addr=proxy_factory,
+                        to_addr=proxy_address,
                         data_hex=proxy_data,
                         gas_price="0",
                         gas_limit=gas_limit,
@@ -1053,7 +1053,7 @@ class TradeExecutor:
                     tx_request = {
                         "type": "PROXY",
                         "from": eoa_address,
-                        "to": to_checksum_address(proxy_factory),
+                        "to": to_checksum_address(proxy_address),
                         "proxyWallet": proxy_address,
                         "data": proxy_data,
                         "nonce": nonce,
