@@ -692,8 +692,10 @@ async def run_cycle(
         )
 
     # --- SWING BOT: Position cap ---
-    # Target 20 positions at $209 bankroll, 12 at $630+.
-    MAX_POSITIONS = 20
+    # Set to 50 to allow new entries alongside existing positions.
+    # Most existing positions are small/penny bets that will resolve naturally.
+    # Effective concentration is managed by $5 min size + USDC floor ($20).
+    MAX_POSITIONS = 50
     _active_position_count = 0
     if store and live_executor and not live_executor.dry_run:
         try:
