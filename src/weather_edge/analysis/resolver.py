@@ -119,7 +119,13 @@ async def fetch_resolved_markets() -> dict[str, bool]:
 
 
 async def check_nws_observations(city_id: str, target_date: date) -> float | None:
-    """Fetch actual observed high temperature from Open-Meteo archive API.
+    """Fetch actual observed high temperature from METAR station data.
+
+    Uses IEM (Iowa Environmental Mesonet) ASOS archive as primary source,
+    this is the same raw METAR data that Weather Underground displays, and
+    Polymarket resolves weather markets against Wunderground.
+
+    Falls back to Open-Meteo archive if METAR is unavailable.
 
     Args:
         city_id: City enum value (e.g., "nyc", "den").
@@ -128,7 +134,6 @@ async def check_nws_observations(city_id: str, target_date: date) -> float | Non
     Returns:
         Observed high temperature in Celsius, or None if unavailable.
     """
-    # Look up city coordinates
     try:
         city_enum = City(city_id)
     except ValueError:
@@ -140,48 +145,60 @@ async def check_nws_observations(city_id: str, target_date: date) -> float | Non
 
     city_config = CITIES[city_enum]
 
+    # --- Primary: IEM METAR station observation ---
+    try:
+        from weather_edge.fetchers.metar import fetch_station_tmax
+        temp_c = await fetch_station_tmax(city_config.icao, target_date)
+        if temp_c is not None:
+            logger.info(
+                "METAR obs for %s on %s: %.1f°C (%.1f°F) [station %s]",
+                city_id, target_date, temp_c, c_to_f(temp_c), city_config.icao,
+            )
+            # Backfill actual value in forecast snapshots
+            try:
+                from weather_edge.dashboard.app import paper_trader
+                updated = paper_trader.store.backfill_actual(
+                    city_id, str(target_date), temp_c,
+                )
+                if updated:
+                    logger.info("Backfilled %d forecast snapshots for %s %s",
+                               updated, city_id, target_date)
+            except Exception:
+                pass
+            return temp_c
+    except Exception as e:
+        logger.debug("METAR fetch failed for %s: %s", city_id, e)
+
+    # --- Fallback: Open-Meteo archive (gridded, less accurate) ---
+    logger.debug("Falling back to Open-Meteo archive for %s on %s", city_id, target_date)
     async with httpx.AsyncClient() as client:
         try:
-            _params = {
+            resp = await client.get(
+                ARCHIVE_API_URL,
+                params={
                     "latitude": city_config.latitude,
                     "longitude": city_config.longitude,
                     "start_date": target_date.isoformat(),
                     "end_date": target_date.isoformat(),
                     "daily": "temperature_2m_max",
                     "timezone": "auto",
-                }
-            # Always use free archive tier (no apikey needed)
-            resp = await client.get(
-                ARCHIVE_API_URL,
-                params=_params,
+                },
                 timeout=15.0,
             )
             resp.raise_for_status()
             data = resp.json()
-            try:
-                from weather_edge.analysis.service_health import record_service_call
-                record_service_call("openmeteo_archive", True)
-            except Exception:
-                pass
         except (httpx.HTTPError, ValueError) as e:
-            logger.warning("Failed to fetch observations for %s on %s: %s", city_id, target_date, e)
-            try:
-                from weather_edge.analysis.service_health import record_service_call
-                record_service_call("openmeteo_archive", False)
-            except Exception:
-                pass
+            logger.warning("Open-Meteo fallback failed for %s on %s: %s", city_id, target_date, e)
             return None
 
-    # Parse response
     daily = data.get("daily", {})
     temps = daily.get("temperature_2m_max", [])
     if temps and temps[0] is not None:
         temp_c = float(temps[0])
-        logger.info(
-            "Observed high for %s on %s: %.1f°C (%.1f°F)",
-            city_id, target_date, temp_c, c_to_f(temp_c),
+        logger.warning(
+            "Using Open-Meteo FALLBACK for %s on %s: %.1f°C (less accurate than METAR)",
+            city_id, target_date, temp_c,
         )
-        # Backfill actual value in forecast snapshots for self-learning
         try:
             from weather_edge.dashboard.app import paper_trader
             updated = paper_trader.store.backfill_actual(

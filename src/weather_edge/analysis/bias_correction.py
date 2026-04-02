@@ -101,22 +101,69 @@ def get_bias_correction(model_name: str, city_id: City) -> BiasCorrection:
     return correction
 
 
+def get_station_offset(city_id: City) -> float:
+    """Get Layer 2 offset: Open-Meteo archive vs METAR station observation.
+
+    The hindcast bias correction (Layer 1) calibrates model forecasts against
+    Open-Meteo archive observations. But Polymarket resolves against Wunderground
+    (real airport METAR data), which differs from Open-Meteo by ~0.9°C MAE.
+
+    This offset corrects for that gap: station_offset = mean(OM_archive - METAR)
+    per city, stored in the station_offsets table. A negative offset means OM reads
+    colder than the station, so we add a positive correction to shift predictions
+    toward the station reading.
+    """
+    cache_key = ("_station_offset", city_id.value)
+    if cache_key in _bias_cache:
+        return _bias_cache[cache_key].temp_max_offset
+
+    try:
+        from weather_edge.persistence import PersistentStore
+        store = PersistentStore()
+
+        row = store.conn.execute(
+            """SELECT avg_offset, sample_count
+               FROM station_offsets
+               WHERE city_id = ?""",
+            (city_id.value,),
+        ).fetchone()
+        store.close()
+
+        if row and row["sample_count"] >= MIN_SNAPSHOTS_FOR_BIAS:
+            offset = -row["avg_offset"]  # Negate: if OM reads low, add positive
+            _bias_cache[cache_key] = BiasCorrection(
+                temp_max_offset=round(offset, 3),
+                notes=f"station offset {row['sample_count']}-sample",
+            )
+            return round(offset, 3)
+    except Exception as e:
+        logger.debug("Station offset lookup failed for %s: %s", city_id.value, e)
+
+    _bias_cache[cache_key] = BiasCorrection()
+    return 0.0
+
+
 def apply_bias_correction(
     value: float,
     variable: str,
     model_name: str,
     city_id: City,
 ) -> float:
-    """Apply bias correction to a model forecast value.
+    """Apply two-layer bias correction to a model forecast value.
 
-    Returns the corrected value that should better match observations.
+    Layer 1: Model vs Open-Meteo archive (from hindcast data)
+    Layer 2: Open-Meteo archive vs METAR station (station offset)
+
+    Returns the corrected value that should match the actual airport
+    sensor reading used by Polymarket/Wunderground for resolution.
     """
     correction = get_bias_correction(model_name, city_id)
+    station_offset = get_station_offset(city_id)
 
     if "max" in variable:
-        return value + correction.temp_max_offset
+        return value + correction.temp_max_offset + station_offset
     elif "min" in variable:
-        return value + correction.temp_min_offset
+        return value + correction.temp_min_offset + station_offset
 
     return value
 
