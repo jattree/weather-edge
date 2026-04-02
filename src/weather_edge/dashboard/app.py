@@ -912,6 +912,7 @@ async def startup():
             dry_run=False,
             post_only=True,
             max_shares=settings.live_max_shares or None,
+            relayer_api_key=settings.polymarket_relayer_api_key,
         )
         try:
             await live_executor.initialize()
