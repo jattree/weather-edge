@@ -1068,15 +1068,12 @@ class TradeExecutor:
                         "metadata": f"redeem:{condition_id[:16]}",
                     }
 
-                    # Auth: use Relayer API key (simple headers)
+                    # Auth: Relayer API key (simple headers with underscores)
                     body_str = _json.dumps(tx_request)
                     submit_headers = {
                         "Content-Type": "application/json",
-                        "POLY_ADDRESS": eoa_address.lower(),
-                        "POLY_SIGNATURE": signature,
-                        "POLY_TIMESTAMP": str(int(datetime.now(timezone.utc).timestamp())),
-                        "POLY_NONCE": str(nonce),
-                        "POLY_API_KEY": self.relayer_api_key or "",
+                        "RELAYER_API_KEY": self.relayer_api_key or "",
+                        "RELAYER_API_KEY_ADDRESS": eoa_address.lower(),
                     }
 
                     # Submit to relayer
