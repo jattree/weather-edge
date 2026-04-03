@@ -196,8 +196,35 @@ journalctl -u weather-edge -f
 ## Testing
 
 ```bash
-.venv/bin/python -m pytest tests/ -v    # 126 tests
+.venv/bin/python -m pytest tests/ -v    # 128 tests
 ```
+
+## Roadmap
+
+**Pending: 72h proving run (started 2026-04-03).** If the model proves an edge with correct stations, these are next:
+
+1. **Portfolio Optimizer (Opportunity Cost Allocation)**
+   - Sell mediocre positions to fund higher-edge signals
+   - Compare `(new_edge - exit_spread - entry_spread) > (old_edge)` before churning
+   - Must account for thin Polymarket spreads (5-15¢) to avoid death by spread costs
+   - Professional quant "capital reallocation", the bot is position-aware but not portfolio-aware
+
+2. **Bankroll Scaling**
+   - Auto-adjust MIN_SIZE, MAX_POSITIONS, taker threshold based on current portfolio equity
+   - See bankroll table in strategy section
+
+3. **Self-Learning Engine**
+   - Needs 200+ resolved trades with correct METAR data for statistical significance
+   - Adaptive Brier-weighted model selection per city
+
+4. **HKG Dedicated Model**
+   - HK Observatory: 0.1°C precision, urban microclimate, custom data source
+   - May need separate bias correction and sizing rules
+
+5. **Open Source Preparation** (if edge not proven)
+   - Sanitise credentials and API keys
+   - Write technical blog post: "Building an AI Weather Trading Bot, Lessons from Losing Money"
+   - Clean up README for public consumption
 
 ## License
 
