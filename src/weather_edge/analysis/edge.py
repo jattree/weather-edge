@@ -81,6 +81,8 @@ def calculate_edge(
     target_date: str = "",
     description: str = "",
     spread: float = 0.0,
+    min_edge_yes: float | None = None,
+    min_edge_no: float | None = None,
 ) -> Signal:
     """Calculate edge and optimal position size.
 
@@ -188,12 +190,26 @@ def calculate_edge(
         strategy = "core"
         # Determine confidence tier for core bets using net_edge (after fees)
         spread_ok = True  # We'd check spread from price data in practice
+
+        # Use differential thresholds if provided, fallback to standard otherwise
+        m_edge_yes = min_edge_yes or 0.05
+        m_edge_no = min_edge_no or 0.03
+
+        is_high = (
+            (side == TradeSide.YES and net_edge >= m_edge_yes)
+            or (side == TradeSide.NO and net_edge >= m_edge_no)
+        )
+        is_medium = (
+            (side == TradeSide.YES and net_edge >= m_edge_yes * 0.6)
+            or (side == TradeSide.NO and net_edge >= m_edge_no * 0.6)
+        )
+
         if fee_kills_alpha:
             # Fee eats >40% of alpha, not worth taking as taker
             tier = SignalTier.LOW
-        elif net_edge >= 0.05 and adjusted_confidence >= 0.8 and spread_ok:
+        elif is_high and adjusted_confidence >= 0.8 and spread_ok:
             tier = SignalTier.HIGH
-        elif net_edge >= 0.03 and adjusted_confidence >= 0.6:
+        elif is_medium and adjusted_confidence >= 0.6:
             tier = SignalTier.MEDIUM
         else:
             tier = SignalTier.LOW

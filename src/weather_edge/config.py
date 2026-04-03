@@ -38,7 +38,7 @@ CITIES: dict[City, CityConfig] = {
     City.NYC: CityConfig(
         city_id=City.NYC,
         name="New York",
-        icao="LGA",
+        icao="KLGA",
         latitude=40.7743,
         longitude=-73.8726,
         timezone="America/New_York",
@@ -130,18 +130,18 @@ CITIES: dict[City, CityConfig] = {
     City.HOU: CityConfig(
         city_id=City.HOU,
         name="Houston",
-        icao="KIAH",
-        latitude=29.9844,
-        longitude=-95.3414,
+        icao="KHOU",
+        latitude=29.6454,
+        longitude=-95.2789,
         timezone="America/Chicago",
         regional_models=[WeatherModel.HRRR, WeatherModel.NAM],
     ),
     City.DEN: CityConfig(
         city_id=City.DEN,
         name="Denver",
-        icao="KDEN",
-        latitude=39.8561,
-        longitude=-104.6737,
+        icao="KBKF",
+        latitude=39.7017,
+        longitude=-104.7517,
         timezone="America/Denver",
         regional_models=[WeatherModel.HRRR, WeatherModel.NAM],
     ),
@@ -184,20 +184,12 @@ CITIES: dict[City, CityConfig] = {
         regional_models=[],
         temp_unit="celsius",
     ),
-    # WARNING: HKG resolution mismatch.
-    # Polymarket resolves HKG from HK Observatory (Tsim Sha Tsui, central Kowloon):
-    #   https://www.weather.gov.hk/en/cis/climat.htm, "Absolute Daily Max (deg. C)"
-    # HK Observatory reports to ONE DECIMAL PLACE (e.g., 28.1C), not whole degrees.
-    # VHHH (Chek Lap Kok airport) is ~15km away, different microclimate (coastal
-    # reclaimed land vs urban heat island). Expect higher systematic error here.
-    # TODO: Either find HK Observatory data programmatically, or reduce position
-    # sizing for HKG to account for the station mismatch.
     City.HKG: CityConfig(
         city_id=City.HKG,
         name="Hong Kong",
-        icao="VHHH",
-        latitude=22.3080,
-        longitude=113.9185,
+        icao="45005",
+        latitude=22.3020,
+        longitude=114.1740,
         timezone="Asia/Hong_Kong",
         regional_models=[],
         temp_unit="celsius",
@@ -344,6 +336,7 @@ class Settings(BaseSettings):
     max_position_pct: float = 0.03
     fetch_interval_minutes: int = 30
     max_bets_per_city_date: int = 1  # Fix multi-bucket bleed: pick only ONE bucket per city
+    max_trades_per_cycle: int = 3   # Global limit on new entries per 30-min window
 
     # Pool allocation (hybrid: penny-first targeting, sustainable at $2K)
     # Post-Monday fee cliff: penny bets are fee-immune, core trades get hit 1.25%

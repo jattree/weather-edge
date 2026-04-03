@@ -465,6 +465,9 @@ async def run_cycle(
                 # Estimate spread from Gamma prices
                 estimated_spread = max(0.0, 1.0 - (market.yes_price + market.no_price))
 
+                from weather_edge.analysis.risk_controls import get_active_profile
+                risk_profile = get_active_profile()
+
                 signal = calculate_edge(
                     market_id=market.market_id,
                     model_prob=model_prob,
@@ -477,6 +480,8 @@ async def run_cycle(
                     target_date=str(target_date),
                     description=market.question[:80],
                     spread=estimated_spread,
+                    min_edge_yes=risk_profile.min_edge_yes,
+                    min_edge_no=risk_profile.min_edge_no,
                 )
 
                 # Z-score guard: reject core bets on buckets too far from consensus
@@ -522,7 +527,7 @@ async def run_cycle(
 
             best_signal = max(group, key=_signal_score)
             filtered_signals.append(best_signal)
-            
+
             if len(group) > 1:
                 logger.info(
                     "MULTI-BUCKET FILTER: %s %s picked %s (edge=%.1f%%) over %d others",
@@ -530,30 +535,22 @@ async def run_cycle(
                     best_signal.net_edge * 100, len(group) - 1,
                 )
 
+        # Apply global max trades per cycle limit
+        # Sort by absolute net_edge descending, take top N
+        if len(filtered_signals) > settings.max_trades_per_cycle:
+            limited = sorted(
+                filtered_signals,
+                key=lambda s: abs(s.net_edge),
+                reverse=True,
+            )[:settings.max_trades_per_cycle]
+
+            logger.info(
+                "CYCLE LIMIT: %d signals filtered down to top %d by net_edge (max_trades_per_cycle=%d)",
+                len(filtered_signals), len(limited), settings.max_trades_per_cycle,
+            )
+            filtered_signals = limited
+
     all_signals = filtered_signals
-
-    # === SAFEGUARD: Additional risk controls ===
-    # 1. Higher edge threshold for Yes bets vs No bets
-    MIN_EDGE_YES = 0.15  # Yes bets need 15% edge (speculative, binary)
-    MIN_EDGE_NO = 0.05   # No bets need 5% edge (high-prob, lower return)
-    from weather_edge.analysis.edge import TradeSide
-    all_signals = [
-        s for s in all_signals
-        if (s.recommended_side == TradeSide.NO and abs(s.net_edge) >= MIN_EDGE_NO)
-        or (s.recommended_side == TradeSide.YES and abs(s.net_edge) >= MIN_EDGE_YES)
-    ]
-
-    # 2. Global max new trades per cycle (prevent cash depletion in one burst)
-    MAX_NEW_TRADES_PER_CYCLE = 3
-    # Sort by edge descending so we pick the best signals first
-    all_signals.sort(key=lambda s: abs(s.net_edge), reverse=True)
-    if len(all_signals) > MAX_NEW_TRADES_PER_CYCLE:
-        dropped = len(all_signals) - MAX_NEW_TRADES_PER_CYCLE
-        all_signals = all_signals[:MAX_NEW_TRADES_PER_CYCLE]
-        logger.info(
-            "TRADE CAP: limited to %d best signals, dropped %d",
-            MAX_NEW_TRADES_PER_CYCLE, dropped,
-        )
 
     # === Claude + Gemini reasoning layer ===
     # Only on main cycles (not sniper-triggered) to save API costs
@@ -1011,6 +1008,77 @@ async def run_cycle(
                                             old_id[:16], e,
                                         )
 
+                        # === RISK CONTROL CHECKS ===
+                        from weather_edge.analysis.risk_controls import (
+                            check_correlation_limit,
+                            check_gross_exposure,
+                            check_yes_exposure_limit,
+                            get_active_profile,
+                        )
+                        profile = get_active_profile()
+
+                        # 1. Yes Exposure Cap
+                        if signal.recommended_side.value == "YES":
+                            from weather_edge.models.position import Position
+                            raw_pos = store.get_positions()
+                            open_pos = [
+                                Position(
+                                    market_id=p.get("condition_id"),
+                                    city_id=p.get("city_id"),
+                                    side=p.get("outcome", p.get("side")),
+                                    size_usd=p.get("cost_basis", 0),
+                                    status="open" if p.get("total_shares", 0) > 0 else "closed"
+                                ) for p in raw_pos
+                            ]
+                            allowed, new_size, reason = check_yes_exposure_limit(
+                                signal.recommended_size, open_pos, total_equity, profile
+                            )
+                            if not allowed:
+                                logger.warning(reason)
+                                continue
+                            if new_size < signal.recommended_size:
+                                logger.info(reason)
+                                signal.recommended_size = new_size
+
+                        # 2. Correlation Limit
+                        raw_pos = store.get_positions()
+                        open_pos = [
+                            Position(
+                                market_id=p.get("condition_id"),
+                                city_id=p.get("city_id"),
+                                side=p.get("outcome", p.get("side")),
+                                size_usd=p.get("cost_basis", 0),
+                                status="open" if p.get("total_shares", 0) > 0 else "closed"
+                            ) for p in raw_pos
+                        ]
+                        allowed, new_size, reason = check_correlation_limit(
+                            signal.city_id, signal.recommended_size, open_pos, total_equity, profile
+                        )
+                        if not allowed:
+                            logger.warning(reason)
+                            continue
+                        if new_size < signal.recommended_size:
+                            logger.info(reason)
+                            signal.recommended_size = new_size
+
+                        # 3. Gross Exposure
+                        total_at_risk = sum(p.size_usd for p in open_pos if p.status == "open")
+                        allowed, new_size, reason = check_gross_exposure(
+                            signal.recommended_size, total_at_risk, total_equity, profile
+                        )
+                        if not allowed:
+                            logger.warning(reason)
+                            continue
+                        if new_size < signal.recommended_size:
+                            logger.info(reason)
+                            signal.recommended_size = new_size
+
+                        # Final min-size check after all trims
+                        if signal.recommended_size < MIN_LIVE_SIZE:
+                            logger.info("TRIMMED BELOW MIN: %s size $%.2f < $%.2f",
+                                        signal.city_id, signal.recommended_size, MIN_LIVE_SIZE)
+                            continue
+
                         try:
                             # --- SWING BOT: Hybrid entry ---
                             # Edge >= 12%: taker (cross spread, pay fee, secure alpha)
@@ -1065,7 +1133,7 @@ async def run_cycle(
                                             from weather_edge.models.enums import MarketType
                                             h_side = MarketType.YES if hedge.side == "YES" else MarketType.NO
                                             h_token_id = m.token_id_yes if hedge.side == "YES" else m.token_id_no
-                                            
+
                                             # Create synthetic signal for the hedge order
                                             h_signal = Signal(
                                                 market_id=hedge.market_id,
@@ -1078,7 +1146,7 @@ async def run_cycle(
                                                 strategy="spread",
                                                 market_prob=hedge.limit_price,
                                             )
-                                            
+
                                             try:
                                                 import requests
                                                 h_result = await live_executor.place_limit_order(h_signal, h_token_id)
@@ -1237,7 +1305,7 @@ async def run_cycle(
 
                             # 2. Check for existing open SELL order
                             existing_sell = store.get_open_order_for_market(market_id, side="SELL")
-                            
+
                             position = store.get_position_for_market(market_id)
                             if position and position.get("total_shares", 0) >= MIN_SELL_SHARES:
                                 asset_id = position.get("asset_id", "")
@@ -1247,7 +1315,7 @@ async def run_cycle(
                                         old_price = existing_sell.get("limit_price", 0)
                                         new_price = _round_price(candidate.current_market_price)
                                         price_drift = abs(old_price - new_price)
-                                        
+
                                         # Only replace if price drifted by > 1¢
                                         if price_drift <= 0.01:
                                             logger.info(
