@@ -2,9 +2,9 @@
 
 Automated weather prediction market trading system for Polymarket. Exploits the gap between multi-model weather forecast consensus and crowd-implied market prices.
 
-## Current Strategy (2026-04-02)
+## Current Strategy (2026-04-03)
 
-**Card counter approach**, the model picks the right whole-degree bucket ~46% of the time (vs ~10% baseline). Over enough bets, the math works. Not every hand wins, but the edge compounds.
+**One-bet-per-city + tail-No grind.** Picks the single best bet per city per date. Prioritises high-probability No bets on unlikely temperatures over speculative Yes bets. Max 3 new trades per cycle.
 
 ### Resolution Source: Weather Underground (METAR)
 
@@ -23,15 +23,15 @@ Polymarket resolves weather markets against **Wunderground displayed values** fr
 | EMOS_VARIANCE_FLOOR_C | 0.7 | Old floor (1.2) was wider than the bucket itself |
 | MAX_BUCKET_PROBABILITY | 0.70 | Cap single-bucket probability |
 
-### City Accuracy Tiers (MAE vs METAR)
+### City Accuracy Tiers (MAE vs correct METAR station)
 
 | Tier | Cities | MAE | Strategy |
 |------|--------|-----|----------|
-| **Gold** | London (0.63), Miami (0.85), Madrid (0.91) | < 1.0C | Full position, highest confidence |
-| **Silver** | Seattle, Munich, Dallas, Houston, Tokyo | 1.0-1.2C | Standard position |
-| **Bronze** | Wellington, Lucknow, Warsaw, Chicago, Shenzhen | 1.2-1.5C | Trade when mispricing is large |
-| **Caution** | NYC, Atlanta, LA, Buenos Aires, Hong Kong | 1.4-1.5C | Only with strong model agreement |
-| **Avoid** | Denver (1.83), Toronto (1.92), Shanghai (1.99), Seoul (2.08), SFO (2.13) | > 1.8C | Model error > bucket width, essentially random |
+| **Gold** | Shanghai (0.67), Madrid (0.68), London (0.69), HKG (0.71) | < 0.8C | Full position, highest confidence |
+| **Silver** | Miami (0.80), Houston (0.81), Seattle (0.86), Munich (0.88), Tokyo (0.94) | 0.8-1.0C | Standard position |
+| **Bronze** | Warsaw (1.04), Chicago (1.05), SFO (1.04), Lucknow (1.09), Dallas (1.10), Atlanta (1.10) | 1.0-1.2C | Trade when mispricing is large |
+| **Caution** | Seoul (1.14), Austin (1.17), Toronto (1.29), LA (1.31), Wellington (1.37) | 1.2-1.5C | Only tail-No bets |
+| **Avoid** | Buenos Aires (1.59), Shenzhen (1.61), NYC (1.62), Denver (1.94) | > 1.5C | Model error too high for reliable trading |
 
 ### Bankroll-Dependent Sizing
 
@@ -52,10 +52,21 @@ Polymarket resolves weather markets against **Wunderground displayed values** fr
 
 ### Key Lessons Learned
 
-1. **Data source must match oracle.** Open-Meteo archive (gridded reanalysis) ≠ Wunderground (airport METAR sensors). 0.9C MAE gap caused 67% rounding mismatches. Paper P&L of +$8,471 was fiction.
-2. **Verify ground truth before paper trading.** Paper results are worthless if calibrated against the wrong target.
-3. **Execution matters as much as prediction.** 17% fill rate on maker orders, adverse selection on fills, data lag on <24h markets. Swing bot (48h+) addresses all three.
-4. **Position sizing > prediction accuracy.** Card counter doesn't bet big on every hand.
+1. **Audit stations against market descriptions before trading.** Three cities (Denver, Houston, Hong Kong) had wrong ICAO stations. Houston gap was 1.7°C on a single day, guaranteed loss on every trade. A 10-minute audit would have caught all three.
+2. **Data source must match oracle.** Open-Meteo archive (gridded reanalysis) ≠ Wunderground (airport METAR sensors). 0.9°C MAE gap caused 67% rounding mismatches. Paper P&L of +$8,471 was fiction.
+3. **Never spread across multiple buckets per city.** Buying Yes on 3-4 adjacent temperatures means 2-3 guaranteed losses per win. The losers outpace the winners structurally. One bet per city, or No bets on unlikely outcomes.
+4. **Verify end-to-end before declaring "fixed."** Auto-redeem went through 6+ iterations of "it's working" before actually working. Every fix needs real money verification, not just unit tests.
+5. **When numbers don't match reality, stop and audit everything.** The $380 vs -$60 discrepancy on day 1 should have triggered a full station audit. Instead we patched one layer at a time over 3 days.
+
+### Strategy Evolution
+
+| Date | Strategy | Result | Lesson |
+|------|----------|--------|--------|
+| Mar 31 | Maker-only, all cities | 17% fill rate, adverse selection | Faster bots front-run us on <24h |
+| Apr 1 | Swing bot (48h+), taker at 8% | -$69 live vs +$8,471 paper | Paper P&L was against wrong data |
+| Apr 2 | METAR fix, tighter calibration | $87→$130 | Correct data source matters |
+| Apr 2 | Multi-bucket spreading | $130→$115 | Structure kills edge |
+| Apr 3 | ICAO audit, one-bet, tail-No | 72h proving run | First fair test of the model |
 
 ## How It Works
 
