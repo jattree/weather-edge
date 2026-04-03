@@ -532,6 +532,29 @@ async def run_cycle(
 
     all_signals = filtered_signals
 
+    # === SAFEGUARD: Additional risk controls ===
+    # 1. Higher edge threshold for Yes bets vs No bets
+    MIN_EDGE_YES = 0.15  # Yes bets need 15% edge (speculative, binary)
+    MIN_EDGE_NO = 0.05   # No bets need 5% edge (high-prob, lower return)
+    from weather_edge.analysis.edge import TradeSide
+    all_signals = [
+        s for s in all_signals
+        if (s.recommended_side == TradeSide.NO and abs(s.net_edge) >= MIN_EDGE_NO)
+        or (s.recommended_side == TradeSide.YES and abs(s.net_edge) >= MIN_EDGE_YES)
+    ]
+
+    # 2. Global max new trades per cycle (prevent cash depletion in one burst)
+    MAX_NEW_TRADES_PER_CYCLE = 3
+    # Sort by edge descending so we pick the best signals first
+    all_signals.sort(key=lambda s: abs(s.net_edge), reverse=True)
+    if len(all_signals) > MAX_NEW_TRADES_PER_CYCLE:
+        dropped = len(all_signals) - MAX_NEW_TRADES_PER_CYCLE
+        all_signals = all_signals[:MAX_NEW_TRADES_PER_CYCLE]
+        logger.info(
+            "TRADE CAP: limited to %d best signals, dropped %d",
+            MAX_NEW_TRADES_PER_CYCLE, dropped,
+        )
+
     # === Claude + Gemini reasoning layer ===
     # Only on main cycles (not sniper-triggered) to save API costs
     if run_ai_reasoning and ANTHROPIC_API_KEY and all_signals:
