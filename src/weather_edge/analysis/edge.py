@@ -38,9 +38,10 @@ class Signal:
     # Extra context
     city_id: str = ""
     description: str = ""
+    target_date: str = ""    # ISO date for grouping
     spread: float = 0.0      # Bid-ask spread size
     hours_to_resolution: float | None = None
-    strategy: str = "core"  # "core" or "tail"
+    strategy: str = "core"  # "core", "tail", "tail_no", or "spread"
 
 
 def temporal_decay_factor(hours_to_resolution: float | None) -> float:
@@ -77,6 +78,7 @@ def calculate_edge(
     consensus_id: int | None = None,
     hours_to_resolution: float | None = None,
     city_id: str = "",
+    target_date: str = "",
     description: str = "",
     spread: float = 0.0,
 ) -> Signal:
@@ -162,12 +164,26 @@ def calculate_edge(
         and adjusted_confidence >= 0.5
     )
 
+    # Detect tail_no strategy: High-probability NO bets on unlikely outcomes
+    # User: "buy No at 60-90c on temperatures that are clearly too high or too low"
+    # This corresponds to YES market price <= 40c
+    is_tail_no = (
+        side == TradeSide.NO
+        and market_prob <= settings.tail_no_max_yes_market_prob
+        and edge >= settings.tail_no_min_edge
+        and adjusted_confidence >= 0.7
+    )
+
     if is_penny:
         # Penny sizing: fixed $10-20 per bet (gas-efficient at $2K bankroll)
         bet_size = settings.penny_max_position
         bet_size = max(0.0, bet_size)
         tier = SignalTier.HIGH  # Tail bets are always high priority when they qualify
         strategy = "tail"
+    elif is_tail_no:
+        strategy = "tail_no"
+        # Tail-no sizing: use standard Kelly but ensure it's at least HIGH tier
+        tier = SignalTier.HIGH if net_edge >= 0.02 else SignalTier.MEDIUM
     else:
         strategy = "core"
         # Determine confidence tier for core bets using net_edge (after fees)
@@ -199,6 +215,7 @@ def calculate_edge(
         confidence_tier=tier,
         taker_fee=round(taker_fee_usd, 4),
         city_id=city_id,
+        target_date=target_date,
         description=description,
         spread=spread,
         strategy=strategy,
