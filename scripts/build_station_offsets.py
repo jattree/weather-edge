@@ -75,6 +75,25 @@ def fetch_iem_daily_max(
     return {d: (max(vs) - 32.0) * 5.0 / 9.0 for d, vs in daily.items()}
 
 
+def fetch_hko_daily_max(start: date, end: date) -> dict[str, float]:
+    """Fetch daily max temps from HK Observatory Open Data API. Returns {date: tmax_celsius}."""
+    url = "https://data.weather.gov.hk/weatherAPI/opendata/opendata.php?dataType=CLMMAXT&rformat=json&station=HKO"
+    resp = httpx.get(url, timeout=30.0)
+    resp.raise_for_status()
+    data = resp.json().get("data", [])
+    
+    daily: dict[str, float] = {}
+    for row in data:
+        try:
+            y, m, d = int(row[0]), int(row[1]), int(row[2])
+            obs_date = date(y, m, d)
+            if start <= obs_date <= end:
+                daily[str(obs_date)] = float(row[3])
+        except (ValueError, IndexError):
+            continue
+    return daily
+
+
 def fetch_openmeteo_daily_max(
     lat: float, lon: float, start: date, end: date,
 ) -> dict[str, float]:
@@ -137,7 +156,10 @@ def main():
         logger.info("Processing %s (%s)...", config.name, icao)
 
         try:
-            iem = fetch_iem_daily_max(icao, start, end)
+            if icao == "45005":
+                iem = fetch_hko_daily_max(start, end)
+            else:
+                iem = fetch_iem_daily_max(icao, start, end)
         except Exception as e:
             logger.error("  IEM failed: %s", e)
             continue

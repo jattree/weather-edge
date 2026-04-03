@@ -48,6 +48,7 @@ class RiskProfile:
 
     # Correlation
     max_group_exposure_pct: float  # Max % of NAV in one weather system group
+    max_yes_exposure_pct: float    # Max % of NAV in ALL Yes bets combined
 
     # Gross exposure
     max_gross_exposure_multiple: float  # Max total at-risk as multiple of NAV
@@ -62,6 +63,8 @@ class RiskProfile:
 
     # Edge thresholds
     min_edge: float
+    min_edge_yes: float
+    min_edge_no: float
     fee_alpha_max: float
 
     # Compounding
@@ -75,12 +78,15 @@ RISK_PROFILES: dict[str, RiskProfile] = {
         drawdown_kill_pct=0.40,
         scale_back_factor=0.5,
         max_group_exposure_pct=0.30,
+        max_yes_exposure_pct=0.50,
         max_gross_exposure_multiple=3.0,
         kelly_fraction=0.50,
         max_position_pct=0.05,
         reserve_pct=0.05,
         penny_max_position=50.0,
         min_edge=0.03,
+        min_edge_yes=0.04,
+        min_edge_no=0.02,
         fee_alpha_max=0.50,
         compound_factor=1.0,
     ),
@@ -90,12 +96,15 @@ RISK_PROFILES: dict[str, RiskProfile] = {
         drawdown_kill_pct=0.25,
         scale_back_factor=0.5,
         max_group_exposure_pct=0.20,
+        max_yes_exposure_pct=0.35,
         max_gross_exposure_multiple=2.0,
         kelly_fraction=0.25,
         max_position_pct=0.03,
         reserve_pct=0.10,
         penny_max_position=30.0,
         min_edge=0.05,
+        min_edge_yes=0.06,
+        min_edge_no=0.03,
         fee_alpha_max=0.40,
         compound_factor=0.5,
     ),
@@ -105,12 +114,15 @@ RISK_PROFILES: dict[str, RiskProfile] = {
         drawdown_kill_pct=0.15,
         scale_back_factor=0.5,
         max_group_exposure_pct=0.10,
+        max_yes_exposure_pct=0.20,
         max_gross_exposure_multiple=1.5,
         kelly_fraction=0.125,
         max_position_pct=0.015,
         reserve_pct=0.20,
         penny_max_position=15.0,
         min_edge=0.08,
+        min_edge_yes=0.10,
+        min_edge_no=0.05,
         fee_alpha_max=0.30,
         compound_factor=0.0,
     ),
@@ -228,6 +240,46 @@ def check_correlation_limit(
             remaining,
             "CORRELATION TRIM: %s group $%.0f→$%.0f (cap $%.0f)"
             % (group, size_usd, remaining, max_group),
+        )
+
+    return (True, size_usd, "")
+
+
+def check_yes_exposure_limit(
+    size_usd: float,
+    open_trades: list,
+    nav: float,
+    profile: RiskProfile,
+) -> tuple[bool, float, str]:
+    """Check if adding a YES trade would breach the total YES exposure cap.
+
+    Returns:
+        (allowed, max_allowed_size, reason)
+    """
+    # Sum exposure in all YES positions
+    yes_exposure = sum(
+        t.size_usd for t in open_trades
+        if (getattr(t, "side", "") == "YES" or getattr(t, "outcome", "") == "YES")
+        and getattr(t, "status", "") == "open"
+    )
+
+    max_yes = nav * profile.max_yes_exposure_pct
+    remaining = max_yes - yes_exposure
+
+    if remaining <= 0:
+        return (
+            False,
+            0.0,
+            "YES EXPOSURE CAP: $%.0f / $%.0f max (%.0f%% NAV)"
+            % (yes_exposure, max_yes, profile.max_yes_exposure_pct * 100),
+        )
+
+    if size_usd > remaining:
+        return (
+            True,
+            remaining,
+            "YES EXPOSURE TRIM: $%.0f→$%.0f (cap $%.0f)"
+            % (size_usd, remaining, max_yes),
         )
 
     return (True, size_usd, "")

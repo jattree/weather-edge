@@ -30,6 +30,30 @@ IEM_ASOS_URL = "https://mesonet.agron.iastate.edu/cgi-bin/request/asos.py"
 MIN_READINGS = 12
 
 
+async def _fetch_hko_range(start_date: date, end_date: date, timeout: float = 30.0) -> dict[str, float]:
+    """Fetch daily max temps from HK Observatory Open Data API."""
+    url = "https://data.weather.gov.hk/weatherAPI/opendata/opendata.php?dataType=CLMMAXT&rformat=json&station=HKO"
+    async with httpx.AsyncClient() as client:
+        try:
+            resp = await client.get(url, timeout=timeout)
+            resp.raise_for_status()
+        except Exception as e:
+            logger.warning("HKO fetch failed: %s", e)
+            return {}
+    
+    daily = {}
+    data = resp.json().get("data", [])
+    for row in data:
+        try:
+            y, m, d = int(row[0]), int(row[1]), int(row[2])
+            obs_date = date(y, m, d)
+            if start_date <= obs_date <= end_date:
+                daily[str(obs_date)] = float(row[3])
+        except (ValueError, IndexError):
+            pass
+    return daily
+
+
 async def fetch_station_tmax(
     icao: str,
     target_date: date,
@@ -42,6 +66,13 @@ async def fetch_station_tmax(
     Fetches both tmpf and tmpc from IEM to avoid F→C conversion
     errors that can flip whole-degree rounding buckets.
     """
+    if icao == "45005":
+        daily = await _fetch_hko_range(target_date, target_date, timeout=timeout)
+        val = daily.get(str(target_date))
+        if val is not None:
+            logger.info("HKO obs for 45005 on %s: %.1f°C", target_date, val)
+        return val
+
     station_id = icao[1:] if icao.startswith("K") else icao
 
     params = {
@@ -127,6 +158,13 @@ async def fetch_station_tmax_both(
     This avoids F↔C conversion rounding errors: for Fahrenheit markets,
     round(max_f) directly instead of round(c_to_f(max_c)).
     """
+    if icao == "45005":
+        daily = await _fetch_hko_range(target_date, target_date, timeout=timeout)
+        val_c = daily.get(str(target_date))
+        if val_c is not None:
+            return val_c, val_c * 9.0 / 5.0 + 32.0
+        return None, None
+
     station_id = icao[1:] if icao.startswith("K") else icao
 
     params = {
@@ -194,6 +232,9 @@ async def fetch_station_tmax_range(
     Returns dict mapping ISO date string -> tmax in Celsius.
     More efficient than calling fetch_station_tmax per day.
     """
+    if icao == "45005":
+        return await _fetch_hko_range(start_date, end_date, timeout=timeout)
+
     station_id = icao[1:] if icao.startswith("K") else icao
 
     params = {

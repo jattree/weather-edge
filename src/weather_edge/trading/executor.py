@@ -914,52 +914,19 @@ class TradeExecutor:
                 abi=redeem_abi + ctf_check_abi,
             )
 
-            # ── Helper: encode proxy transaction data ──────────────────
-            def _encode_proxy_txn_data(
-                call_to: str, calldata_hex: str, value: int = 0
-            ) -> str:
-                """Encode a single call into proxy((uint8,address,uint256,bytes)[])."""
-                fn_selector = keccak(b"proxy((uint8,address,uint256,bytes)[])")[:4]
-                data_bytes = to_bytes(hexstr=calldata_hex)
-                # type_code=1 means Call (not DelegateCall)
-                tuples = [(1, to_checksum_address(call_to), value, data_bytes)]
-                encoded = abi_encode(["(uint8,address,uint256,bytes)[]"], [tuples])
-                return "0x" + (fn_selector + encoded).hex()
-
-            # ── Helper: create proxy struct hash ───────────────────────
-            def _proxy_struct_hash(
-                from_addr: str,
-                to_addr: str,
-                data_hex: str,
-                gas_price: str,
-                gas_limit: str,
-                nonce: str,
-                relay_addr: str,
-            ) -> bytes:
-                """Build the rlx: prefixed hash for proxy signing."""
-                data_bytes = to_bytes(hexstr=data_hex)
-                message = (
-                    b"rlx:"
-                    + HexBytes(from_addr)          # 20 bytes
-                    + HexBytes(to_addr)             # 20 bytes
-                    + data_bytes                    # variable
-                    + int(0).to_bytes(32, "big")    # txFee = 0
-                    + int(gas_price).to_bytes(32, "big")
-                    + int(gas_limit).to_bytes(32, "big")
-                    + int(nonce).to_bytes(32, "big")
-                    + HexBytes(relay_hub)           # 20 bytes
-                    + HexBytes(relay_addr)          # 20 bytes
-                )
-                return keccak(message)
-
-            # ── Helper: sign with EIP-191 personal sign ────────────────
-            def _sign_hash(msg_hash: bytes) -> str:
-                """Sign a hash using EIP-191 (personal_sign), return hex sig."""
-                msg = encode_defunct(HexBytes(msg_hash))
+            # ── Helper: sign request body for V2 PROXY ──────────────────
+            def _sign_request_body(request: dict) -> str:
+                """Sign the canonical JSON request body for Relayer V2 PROXY."""
+                # Copy to avoid mutating original
+                payload = request.copy()
+                # Ensure signature field is not in the signed content
+                payload.pop("signature", None)
+                # Canonical JSON (no spaces, sorted keys)
+                json_str = _json.dumps(payload, separators=(",", ":"), sort_keys=True)
+                # personal_sign over the JSON string
+                msg = encode_defunct(text=json_str)
                 sig = Account.sign_message(msg, self.private_key).signature.hex()
-                if not sig.startswith("0x"):
-                    sig = "0x" + sig
-                return sig
+                return "0x" + sig if not sig.startswith("0x") else sig
 
             # ── Process each redeemable position ───────────────────────
             redeemed = 0
@@ -997,7 +964,7 @@ class TradeExecutor:
                             [2] if pos.get("outcome", "").lower() == "no" else [1]
                         )
 
-                    # Encode CTF.redeemPositions calldata
+                    # Encode CTF.redeemPositions calldata (target is CTF, not proxy)
                     calldata = ctf_contract.encode_abi(
                         "redeemPositions",
                         [
@@ -1011,17 +978,11 @@ class TradeExecutor:
                     title = pos.get("title", "")[:50]
                     size = float(pos.get("size", 0))
 
-                    # Wrap in proxy encoding
-                    proxy_data = _encode_proxy_txn_data(ctf_addr, calldata)
-
                     # Get relay payload (nonce + relay address)
                     async with httpx.AsyncClient() as http:
                         relay_resp = await http.get(
                             f"{relayer_url}/relay-payload",
-                            params={
-                                "address": eoa_address,
-                                "type": "PROXY",
-                            },
+                            params={"address": eoa_address, "type": "PROXY"},
                             timeout=15.0,
                         )
                         if relay_resp.status_code != 200:
@@ -1037,27 +998,15 @@ class TradeExecutor:
                     relay_address = relay_payload["address"]
                     gas_limit = str(default_gas_limit)
 
-                    # Build struct hash and sign
-                    struct_hash = _proxy_struct_hash(
-                        from_addr=eoa_address,
-                        to_addr=proxy_factory,
-                        data_hex=proxy_data,
-                        gas_price="0",
-                        gas_limit=gas_limit,
-                        nonce=nonce,
-                        relay_addr=relay_address,
-                    )
-                    signature = _sign_hash(struct_hash)
-
-                    # Build the transaction request body
+                    # Build the V2 Relayer PROXY request
                     tx_request = {
                         "type": "PROXY",
                         "from": eoa_address,
-                        "to": to_checksum_address(proxy_factory),
+                        "to": to_checksum_address(ctf_addr),  # Direct target
                         "proxyWallet": proxy_address,
-                        "data": proxy_data,
+                        "data": calldata,
                         "nonce": nonce,
-                        "signature": signature,
+                        "value": "0",
                         "signatureParams": {
                             "gasPrice": "0",
                             "gasLimit": gas_limit,
@@ -1068,12 +1017,15 @@ class TradeExecutor:
                         "metadata": f"redeem:{condition_id[:16]}",
                     }
 
-                    # Auth: Relayer API key (simple headers with underscores)
+                    # Sign the canonical JSON request body
+                    tx_request["signature"] = _sign_request_body(tx_request)
+
+                    # Auth: Relayer API key (simple headers)
                     body_str = _json.dumps(tx_request)
                     submit_headers = {
                         "Content-Type": "application/json",
                         "RELAYER_API_KEY": self.relayer_api_key or "",
-                        "RELAYER_API_KEY_ADDRESS": eoa_address.lower(),
+                        "RELAYER_API_KEY_ADDRESS": eoa_address,  # Checksummed
                     }
 
                     # Submit to relayer
@@ -1087,13 +1039,12 @@ class TradeExecutor:
 
                     if submit_resp.status_code in (200, 201):
                         result = submit_resp.json()
-                        tx_id = result.get(
-                            "transactionID", result.get("id", "?")
-                        )
+                        tx_id = result.get("transactionID", result.get("id", "?"))
                         logger.warning(
-                            "REDEEM SUBMITTED: %s (%.1f shares, indexSets=%s) "
-                            ", relayer tx: %s",
-                            title, size, index_sets, str(tx_id)[:24],
+                            "REDEEM SUBMITTED: %s (%.1f shares), relayer tx: %s",
+                            title,
+                            size,
+                            str(tx_id)[:24],
                         )
 
                         # Poll for confirmation (up to 60s)
@@ -1106,8 +1057,7 @@ class TradeExecutor:
                             )
                         else:
                             logger.warning(
-                                "REDEEM PENDING (unconfirmed after poll): %s, tx: %s",
-                                title, str(tx_id)[:24],
+                                "REDEEM PENDING (not confirmed in 60s): %s", title
                             )
 
                         redeemed += 1
