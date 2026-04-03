@@ -249,3 +249,22 @@ class TestEdgeProperties:
             assert signal.recommended_side == TradeSide.YES
         elif model_prob < market_prob:
             assert signal.recommended_side == TradeSide.NO
+
+    def test_tail_no_strategy_detection(self):
+        """Verify tail_no strategy is correctly tagged for high-prob NO on tails."""
+        from weather_edge.analysis.edge import calculate_edge
+        from weather_edge.models.enums import TradeSide
+
+        # Market says YES=30% (NO=70%). Model says YES=5% (NO=95%).
+        # This is a "tail-no" bet (high prob NO at 70c price).
+        signal = calculate_edge(
+            market_id="test_tail",
+            model_prob=0.05,
+            market_prob=0.30,
+            model_confidence=1.0,
+            city_id="tor",
+            target_date="2026-04-04",
+        )
+        assert signal.recommended_side == TradeSide.NO
+        assert signal.strategy == "tail_no"
+        assert signal.target_date == "2026-04-04"

@@ -235,15 +235,20 @@ async def run_cycle(
 
     # === PORTFOLIO SYNC: reconcile with exchange truth ===
     # Runs AFTER market_map so positions get city_id mapping
+    total_equity = settings.bankroll
     if live_executor and not live_executor.dry_run:
         try:
-            from weather_edge.trading.portfolio_sync import sync_portfolio
+            from weather_edge.trading.portfolio_sync import fetch_polymarket_state, sync_portfolio
             _portfolio_summary = await sync_portfolio(
                 executor=live_executor,
                 store=store,
             )
+            # Fetch full state to get balance + current market value of positions
+            state = await fetch_polymarket_state(live_executor, live_executor.wallet_address)
+            total_equity = state["portfolio_value"]
+            logger.info("PORTFOLIO EQUITY: $%.2f (used as bankroll for Kelly sizing)", total_equity)
+
             # Rebuild positions again to pick up market_map city_ids
-            # (market_map was updated just before sync, but fills may have empty city_id)
             store.rebuild_positions()
             _portfolio_summary = store.get_portfolio_summary()
         except Exception:
@@ -465,9 +470,11 @@ async def run_cycle(
                     model_prob=model_prob,
                     market_prob=market_prob,
                     model_confidence=adjusted_conf,
+                    bankroll=total_equity,
                     consensus_id=None,
                     hours_to_resolution=hours_to,
                     city_id=city_id.value,
+                    target_date=str(target_date),
                     description=market.question[:80],
                     spread=estimated_spread,
                 )
@@ -493,6 +500,37 @@ async def run_cycle(
                             continue
 
                 all_signals.append(signal)
+
+    # === STRATEGY REDESIGN: One signal per city-date filter ===
+    # Prevents "multi-bucket bleed" by picking only the highest-edge bucket.
+    # Prioritizes tail_no (high-prob NO) and tail (penny) strategies.
+    filtered_signals: list[Signal] = []
+    if all_signals:
+        signal_groups: dict[tuple[str, str], list[Signal]] = {}
+        for s in all_signals:
+            if s.confidence_tier.value == "low":
+                continue
+            key = (s.city_id, s.target_date)
+            signal_groups.setdefault(key, []).append(s)
+
+        for key, group in signal_groups.items():
+            # Strategy priority: tail_no > tail > core
+            # Within same strategy, pick highest absolute net_edge
+            def _signal_score(sig: Signal) -> float:
+                prio = {"tail_no": 300, "tail": 200, "core": 100}.get(sig.strategy, 0)
+                return prio + abs(sig.net_edge)
+
+            best_signal = max(group, key=_signal_score)
+            filtered_signals.append(best_signal)
+            
+            if len(group) > 1:
+                logger.info(
+                    "MULTI-BUCKET FILTER: %s %s picked %s (edge=%.1f%%) over %d others",
+                    key[0], key[1], best_signal.strategy,
+                    best_signal.net_edge * 100, len(group) - 1,
+                )
+
+    all_signals = filtered_signals
 
     # === Claude + Gemini reasoning layer ===
     # Only on main cycles (not sniper-triggered) to save API costs

@@ -343,6 +343,7 @@ class Settings(BaseSettings):
     kelly_fraction: float = 0.25
     max_position_pct: float = 0.03
     fetch_interval_minutes: int = 30
+    max_bets_per_city_date: int = 1  # Fix multi-bucket bleed: pick only ONE bucket per city
 
     # Pool allocation (hybrid: penny-first targeting, sustainable at $2K)
     # Post-Monday fee cliff: penny bets are fee-immune, core trades get hit 1.25%
@@ -355,6 +356,10 @@ class Settings(BaseSettings):
     penny_min_position: float = 10.0        # Min $10 per penny bet
     penny_max_position: float = 50.0        # Max $50 per penny bet (up from $20)
     penny_max_entry_price: float = 0.05     # Only enter at 5c or below (was 6c)
+
+    # Tail-No Strategy (Unlikely outcomes: buy NO at 60-90c on tail buckets)
+    tail_no_max_yes_market_prob: float = 0.40   # Only consider if market YES <= 40c (NO >= 60c)
+    tail_no_min_edge: float = 0.03              # Minimum edge for a tail-no trade
 
     # Order splitting for penny bets (avoid moving thin markets)
     penny_order_split_max_shares: int = 5   # Max shares per order (ColdMath uses 1-5)
