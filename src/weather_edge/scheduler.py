@@ -797,6 +797,15 @@ async def run_cycle(
         except Exception:
             _active_position_count = store.get_portfolio_summary().get("position_count", 0)
 
+    logger.info(
+        "EXECUTION LOOP: %d signals, live_executor=%s, dry_run=%s, usdc_floor_block=%s, pos_count=%d/%d",
+        len(all_signals),
+        bool(live_executor),
+        live_executor.dry_run if live_executor else "N/A",
+        _usdc_floor_block,
+        _active_position_count,
+        MAX_POSITIONS,
+    )
     for signal in all_signals:
         # Contract: verify taker fee doesn't eat >40% of projected alpha
         # This gate applies to TAKER orders only. Live executor uses post_only
