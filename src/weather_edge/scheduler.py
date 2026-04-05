@@ -436,17 +436,6 @@ async def run_cycle(
                 consensus.confidence * 100, consensus.model_count,
             )
 
-            # Model agreement gate: skip city-date when models disagree too much.
-            # Raw std > 2.0C means the forecast spread is wider than 2 buckets,
-            # any single-bucket bet is essentially random.
-            MODEL_AGREEMENT_MAX_STD = 2.0
-            if consensus.std_dev > MODEL_AGREEMENT_MAX_STD:
-                logger.warning(
-                    "MODEL DISAGREEMENT: %s %s std=%.1f°C > %.1f, skipping all buckets",
-                    city_id.value, target_date, consensus.std_dev, MODEL_AGREEMENT_MAX_STD,
-                )
-                continue
-
             # Compute edge for each matching market bucket
             for market in city_markets:
                 if get_required_variable(market) != variable:
@@ -1062,11 +1051,11 @@ async def run_cycle(
                             check_yes_exposure_limit,
                             get_active_profile,
                         )
+                        from weather_edge.models.position import Position
                         profile = get_active_profile()
 
                         # 1. Yes Exposure Cap
                         if signal.recommended_side.value == "YES":
-                            from weather_edge.models.position import Position
                             raw_pos = store.get_positions()
                             open_pos = [
                                 Position(
