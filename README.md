@@ -2,9 +2,9 @@
 
 Automated weather prediction market trading system for Polymarket. Exploits the gap between multi-model weather forecast consensus and crowd-implied market prices.
 
-## Current Strategy (2026-04-03)
+## Current Strategy (2026-04-05)
 
-**One-bet-per-city + tail-No grind.** Picks the single best bet per city per date. Prioritises high-probability No bets on unlikely temperatures over speculative Yes bets. Max 3 new trades per cycle.
+**One-bet-per-city + tail-No grind.** Picks the single best bet per city per date. Prioritises high-probability No bets on unlikely temperatures over speculative Yes bets. Max 6 new trades per cycle. Model agreement gate skips cities with std > 2.0°C.
 
 ### Resolution Source: Weather Underground (METAR)
 
