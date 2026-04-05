@@ -80,8 +80,15 @@ def compute_model_prob_for_market(market: MarketInfo, consensus) -> float | None
             p_gte_low = get_probability_for_threshold(
                 consensus, market.threshold_low_c, "gte",
             )
+            
+            # Celsius "exact" buckets are parsed as [val, val+1). 
+            # threshold_high_c is already val+1.
+            # Fahrenheit "X-Y" buckets cover [X, Y+1).
+            # Adding 1.0 here was doubling Celsius width.
+            width = 0.0 if market.threshold_unit == "celsius" else 1.0
+            
             p_gte_high = get_probability_for_threshold(
-                consensus, market.threshold_high_c + 1.0, "gte",
+                consensus, market.threshold_high_c + width, "gte",
             )
             prob = max(0.0, p_gte_low - p_gte_high)
 
@@ -385,6 +392,26 @@ async def run_cycle(
             if consensus is None:
                 continue
 
+            # --- MODEL AGREEMENT GATE ---
+            # Per README: Skip if models disagree (std > 2.0C)
+            # This prevents trading on noise when ensembles are in chaos.
+            if consensus.std_dev > 2.0:
+                logger.warning(
+                    "MODEL AGREEMENT REJECT: %s/%s std=%.1f > 2.0, skipping",
+                    city_id.value, variable, consensus.std_dev
+                )
+                continue
+
+            # Apply pattern-based bias shift (e.g. haze suppression)
+            if pattern_bias != 0:
+                old_mean = consensus.weighted_mean
+                consensus.weighted_mean += pattern_bias
+                consensus.mean_value += pattern_bias
+                logger.info(
+                    "  %s/%s PATTERN SHIFT: %.1f°C -> %.1f°C (%+.1f°C)",
+                    city_id.value, variable, old_mean, consensus.weighted_mean, pattern_bias
+                )
+
             # Track forecast trends (run-to-run consistency)
             trend_mult = 1.0
             try:
@@ -408,6 +435,17 @@ async def run_cycle(
                 consensus.weighted_mean, consensus.std_dev,
                 consensus.confidence * 100, consensus.model_count,
             )
+
+            # Model agreement gate: skip city-date when models disagree too much.
+            # Raw std > 2.0C means the forecast spread is wider than 2 buckets,
+            # any single-bucket bet is essentially random.
+            MODEL_AGREEMENT_MAX_STD = 2.0
+            if consensus.std_dev > MODEL_AGREEMENT_MAX_STD:
+                logger.warning(
+                    "MODEL DISAGREEMENT: %s %s std=%.1f°C > %.1f, skipping all buckets",
+                    city_id.value, target_date, consensus.std_dev, MODEL_AGREEMENT_MAX_STD,
+                )
+                continue
 
             # Compute edge for each matching market bucket
             for market in city_markets:
