@@ -1071,7 +1071,9 @@ async def run_cycle(
                             signal.recommended_size = new_size
 
                         # 3. Gross Exposure
-                        total_at_risk = sum(p.size_usd for p in open_pos if p.status == "open")
+                        # Use real position value (total_equity - cash) not inflated DB cost_basis.
+                        # DB cost_basis includes resolved positions; Polymarket value is truth.
+                        total_at_risk = max(0, total_equity - (_live_balance or 0))
                         allowed, new_size, reason = check_gross_exposure(
                             signal.recommended_size, total_at_risk, total_equity, profile
                         )
