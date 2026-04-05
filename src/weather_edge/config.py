@@ -336,7 +336,7 @@ class Settings(BaseSettings):
     max_position_pct: float = 0.03
     fetch_interval_minutes: int = 30
     max_bets_per_city_date: int = 1  # Fix multi-bucket bleed: pick only ONE bucket per city
-    max_trades_per_cycle: int = 3   # Global limit on new entries per 30-min window
+    max_trades_per_cycle: int = 6   # Global limit on new entries per 30-min window
 
     # Pool allocation (hybrid: penny-first targeting, sustainable at $2K)
     # Post-Monday fee cliff: penny bets are fee-immune, core trades get hit 1.25%
