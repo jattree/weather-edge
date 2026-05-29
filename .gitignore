@@ -20,3 +20,6 @@ htmlcov/
 .DS_Store
 notebooks/.ipynb_checkpoints/
 .hypothesis/
+
+# deepsec security-scanner workspace (local tooling, not part of the project)
+.deepsec/
