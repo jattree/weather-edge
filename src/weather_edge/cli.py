@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import sys
 from datetime import date, timedelta
 
@@ -37,7 +38,7 @@ def cli(verbose: bool) -> None:
 @click.option("--days", default=2, help="Number of days to forecast (today + N)")
 def run(days: int) -> None:
     """Run one fetch → analyze → signal cycle."""
-    from weather_edge.reporting import print_forecasts, print_paper_trades, print_signals
+    from weather_edge.reporting import print_paper_trades, print_signals
     from weather_edge.scheduler import run_cycle
     from weather_edge.trading.paper import PaperTrader
 
@@ -147,10 +148,14 @@ def dashboard() -> None:
         console.print("[red]Dashboard requires extra deps: pip install 'weather-edge[dashboard]'[/]")
         sys.exit(1)
 
-    console.print("[bold cyan]Weather Edge Dashboard[/], Starting on http://localhost:8000")
+    # Bind to localhost by default, the dashboard has NO authentication, so it
+    # must not be exposed on all interfaces. Override with WE_DASHBOARD_HOST only
+    # if you have put your own auth/proxy in front of it.
+    host = os.environ.get("WE_DASHBOARD_HOST", "127.0.0.1")
+    console.print(f"[bold cyan]Weather Edge Dashboard[/], Starting on http://{host}:8000")
     uvicorn.run(
         "weather_edge.dashboard.app:app",
-        host="0.0.0.0",
+        host=host,
         port=8000,
         reload=True,
     )

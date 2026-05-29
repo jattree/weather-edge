@@ -139,6 +139,20 @@ it shows is the cost of the spread. That is the entire lesson. The result dict
 echoes its `cost_assumptions` and a list of `caveats`; do not read its P&L as a
 track record.
 
+## Dashboard
+
+A FastAPI monitoring dashboard (`src/weather_edge/dashboard/`) shows live state,
+consensus forecasts, open positions, P&L, and the Claude/Gemini decisions.
+
+```bash
+pip install -e ".[dashboard]"
+python -m weather_edge dashboard      # http://127.0.0.1:8000
+```
+
+> **It has no authentication.** It binds to `127.0.0.1` by default for that
+> reason, do **not** expose it on a public host. If you front it with your own
+> auth/proxy you can override the bind with `WE_DASHBOARD_HOST=0.0.0.0`.
+
 ## Configuration (bring your own keys)
 
 All configuration is environment variables, loaded from a gitignored `.env` (copy
