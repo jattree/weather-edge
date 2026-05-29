@@ -219,4 +219,11 @@ ICAO/station codes are the ones the **temperature-high** markets resolve against
 
 ## License
 
-Provided as-is for educational purposes. See [`OPEN_SOURCE_ARCHIVE.md`](OPEN_SOURCE_ARCHIVE.md).
+MIT. See [`LICENSE`](LICENSE) and [`OPEN_SOURCE_ARCHIVE.md`](OPEN_SOURCE_ARCHIVE.md).
+
+> **Disclaimer:** This software places orders that move real funds on
+> Polymarket. It is provided for educational and research purposes only, with
+> no warranty of any kind, and is **not financial advice**. You are solely
+> responsible for any trades it makes. Use a dedicated wallet with limited
+> funds, and run in paper mode until you understand the behavior. Use at your
+> own risk.
