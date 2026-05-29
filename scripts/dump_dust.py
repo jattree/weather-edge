@@ -32,7 +32,7 @@ async def main():
     )
     await executor.initialize()
 
-    wallet = "0xYOUR_PROXY_WALLET"
+    wallet = settings.polymarket_wallet
 
     # Get positions from Polymarket API (has current prices)
     r = httpx.get(
