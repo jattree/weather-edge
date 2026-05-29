@@ -403,20 +403,30 @@ class PaperTrader:
         self,
         trade: PaperTrade,
         current_price: float,
-        volume_24h: float = 0,
+        volume_24h: float | None = None,
     ) -> None:
         """Close an open position with conservative paper pricing.
 
         Simulates realistic exit by using pessimistic bid pricing:
         - 3¢ haircut from midpoint (approximates bid vs mid spread)
         - 5% additional slippage
-        - Only exits if 24h volume > $5K (no ghost prices)
+
+        ``volume_24h`` is an OPTIONAL liquidity guard: when a real 24h volume is
+        supplied and it is below PAPER_MIN_VOLUME we refuse to exit into a thin
+        market. When volume is unknown (None) we do NOT block, the previous
+        default of 0 silently blocked every exit because callers don't pass it,
+        which disabled the entire exit monitor.
+
+        A deliberate exit decision is honoured even at a loss: this is a
+        stop-loss, so it must realise losses, not refuse them. (The old code
+        returned early on pnl <= 0, so paper could only ever book early-exit
+        WINS, inflating paper P&L versus live.)
         """
         if trade.status != TradeStatus.OPEN:
             return
 
-        # Volume gate: don't exit illiquid markets
-        if volume_24h < self.PAPER_MIN_VOLUME:
+        # Liquidity guard: only block when a real, low volume is known.
+        if volume_24h is not None and volume_24h < self.PAPER_MIN_VOLUME:
             logger.info(
                 "EXIT BLOCKED (low volume $%.0f): %s %s, holding",
                 volume_24h, trade.side, trade.city_id,
@@ -439,31 +449,30 @@ class PaperTrader:
             shares = trade.size_usd / entry_no if entry_no > 0 else 0
             pnl = (exit_no_bid - entry_no) * shares
 
-        # Only close if still profitable after conservative pricing
-        if pnl <= 0:
-            logger.info(
-                "EXIT UNPROFITABLE after slippage: %s %s, P&L $%.2f, holding",
-                trade.side, trade.city_id, pnl,
-            )
-            return
-
+        # Realise the exit, win OR loss. A stop-loss must be allowed to book a
+        # loss; refusing to (the old behaviour) made paper P&L fictitiously
+        # win-only on early exits.
         trade.resolved_at = datetime.now(timezone.utc)
         trade.exit_price = exit_price if trade.side == "YES" else (1.0 - exit_no_bid)
         trade.pnl = round(pnl, 2)
-        trade.status = TradeStatus.WON
+        trade.status = TradeStatus.WON if pnl > 0 else TradeStatus.LOST
 
         logger.info(
-            "EARLY EXIT (conservative): %s %s @ %.3f -> %.3f (mid was %.3f) P&L=$%.2f",
+            "EARLY EXIT (conservative): %s %s @ %.3f -> %.3f (mid was %.3f) "
+            "P&L=$%.2f [%s]",
             trade.side, trade.city_id, trade.entry_price,
-            trade.exit_price, current_price, trade.pnl,
+            trade.exit_price, current_price, trade.pnl, trade.status.value,
         )
 
     def close_all_positions(self, current_prices: dict[str, float] | None = None) -> float:
         """Close all open positions at current market prices.
 
         Args:
-            current_prices: Dict of market_id -> current YES midpoint.
-                           If None, closes at entry price (breakeven).
+            current_prices: Dict of market_id -> current YES midpoint. If a
+                market is missing, that position is priced at its entry midpoint
+                and then marked down by the conservative exit haircut/slippage in
+                close_position (so it realises a small loss, not a clean
+                breakeven).
         Returns:
             Total P&L from closing all positions.
         """

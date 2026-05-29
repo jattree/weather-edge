@@ -31,7 +31,6 @@ import logging
 import sqlite3
 import sys
 import time
-from collections import defaultdict
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -41,6 +40,7 @@ import httpx
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from weather_edge.config import CITIES, GLOBAL_MODELS
+from weather_edge.fetchers.metar import MIN_READINGS, _daily_max_from_rows
 
 logging.basicConfig(
     level=logging.INFO,
@@ -105,18 +105,49 @@ def fetch_historical_forecast(
     return None
 
 
+def fetch_hko_daily_max(start: date, end: date) -> dict[str, float]:
+    """Fetch daily max temps from HK Observatory Open Data API. Returns {date: tmax_celsius}."""
+    url = "https://data.weather.gov.hk/weatherAPI/opendata/opendata.php?dataType=CLMMAXT&rformat=json&station=HKO"
+    try:
+        resp = httpx.get(url, timeout=30.0)
+        resp.raise_for_status()
+        data = resp.json().get("data", [])
+        
+        daily: dict[str, float] = {}
+        for row in data:
+            try:
+                y, m, d = int(row[0]), int(row[1]), int(row[2])
+                obs_date = date(y, m, d)
+                if start <= obs_date <= end:
+                    daily[str(obs_date)] = float(row[3])
+            except (ValueError, IndexError):
+                continue
+        return daily
+    except Exception as e:
+        logger.warning("HKO fetch failed: %s", e)
+        return {}
+
+
 def fetch_metar_observation(
-    icao: str, target_date: date,
+    icao: str, target_date: date, station_tz: str = "Etc/UTC",
 ) -> float | None:
     """Fetch actual observed daily high from METAR station data.
 
-    Uses IEM ASOS archive, the same raw METAR/ASOS data that
-    Weather Underground displays. Polymarket resolves against
-    Wunderground, so this is the correct ground truth.
+    Uses IEM ASOS archive, the same raw METAR/ASOS data that Weather
+    Underground displays. Polymarket resolves against Wunderground, so this is
+    the correct ground truth. Shares the live resolver's parsing helpers so the
+    bias-table training ground truth matches live resolution exactly:
+      * native °C (tmpc), not a back-conversion from rounded °F (#7)
+      * SPECI reports and the 6-hour max-temp group (#4)
+      * the local civil day via ``station_tz`` (#6)
+      * the same MIN_READINGS sufficiency gate as live (#8)
 
     Returns daily max temperature in Celsius, or None if unavailable.
     """
-    # US stations: strip K prefix (KDAL -> DAL). International: use as-is.
+    if icao == "45005":
+        obs = fetch_hko_daily_max(target_date, target_date)
+        return obs.get(str(target_date))
+
     station_id = icao[1:] if icao.startswith("K") else icao
 
     try:
@@ -124,55 +155,52 @@ def fetch_metar_observation(
             IEM_ASOS_URL,
             params={
                 "station": station_id,
-                "data": "tmpf",
+                "data": "tmpf,tmpc,metar",
                 "year1": target_date.year,
                 "month1": target_date.month,
                 "day1": target_date.day,
                 "year2": target_date.year,
                 "month2": target_date.month,
                 "day2": target_date.day,
-                "tz": "Etc/UTC",
+                "tz": station_tz,
                 "format": "onlycomma",
                 "latlon": "no",
                 "elev": "no",
                 "missing": "M",
                 "trace": "T",
                 "direct": "no",
-                "report_type": "3",
+                "report_type": ["3", "4"],
             },
             timeout=20,
             follow_redirects=True,
         )
         if resp.status_code != 200:
             return None
-
-        reader = csv.DictReader(io.StringIO(resp.text))
-        temps_f: list[float] = []
-        for row in reader:
-            tmpf = row.get("tmpf", "M")
-            if tmpf and tmpf != "M":
-                try:
-                    temps_f.append(float(tmpf))
-                except ValueError:
-                    continue
-
-        if not temps_f:
-            return None
-
-        max_f = max(temps_f)
-        return (max_f - 32.0) * 5.0 / 9.0
+        rows = list(csv.DictReader(io.StringIO(resp.text)))
     except Exception:
         return None
 
+    entry = _daily_max_from_rows(rows).get(str(target_date))
+    if entry is None:
+        return None
+    max_c, _max_f, readings = entry
+    if readings < MIN_READINGS:
+        return None
+    return max_c
+
 
 def fetch_batch_metar_observations(
-    icao: str, start: date, end: date,
+    icao: str, start: date, end: date, station_tz: str = "Etc/UTC",
 ) -> dict[str, float]:
     """Fetch daily max temperatures from METAR station data for a date range.
 
-    Returns dict mapping ISO date string -> tmax in Celsius.
-    Single API call for the whole range, much more efficient than per-day.
+    Returns dict mapping ISO date string -> tmax in Celsius. Single API call
+    for the whole range. Uses the same parsing/local-day/MIN_READINGS rules as
+    the live resolver (see fetch_metar_observation).
     """
+    if icao == "45005":
+        return fetch_hko_daily_max(start, end)
+
     station_id = icao[1:] if icao.startswith("K") else icao
 
     try:
@@ -180,54 +208,41 @@ def fetch_batch_metar_observations(
             IEM_ASOS_URL,
             params={
                 "station": station_id,
-                "data": "tmpf",
+                "data": "tmpf,tmpc,metar",
                 "year1": start.year,
                 "month1": start.month,
                 "day1": start.day,
                 "year2": end.year,
                 "month2": end.month,
                 "day2": end.day,
-                "tz": "Etc/UTC",
+                "tz": station_tz,
                 "format": "onlycomma",
                 "latlon": "no",
                 "elev": "no",
                 "missing": "M",
                 "trace": "T",
                 "direct": "no",
-                "report_type": "3",
+                "report_type": ["3", "4"],
             },
             timeout=30,
             follow_redirects=True,
         )
         if resp.status_code != 200:
             return {}
-
-        reader = csv.DictReader(io.StringIO(resp.text))
-        daily_temps: dict[str, list[float]] = defaultdict(list)
-
-        for row in reader:
-            ts = row.get("valid", "")
-            tmpf = row.get("tmpf", "M")
-            if ts and tmpf and tmpf != "M":
-                d = ts[:10]  # Extract YYYY-MM-DD from timestamp
-                try:
-                    daily_temps[d].append(float(tmpf))
-                except ValueError:
-                    continue
-
-        result: dict[str, float] = {}
-        for d, temps in daily_temps.items():
-            max_f = max(temps)
-            result[d] = (max_f - 32.0) * 5.0 / 9.0
-
-        return result
+        rows = list(csv.DictReader(io.StringIO(resp.text)))
     except Exception:
         return {}
+
+    return {
+        d: max_c
+        for d, (max_c, _max_f, readings) in _daily_max_from_rows(rows).items()
+        if readings >= MIN_READINGS
+    }
 
 
 def fetch_actual_observation(
     lat: float, lon: float, target_date: date,
-    icao: str | None = None,
+    icao: str | None = None, station_tz: str = "Etc/UTC",
 ) -> float | None:
     """Fetch actual observed high temperature for a date.
 
@@ -236,7 +251,7 @@ def fetch_actual_observation(
     """
     # Primary: METAR station observation
     if icao:
-        result = fetch_metar_observation(icao, target_date)
+        result = fetch_metar_observation(icao, target_date, station_tz)
         if result is not None:
             return result
         logger.debug("METAR unavailable for %s on %s, falling back to Open-Meteo", icao, target_date)
@@ -268,7 +283,7 @@ def fetch_actual_observation(
 
 def fetch_batch_observations(
     lat: float, lon: float, start: date, end: date,
-    icao: str | None = None,
+    icao: str | None = None, station_tz: str = "Etc/UTC",
 ) -> dict[str, float]:
     """Fetch actual observations for a date range.
 
@@ -279,7 +294,7 @@ def fetch_batch_observations(
 
     # Primary: METAR station observations
     if icao:
-        result = fetch_batch_metar_observations(icao, start, end)
+        result = fetch_batch_metar_observations(icao, start, end, station_tz)
         if result:
             logger.info("  METAR (%s): %d days of station data", icao, len(result))
 
@@ -409,7 +424,7 @@ def run_hindcast(
         # Fetch actual observations in one batch (METAR primary, Open-Meteo fallback)
         actuals = fetch_batch_observations(
             config.latitude, config.longitude, start_date, end_date,
-            icao=config.icao,
+            icao=config.icao, station_tz=config.timezone,
         )
         logger.info("  Fetched %d actual observations", len(actuals))
         time.sleep(0.5)  # Rate limit
