@@ -60,17 +60,22 @@ class TestParseBucket:
 
 # ---------------------------------------------------------------------------
 # actual_falls_in_bucket: rounding logic
-# Wunderground rounds to whole degrees before display. Polymarket resolves
-# against that displayed value. So 28.5C rounds to 28 (Python banker's
-# rounding), 28.6C rounds to 29, etc.
+# Wunderground rounds to whole degrees (half-up) before display. Polymarket
+# resolves against that displayed value. So 28.5C displays as 29, 28.6C as 29,
+# 28.4C as 28. We use round-half-up, NOT Python's banker's rounding (which would
+# wrongly give round(28.5) == 28).
 # ---------------------------------------------------------------------------
 
 class TestActualFallsInBucketRounding:
 
-    def test_celsius_28_5_rounds_to_28(self):
-        """28.5C -> round(28.5) = 28 (banker's rounding). Falls in [28, 29)."""
-        bucket = BucketInfo(28.0, 29.0, "celsius", exclusive_upper=True)
-        assert actual_falls_in_bucket(28.5, bucket) is True
+    def test_celsius_28_5_rounds_half_up_to_29(self):
+        """28.5C -> round-half-up = 29 (Wunderground display). Falls in [29, 30),
+        NOT [28, 29). Python's banker's round(28.5) == 28 would put it in the
+        wrong bucket, this is exactly the bug round-half-up fixes."""
+        bucket_28 = BucketInfo(28.0, 29.0, "celsius", exclusive_upper=True)
+        bucket_29 = BucketInfo(29.0, 30.0, "celsius", exclusive_upper=True)
+        assert actual_falls_in_bucket(28.5, bucket_28) is False
+        assert actual_falls_in_bucket(28.5, bucket_29) is True
 
     def test_celsius_28_6_rounds_to_29(self):
         """28.6C -> round(28.6) = 29. Falls in [29, 30), NOT [28, 29)."""
@@ -95,7 +100,7 @@ class TestActualFallsInBucketRounding:
         assert actual_falls_in_bucket(28.5, bucket) is True
 
     def test_fahrenheit_rounding_boundary(self):
-        """METAR 28.06C = 82.5F -> round = 82 (banker's). Falls in [82, 84)."""
+        """METAR 28.06C = 82.5F -> round-half-up = 83. Falls in [82, 84)."""
         bucket = BucketInfo(82.0, 84.0, "fahrenheit", exclusive_upper=True)
         assert actual_falls_in_bucket(28.06, bucket) is True
 
@@ -105,9 +110,8 @@ class TestActualFallsInBucketRounding:
         assert actual_falls_in_bucket(21.1, bucket) is True
 
     def test_above_bucket_with_rounding(self):
-        """'30C or above': 29.5C -> round = 30 (banker's). YES (30 >= 30)."""
+        """'30C or above': 29.5C -> round-half-up = 30. YES (30 >= 30)."""
         bucket = BucketInfo(30.0, None, "celsius")
-        # round(29.5) = 30 with banker's rounding (rounds to even)
         assert actual_falls_in_bucket(29.5, bucket) is True
 
     def test_above_bucket_below_threshold(self):
@@ -134,3 +138,43 @@ class TestRoundingPreventsWrongResolution:
         doesn't change integer values."""
         bucket = BucketInfo(68.0, 70.0, "fahrenheit", exclusive_upper=True)
         assert actual_falls_in_bucket(20.0, bucket) is True
+
+
+# ---------------------------------------------------------------------------
+# Subzero buckets (regression: unsigned (\d+) regex dropped the minus sign,
+# resolving "-2°C or below" as "2°C or below", a guaranteed mis-resolution
+# on every freezing-weather market).
+# ---------------------------------------------------------------------------
+
+class TestSubzeroBuckets:
+
+    def test_parse_below_negative_celsius(self):
+        b = parse_bucket_from_description("Will the high be -2°C or below on March 27")
+        assert b is not None
+        assert b.high == -2.0
+        assert b.low is None
+        assert b.unit == "celsius"
+
+    def test_parse_exact_negative_celsius(self):
+        b = parse_bucket_from_description("Will the high temperature be -5°C on March 27")
+        assert b is not None
+        assert b.low == -5.0
+        assert b.high == -4.0
+        assert b.exclusive_upper is True
+
+    def test_parse_negative_fahrenheit_range(self):
+        b = parse_bucket_from_description("Will it be -5--3°F on January 10")
+        assert b is not None
+        assert b.low == -5.0
+        assert b.high == -2.0  # high label -3, [low, high+1)
+
+    def test_resolve_negative_below_bucket(self):
+        """-3.2°C actual against '-2°C or below': round-half-up(-3.2) = -3,
+        which is <= -2 -> YES. The pre-fix parser read this as '2 or below'
+        and would have resolved -3°C (well below 2) as a spurious YES too,
+        but a +1°C actual (round 1) would wrongly resolve YES under the buggy
+        '2 or below' reading while being NO under the correct '-2 or below'."""
+        bucket = parse_bucket_from_description("be -2°C or below")
+        assert bucket is not None
+        assert actual_falls_in_bucket(-3.2, bucket) is True
+        assert actual_falls_in_bucket(1.0, bucket) is False  # would be YES under the bug

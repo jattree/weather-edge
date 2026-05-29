@@ -1,13 +1,27 @@
-"""Self-learning module, adaptive model weighting via Brier scores.
+"""Self-learning module, adaptive model weighting from recent skill.
 
-The 80/20 version: Inverse Brier Weighting. Models that predict well
-get more influence, drifting models get demoted. Pure statistics, no ML.
+Models that have predicted well recently get more influence; drifting models
+get demoted. Pure statistics, no ML.
 
-Brier Score = mean((predicted_prob - actual_outcome)^2)
-Lower = better. Perfect = 0, coin flip = 0.25.
+STATISTICAL CAVEATS (read before trusting these weights)
+--------------------------------------------------------
+1. The per-model score here is NOT a probabilistic Brier score. A real Brier
+   score needs a predicted PROBABILITY and a binary OUTCOME:
+   mean((p - outcome)^2). We only have point temperature forecasts, so we use a
+   *skill-loss* surrogate: mean((1 - skill)^2) where skill = 1 - |err|/5°C. It
+   ranks models by accuracy but is not calibrated and is not comparable to a
+   true Brier score. ``compute_brier_score`` (single probabilistic prediction)
+   IS a real Brier score; the forecast-based one is not.
 
-Adaptive weight = 1 / BrierScore (normalized per city).
-Falls back to static MODEL_BASE_WEIGHT if insufficient data.
+2. Weights are fit IN-SAMPLE. There is no train/test split and no time-forward
+   holdout, the same snapshots are used to score and to weight. Treat adaptive
+   weighting as a heuristic, not a validated edge.
+
+3. MIN_FORECASTS_FOR_ADAPTIVE = 30 is roughly one month of daily forecasts per
+   model, far too few to distinguish genuine skill from noise. The weights are
+   suggestive at best until you have a few hundred resolved forecasts per model.
+
+Falls back to static MODEL_BASE_WEIGHT when data is insufficient.
 """
 from __future__ import annotations
 
@@ -16,7 +30,10 @@ from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
 
-# Minimum forecasts needed before trusting adaptive weights
+# Minimum forecasts needed before trusting adaptive weights.
+# NOTE: 30 ~= one month of daily forecasts per model. This is statistically
+# thin (see module docstring, caveat 3), it gates obviously-insufficient data,
+# not a level that makes the weights trustworthy.
 MIN_FORECASTS_FOR_ADAPTIVE = 30
 
 
@@ -55,28 +72,26 @@ def compute_brier_score(predicted_prob: float, actual_outcome: bool) -> float:
     return (predicted_prob - actual) ** 2
 
 
-def compute_model_brier_from_forecasts(
+def compute_model_skill_loss(
     forecasts: list[dict],
-    threshold_c: float | None = None,
+    max_error_c: float = 5.0,
 ) -> float | None:
-    """Compute Brier score from forecast snapshots.
+    """Skill-loss surrogate from forecast snapshots (NOT a Brier score).
 
-    For temperature forecasts, we convert to a binary outcome:
-    "was the forecast within 1°C of actual?"
-
-    This measures model skill rather than probabilistic calibration.
+    For each snapshot we map the temperature error to a skill in [0, 1]
+    (skill = 1 - |err|/max_error_c, clamped) and return the mean of
+    (1 - skill)^2. Lower = better. This ranks models by recent accuracy but is
+    not a calibrated/probabilistic Brier score, see the module docstring.
 
     Args:
         forecasts: List of dicts with forecast_value and actual_value
-        threshold_c: Error threshold for "correct" (default 1.0°C)
+        max_error_c: Error (°C) that maps to zero skill (default 5.0)
 
     Returns:
-        Brier score (0-1) or None if no data
+        Mean skill-loss in [0, 1], or None if no usable data.
     """
     if not forecasts:
         return None
-    if threshold_c is None:
-        threshold_c = 1.0
 
     scores = []
     for f in forecasts:
@@ -85,16 +100,16 @@ def compute_model_brier_from_forecasts(
         if forecast is None or actual is None:
             continue
         error = abs(forecast - actual)
-        # Binary: was this model within threshold of actual?
-        # Use a soft score: 1 - (error / max_error) clamped
-        max_error = 5.0  # 5°C error = score of 0
-        skill = max(0.0, 1.0 - error / max_error)
-        # Brier-like: (1 - skill)^2 when good, skill^2 when bad
+        skill = max(0.0, 1.0 - error / max_error_c)
         scores.append((1.0 - skill) ** 2)
 
     if not scores:
         return None
     return sum(scores) / len(scores)
+
+
+# Backwards-compatible alias for the old (misleadingly named) function.
+compute_model_brier_from_forecasts = compute_model_skill_loss
 
 
 def compute_mean_absolute_error(forecasts: list[dict]) -> float:
@@ -149,35 +164,46 @@ def get_adaptive_weights(
         if len(forecasts) < MIN_FORECASTS_FOR_ADAPTIVE:
             return None  # Not enough data for any model = fall back
 
-        brier = compute_model_brier_from_forecasts(forecasts)
-        if brier is not None and brier > 0:
-            model_briers[model.value] = brier
+        skill_loss = compute_model_skill_loss(forecasts)
+        # Keep a perfect (0.0) model too, the inverse below floors at 0.01, so a
+        # 0.0 loss becomes the maximum weight rather than being silently dropped.
+        if skill_loss is not None:
+            model_briers[model.value] = skill_loss
             model_counts[model.value] = len(forecasts)
 
     if not model_briers:
         return None
 
-    # Inverse Brier weighting: better models (lower Brier) get higher weight
-    # Blend with static priors to prevent wild swings early
-    raw_weights = {}
-    for model_name, brier in model_briers.items():
-        # Inverse Brier (lower = better = higher weight)
-        inv_brier = 1.0 / max(brier, 0.01)
-        # Blend with static prior (70% adaptive, 30% static)
-        static = MODEL_BASE_WEIGHT.get(
-            next((m for m in models if m.value == model_name), None),
-            1.0,
+    # Inverse skill-loss: better models (lower loss) get higher weight.
+    # We blend the ADAPTIVE distribution with the STATIC-prior distribution. Both
+    # are normalised to sum to 1 first, so "blend" is a true mixture weight. The
+    # previous code mixed a raw 1/loss term (which ranges up to ~100) against a
+    # static prior of ~1, so the adaptive term dominated and the "30% static
+    # prior" was effectively a few percent, not the intended safeguard.
+    inv = {m: 1.0 / max(loss, 0.01) for m, loss in model_briers.items()}
+    inv_total = sum(inv.values())
+    static_raw = {
+        m: MODEL_BASE_WEIGHT.get(
+            next((mm for mm in models if mm.value == m), None), 1.0,
         )
-        count = model_counts.get(model_name, 0)
-        # More data = more trust in adaptive weight
-        blend = min(count / 100, 0.7)  # Max 70% adaptive
-        raw_weights[model_name] = blend * inv_brier + (1 - blend) * static
+        for m in model_briers
+    }
+    static_total = sum(static_raw.values())
+    if inv_total <= 0 or static_total <= 0:
+        return None
 
-    # Normalize
-    total = sum(raw_weights.values())
+    blended: dict[str, float] = {}
+    for model_name in model_briers:
+        a_rel = inv[model_name] / inv_total            # adaptive distribution
+        s_rel = static_raw[model_name] / static_total  # static-prior distribution
+        count = model_counts.get(model_name, 0)
+        blend = min(count / 100, 0.7)                  # more data -> more adaptive
+        blended[model_name] = blend * a_rel + (1 - blend) * s_rel
+
+    total = sum(blended.values())
     if total <= 0:
         return None
-    return {m: w / total for m, w in raw_weights.items()}
+    return {m: w / total for m, w in blended.items()}
 
 
 def run_learning_report(store) -> LearningReport:
@@ -206,7 +232,7 @@ def run_learning_report(store) -> LearningReport:
             count = len(forecasts)
             total_forecasts += count
 
-            brier = compute_model_brier_from_forecasts(forecasts)
+            brier = compute_model_skill_loss(forecasts)
             mae = compute_mean_absolute_error(forecasts)
 
             if count < MIN_FORECASTS_FOR_ADAPTIVE:

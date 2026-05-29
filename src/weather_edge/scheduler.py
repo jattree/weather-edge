@@ -35,7 +35,7 @@ from weather_edge.analysis.pattern_detector import (
 )
 from weather_edge.analysis.resolver import resolve_open_trades
 from weather_edge.config import CITIES, settings
-from weather_edge.fetchers.openmeteo import fetch_city_forecasts
+from weather_edge.fetchers.openmeteo import f_to_c, fetch_city_forecasts
 from weather_edge.fetchers.polymarket import (
     MarketInfo,
     discover_weather_markets,
@@ -53,6 +53,25 @@ def _round_price(price: float) -> float:
     return round(max(0.01, min(0.99, price)), 2)
 
 
+def _bucket_celsius_band(market: MarketInfo) -> tuple[float | None, float | None] | None:
+    """Half-open °C interval [lo_c, hi_c) covered by a market's temperature bucket.
+
+    Uses round-half-up display semantics: an integer label ``L`` in the market's
+    native (displayed) unit covers ``[L-0.5, L+0.5)``. Open-ended buckets return
+    ``None`` for the corresponding edge. Returns ``None`` when the market carries
+    no native integer labels (e.g. snow / "any" markets), so callers fall back to
+    the legacy °C-bound path.
+    """
+    lo = market.bucket_low_int
+    hi = market.bucket_high_int
+    if lo is None and hi is None:
+        return None
+    conv = (lambda x: x) if market.threshold_unit == "celsius" else f_to_c
+    lo_c = conv(lo - 0.5) if lo is not None else None
+    hi_c = conv(hi + 0.5) if hi is not None else None
+    return lo_c, hi_c
+
+
 def compute_model_prob_for_market(market: MarketInfo, consensus) -> float | None:
     """Compute model probability for a market bucket.
 
@@ -64,36 +83,58 @@ def compute_model_prob_for_market(market: MarketInfo, consensus) -> float | None
 
     prob = None
 
+    # Round-half-up display semantics: a market resolves YES when the displayed
+    # (rounded) daily high lands on one of the bucket's integer labels. An
+    # integer label L therefore covers the continuous half-open interval
+    # [L-0.5, L+0.5) in the displayed unit. We integrate the model distribution
+    # over exactly that interval (converted to °C) so probability and resolution
+    # use the SAME boundary convention. The previous code added a flat 1.0 to a
+    # °C-converted bound for Fahrenheit buckets, which mixed units and made every
+    # F range bucket ~0.8°F too wide on the top edge (inflating YES probability).
+    band = _bucket_celsius_band(market)
+
     if market.threshold_dir == "lte":
-        p_gte = get_probability_for_threshold(
-            consensus,
-            market.threshold_high_c or market.threshold_value,
-            "gte",
-        )
-        prob = 1.0 - p_gte
+        if band is not None and band[1] is not None:
+            p_gte_hi = get_probability_for_threshold(consensus, band[1], "gte")
+            prob = 1.0 - p_gte_hi
+        else:
+            p_gte = get_probability_for_threshold(
+                consensus,
+                market.threshold_high_c or market.threshold_value,
+                "gte",
+            )
+            prob = 1.0 - p_gte
 
     elif market.threshold_dir == "range":
-        if (
-        market.threshold_low_c is not None
-        and market.threshold_high_c is not None
-    ):
+        if band is not None:
+            lo_c, hi_c = band
+            p_lo = (
+                get_probability_for_threshold(consensus, lo_c, "gte")
+                if lo_c is not None else 1.0
+            )
+            p_hi = (
+                get_probability_for_threshold(consensus, hi_c, "gte")
+                if hi_c is not None else 0.0
+            )
+            prob = max(0.0, p_lo - p_hi)
+        elif (
+            market.threshold_low_c is not None
+            and market.threshold_high_c is not None
+        ):
+            # Legacy fallback when native integer labels are unavailable.
             p_gte_low = get_probability_for_threshold(
                 consensus, market.threshold_low_c, "gte",
             )
-
-            # Celsius "exact" buckets are parsed as [val, val+1).
-            # threshold_high_c is already val+1.
-            # Fahrenheit "X-Y" buckets cover [X, Y+1).
-            # Adding 1.0 here was doubling Celsius width.
-            width = 0.0 if market.threshold_unit == "celsius" else 1.0
-
             p_gte_high = get_probability_for_threshold(
-                consensus, market.threshold_high_c + width, "gte",
+                consensus, market.threshold_high_c, "gte",
             )
             prob = max(0.0, p_gte_low - p_gte_high)
 
     elif market.threshold_dir == "gte":
-        prob = get_probability_for_threshold(consensus, market.threshold_value, "gte")
+        if band is not None and band[0] is not None:
+            prob = get_probability_for_threshold(consensus, band[0], "gte")
+        else:
+            prob = get_probability_for_threshold(consensus, market.threshold_value, "gte")
 
     elif market.threshold_dir == "any":
         prob = get_probability_for_threshold(consensus, 0.0, "any")

@@ -136,16 +136,23 @@ Winning positions are automatically redeemed via the **Polymarket Relayer API**.
 
 ## Cities (24)
 
+> **Station verification (2026-05):** the ICAO/station codes below are the ones
+> the **temperature-high** markets actually resolve against, confirmed from each
+> market's live Wunderground resolution URL (e.g. NYC→KLGA, London→EGLC,
+> Seoul→RKSI are correct *for temperature*). Note Polymarket's *precipitation*
+> markets for the same cities use different sources (NYC→Central Park/NOAA,
+> London→Heathrow/Met Office, Seoul→KMA), do not reuse these codes for precip.
+
 ### Americas
 | City | ICAO | MAE | Notes |
 |------|------|-----|-------|
 | New York | KLGA | 1.41C | Urban heat island, sea breeze |
 | Chicago | KORD | 1.31C | Lake Michigan breeze |
 | Dallas | KDAL | 1.12C | GFS dry-soil warm bias |
-| Houston | KIAH | 1.12C | Gulf moisture |
+| Houston | KHOU | 1.12C | Hobby, south Houston (NOT KIAH/Bush, see lessons) |
 | Atlanta | KATL | 1.44C | Convective timing |
 | Miami | KMIA | 0.85C | Low variance, warm baseline |
-| Denver | KDEN | 1.83C | Chinook swings, high MAE |
+| Denver | KBKF | 1.83C | Buckley SFB (NOT KDEN/Intl, see lessons) |
 | Seattle | KSEA | 0.97C | Marine layer |
 | Los Angeles | KLAX | 1.45C | June Gloom, Santa Ana |
 | San Francisco | KSFO | 2.13C | Fog, highest MAE |
@@ -165,7 +172,7 @@ Winning positions are automatically redeemed via the **Polymarket Relayer API**.
 |------|------|-----|-------|
 | Seoul | RKSI | 2.08C | High MAE, caution |
 | Tokyo | RJTT | 1.12C | Sea breeze timing |
-| Hong Kong | VHHH | 1.49C | **Resolves from HK Observatory, not VHHH** |
+| Hong Kong | 45005 | 1.49C | **HK Observatory HQ via data.weather.gov.hk, not VHHH** |
 | Shanghai | ZSPD | 1.99C | Coastal UHI, high MAE |
 | Shenzhen | ZGSZ | 1.31C | Pearl River Delta |
 

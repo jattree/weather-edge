@@ -66,26 +66,29 @@ MONTH_MAP = {
     "september": 9, "october": 10, "november": 11, "december": 12,
 }
 
-# Parse bucket ranges from market questions
+# Parse bucket ranges from market questions.
+# NOTE: temperature capture groups use (-?\d+) so subzero winter buckets
+# (e.g. "-2°C or below", "be -5°C on") parse correctly. The unsigned (\d+)
+# version silently dropped the minus sign, resolving "-2°C" as "2°C".
 # "Will the highest temperature in Denver be 49°F or below on March 27?"
 BUCKET_BELOW_PATTERN = re.compile(
-    r"(?:highest|high)\s+temperature\s+in\s+(.+?)\s+be\s+(\d+)\s*°?\s*(F|C)\s+or\s+below",
+    r"(?:highest|high)\s+temperature\s+in\s+(.+?)\s+be\s+(-?\d+)\s*°?\s*(F|C)\s+or\s+below",
     re.IGNORECASE,
 )
 # "Will the highest temperature in Denver be between 50-51°F on March 27?"
 BUCKET_RANGE_PATTERN = re.compile(
-    r"(?:highest|high)\s+temperature\s+in\s+(.+?)\s+be\s+(?:between\s+)?(\d+)\s*[-–]\s*(\d+)\s*°?\s*(F|C)",
+    r"(?:highest|high)\s+temperature\s+in\s+(.+?)\s+be\s+(?:between\s+)?(-?\d+)\s*[-–]\s*(-?\d+)\s*°?\s*(F|C)",
     re.IGNORECASE,
 )
 # "Will the highest temperature in Denver be 60°F or above on March 27?"
 BUCKET_ABOVE_PATTERN = re.compile(
-    r"(?:highest|high)\s+temperature\s+in\s+(.+?)\s+be\s+(\d+)\s*°?\s*(F|C)\s+or\s+above",
+    r"(?:highest|high)\s+temperature\s+in\s+(.+?)\s+be\s+(-?\d+)\s*°?\s*(F|C)\s+or\s+above",
     re.IGNORECASE,
 )
 # "Will the highest temperature in Seoul be 8°C on March 29?"
 # Celsius cities use exact single-value buckets instead of ranges
 BUCKET_EXACT_PATTERN = re.compile(
-    r"(?:highest|high)\s+temperature\s+in\s+(.+?)\s+be\s+(\d+)\s*°\s*(C|F)\s+on\s+",
+    r"(?:highest|high)\s+temperature\s+in\s+(.+?)\s+be\s+(-?\d+)\s*°\s*(C|F)\s+on\s+",
     re.IGNORECASE,
 )
 # Snow pattern
@@ -123,6 +126,13 @@ class MarketInfo:
     threshold_low_c: float | None = None  # For range buckets
     threshold_high_c: float | None = None
     threshold_unit: str = "fahrenheit"
+    # Native-unit integer bucket labels (inclusive; None = open-ended). These
+    # are the source of truth for probability integration: an integer label L
+    # in the displayed (rounded) unit covers the continuous half-open interval
+    # [L-0.5, L+0.5). Carrying the native labels (not the °C-converted bounds)
+    # lets the probability band match the resolver's round-half-up rule exactly.
+    bucket_low_int: float | None = None
+    bucket_high_int: float | None = None
     # Price from Gamma API (avoids CLOB calls)
     yes_price: float = 0.0
     no_price: float = 0.0
@@ -216,6 +226,8 @@ def parse_market_question(
             threshold_low_c=None,
             threshold_high_c=high_c,
             threshold_unit="fahrenheit" if unit.upper() == "F" else "celsius",
+            bucket_low_int=None,
+            bucket_high_int=high_f,
         )
 
     # Try "between X-Y°F" pattern
@@ -248,6 +260,8 @@ def parse_market_question(
             threshold_low_c=low_c,
             threshold_high_c=high_c,
             threshold_unit="fahrenheit" if unit.upper() == "F" else "celsius",
+            bucket_low_int=low_f,
+            bucket_high_int=high_f,
         )
 
     # Try exact single-value: "be 8°C on March 29?"
@@ -278,6 +292,8 @@ def parse_market_question(
             threshold_low_c=val_c,
             threshold_high_c=val_c + 1.0,
             threshold_unit="fahrenheit" if unit.upper() == "F" else "celsius",
+            bucket_low_int=val,
+            bucket_high_int=val,
         )
 
     # Try "X°F or above" pattern
@@ -304,6 +320,8 @@ def parse_market_question(
             threshold_low_c=low_c,
             threshold_high_c=None,
             threshold_unit="fahrenheit" if unit.upper() == "F" else "celsius",
+            bucket_low_int=low_f,
+            bucket_high_int=None,
         )
 
     # Try snow

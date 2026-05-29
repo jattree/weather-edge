@@ -20,17 +20,20 @@ from weather_edge.trading.paper import PaperTrade, PaperTrader
 
 logger = logging.getLogger(__name__)
 
-# Regex to parse temperature ranges from trade descriptions
+# Regex to parse temperature ranges from trade descriptions.
+# Capture groups use (-?\d+) so subzero winter buckets parse correctly, an
+# unsigned (\d+) drops the minus sign and resolves "-2°C or below" as "2°C or
+# below", a guaranteed mis-resolution on every freezing-weather market.
 # Fahrenheit patterns
-RANGE_PATTERN = re.compile(r"(\d+)\s*[-–]\s*(\d+)\s*°?\s*F", re.IGNORECASE)
-BELOW_PATTERN = re.compile(r"(\d+)\s*°?\s*F\s+or\s+below", re.IGNORECASE)
-ABOVE_PATTERN = re.compile(r"(\d+)\s*°?\s*F\s+or\s+above", re.IGNORECASE)
+RANGE_PATTERN = re.compile(r"(-?\d+)\s*[-–]\s*(-?\d+)\s*°?\s*F", re.IGNORECASE)
+BELOW_PATTERN = re.compile(r"(-?\d+)\s*°?\s*F\s+or\s+below", re.IGNORECASE)
+ABOVE_PATTERN = re.compile(r"(-?\d+)\s*°?\s*F\s+or\s+above", re.IGNORECASE)
 # Celsius patterns (Asian/international cities)
-RANGE_PATTERN_C = re.compile(r"(\d+)\s*[-–]\s*(\d+)\s*°\s*C", re.IGNORECASE)
-BELOW_PATTERN_C = re.compile(r"(\d+)\s*°?\s*C\s+or\s+below", re.IGNORECASE)
-ABOVE_PATTERN_C = re.compile(r"(\d+)\s*°?\s*C\s+or\s+above", re.IGNORECASE)
+RANGE_PATTERN_C = re.compile(r"(-?\d+)\s*[-–]\s*(-?\d+)\s*°\s*C", re.IGNORECASE)
+BELOW_PATTERN_C = re.compile(r"(-?\d+)\s*°?\s*C\s+or\s+below", re.IGNORECASE)
+ABOVE_PATTERN_C = re.compile(r"(-?\d+)\s*°?\s*C\s+or\s+above", re.IGNORECASE)
 # Exact Celsius: "be 8°C on" (single-value buckets)
-EXACT_PATTERN_C = re.compile(r"be\s+(\d+)\s*°\s*C\s+on\s+", re.IGNORECASE)
+EXACT_PATTERN_C = re.compile(r"be\s+(-?\d+)\s*°\s*C\s+on\s+", re.IGNORECASE)
 
 # Open-Meteo archive API, always use free tier (customer archive needs Professional plan)
 ARCHIVE_API_URL = "https://archive-api.open-meteo.com/v1/archive"
@@ -155,7 +158,15 @@ async def check_nws_observations(city_id: str, target_date: date) -> float | Non
     # can round(max_f) directly instead of round(c_to_f(max_c)).
     try:
         from weather_edge.fetchers.metar import fetch_station_tmax_both
-        temp_c, temp_f = await fetch_station_tmax_both(city_config.icao, target_date)
+        temp_c, temp_f = await fetch_station_tmax_both(
+            city_config.icao, target_date, station_tz=city_config.timezone,
+        )
+        # Accept Fahrenheit-only readings: if native °C is missing but °F is
+        # present, derive °C rather than silently falling through to the
+        # (wrong-source) Open-Meteo reanalysis. Falling through here was the
+        # exact data-source divergence the project was meant to have eliminated.
+        if temp_c is None and temp_f is not None:
+            temp_c = (temp_f - 32.0) * 5.0 / 9.0
         if temp_c is not None:
             # Store native F max in a module-level cache for the resolver
             _metar_native_f_cache[(city_id, str(target_date))] = temp_f
@@ -227,6 +238,20 @@ async def check_nws_observations(city_id: str, target_date: date) -> float | Non
 def _c_to_f(c: float) -> float:
     """Convert Celsius to Fahrenheit."""
     return c * 9.0 / 5.0 + 32.0
+
+
+def _round_half_up(x: float) -> int:
+    """Round to the nearest integer, ties going up (toward +inf).
+
+    Weather Underground displays temperatures rounded half-up, and Polymarket
+    resolves against that displayed value. Python's built-in round() uses
+    banker's rounding (round-half-to-even), so round(72.5) == 72 while
+    Wunderground shows 73, flipping the resolution bucket on exact-half
+    readings. math.floor(x + 0.5) matches the displayed-value convention for
+    both positive and negative temperatures.
+    """
+    import math
+    return math.floor(x + 0.5)
 
 
 @dataclass
@@ -313,14 +338,14 @@ def actual_falls_in_bucket(
     if bucket.unit == "fahrenheit":
         # Use native F reading when available to avoid conversion rounding
         if native_f is not None:
-            actual = round(native_f)
+            actual = _round_half_up(native_f)
         else:
-            actual = round(_c_to_f(actual_temp_c))
+            actual = _round_half_up(_c_to_f(actual_temp_c))
     elif is_hkg:
         # HK Observatory: 0.1°C precision, no rounding
         actual = actual_temp_c
     else:
-        actual = round(actual_temp_c)
+        actual = _round_half_up(actual_temp_c)
 
     low, high = bucket.low, bucket.high
 
