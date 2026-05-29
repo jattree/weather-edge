@@ -1,0 +1,399 @@
+Pseudo-terminal will not be allocated because stdin is not a terminal.
+** WARNING: connection is not using a post-quantum key exchange algorithm.
+** This session may be vulnerable to "store now, decrypt later" attacks.
+** The server may need to be upgraded. See https://openssh.com/pq.html
+==========================================================================================
+BACKTEST: Layer 2 Station Offset Correction Validation
+==========================================================================================
+
+--- Station Offsets (Layer 2) ---
+  Found offsets for 23 cities
+  atl  (Atlanta       ): avg_offset=-0.965C, MAE=1.239C, n=90
+  bue  (Buenos Aires  ): avg_offset=-1.146C, MAE=1.201C, n=90
+  chi  (Chicago       ): avg_offset=-0.587C, MAE=0.870C, n=90
+  dal  (Dallas        ): avg_offset=-0.332C, MAE=0.904C, n=90
+  den  (Denver        ): avg_offset=+0.124C, MAE=1.194C, n=90
+  hkg  (Hong Kong     ): avg_offset=-1.318C, MAE=1.407C, n=90
+  hou  (Houston       ): avg_offset=-0.728C, MAE=1.001C, n=90
+  lax  (Los Angeles   ): avg_offset=-0.174C, MAE=1.192C, n=90
+  lko  (Lucknow       ): avg_offset=+0.913C, MAE=1.020C, n=90
+  lon  (London        ): avg_offset=-0.534C, MAE=0.677C, n=90
+  mad  (Madrid        ): avg_offset=-0.153C, MAE=0.660C, n=90
+  mia  (Miami         ): avg_offset=-0.751C, MAE=0.829C, n=90
+  muc  (Munich        ): avg_offset=-0.151C, MAE=0.987C, n=90
+  nyc  (New York      ): avg_offset=-0.593C, MAE=0.931C, n=90
+  sea  (Seattle       ): avg_offset=-0.203C, MAE=0.621C, n=90
+  sel  (Seoul         ): avg_offset=-0.466C, MAE=0.777C, n=90
+  sfo  (San Francisco ): avg_offset=+0.304C, MAE=1.006C, n=90
+  sha  (Shanghai      ): avg_offset=-0.174C, MAE=0.626C, n=90
+  szn  (Shenzhen      ): avg_offset=+0.301C, MAE=0.932C, n=90
+  tor  (Toronto       ): avg_offset=-0.541C, MAE=0.797C, n=90
+  tyo  (Tokyo         ): avg_offset=-0.374C, MAE=0.870C, n=90
+  war  (Warsaw        ): avg_offset=-0.479C, MAE=0.730C, n=90
+  wlg  (Wellington    ): avg_offset=-1.029C, MAE=1.160C, n=90
+
+--- Forecast Snapshots (last 7 days, with actuals) ---
+  Found 8015 snapshots with actual values
+  Computed consensus for 95 city-date pairs
+
+--- Resolved Trades (last 7 days) ---
+  Found 180 resolved trades
+
+--- Fetching METAR observations for 5 dates x 24 cities ---
+  atl 2026-03-26: 26.1C (79F) [METAR KATL]
+  atl 2026-03-27: 28.3C (83F) [METAR KATL]
+  atl 2026-03-28: 23.9C (75F) [METAR KATL]
+  atl 2026-03-29: 18.3C (65F) [METAR KATL]
+  atl 2026-03-30: 22.8C (73F) [METAR KATL]
+  aus 2026-03-26: 31.7C (89F) [METAR KAUS]
+  aus 2026-03-27: 30.6C (87F) [METAR KAUS]
+  aus 2026-03-28: 22.2C (72F) [METAR KAUS]
+  aus 2026-03-29: 28.9C (84F) [METAR KAUS]
+  aus 2026-03-30: 31.1C (88F) [METAR KAUS]
+  bue 2026-03-26: 28.0C [METAR SAEZ]
+  bue 2026-03-27: 26.0C [METAR SAEZ]
+  bue 2026-03-28: 27.0C [METAR SAEZ]
+  bue 2026-03-29: 27.0C [METAR SAEZ]
+  bue 2026-03-30: 30.0C [METAR SAEZ]
+  chi 2026-03-26: 20.0C (68F) [METAR KORD]
+  chi 2026-03-27: 6.7C (44F) [METAR KORD]
+  chi 2026-03-28: 8.9C (48F) [METAR KORD]
+  chi 2026-03-29: 17.2C (63F) [METAR KORD]
+  chi 2026-03-30: 26.7C (80F) [METAR KORD]
+  dal 2026-03-26: 29.4C (85F) [METAR KDAL]
+  dal 2026-03-27: 27.8C (82F) [METAR KDAL]
+  dal 2026-03-28: 13.9C (57F) [METAR KDAL]
+  dal 2026-03-29: 27.8C (82F) [METAR KDAL]
+  dal 2026-03-30: 28.3C (83F) [METAR KDAL]
+  den 2026-03-26: 25.6C (78F) [METAR KDEN]
+  den 2026-03-27: 12.2C (54F) [METAR KDEN]
+  den 2026-03-28: 26.1C (79F) [METAR KDEN]
+  den 2026-03-29: 26.1C (79F) [METAR KDEN]
+  den 2026-03-30: 25.6C (78F) [METAR KDEN]
+  hkg 2026-03-26: 28.0C [METAR VHHH]
+  hkg 2026-03-27: 29.0C [METAR VHHH]
+  hkg 2026-03-28: 28.0C [METAR VHHH]
+  hkg 2026-03-29: 28.0C [METAR VHHH]
+  hkg 2026-03-30: 27.0C [METAR VHHH]
+  hou 2026-03-26: 28.9C (84F) [METAR KIAH]
+  hou 2026-03-27: 30.0C (86F) [METAR KIAH]
+  hou 2026-03-28: 25.0C (77F) [METAR KIAH]
+  hou 2026-03-29: 27.8C (82F) [METAR KIAH]
+  hou 2026-03-30: 28.9C (84F) [METAR KIAH]
+  lax 2026-03-26: 21.7C (71F) [METAR KLAX]
+  lax 2026-03-27: 21.1C (70F) [METAR KLAX]
+  lax 2026-03-28: 18.9C (66F) [METAR KLAX]
+  lax 2026-03-29: 22.2C (72F) [METAR KLAX]
+  lax 2026-03-30: 20.6C (69F) [METAR KLAX]
+  lko 2026-03-26: 36.0C [METAR VILK]
+  lko 2026-03-27: 30.0C [METAR VILK]
+  lko 2026-03-28: 33.0C [METAR VILK]
+  lko 2026-03-29: 35.0C [METAR VILK]
+  lko 2026-03-30: 37.0C [METAR VILK]
+  lon 2026-03-26: 10.0C [METAR EGLC]
+  lon 2026-03-27: 12.0C [METAR EGLC]
+  lon 2026-03-28: 11.0C [METAR EGLC]
+  lon 2026-03-29: 11.0C [METAR EGLC]
+  lon 2026-03-30: 12.0C [METAR EGLC]
+  mad 2026-03-26: 17.0C [METAR LEMD]
+  mad 2026-03-27: 18.0C [METAR LEMD]
+  mad 2026-03-28: 15.0C [METAR LEMD]
+  mad 2026-03-29: 13.0C [METAR LEMD]
+  mad 2026-03-30: 19.0C [METAR LEMD]
+  mia 2026-03-26: 28.3C (83F) [METAR KMIA]
+  mia 2026-03-27: 27.8C (82F) [METAR KMIA]
+  mia 2026-03-28: 28.9C (84F) [METAR KMIA]
+  mia 2026-03-29: 25.6C (78F) [METAR KMIA]
+  mia 2026-03-30: 25.6C (78F) [METAR KMIA]
+  muc 2026-03-26: 5.0C [METAR EDDM]
+  muc 2026-03-27: 7.0C [METAR EDDM]
+  muc 2026-03-28: 8.0C [METAR EDDM]
+  muc 2026-03-29: 6.0C [METAR EDDM]
+  muc 2026-03-30: 7.0C [METAR EDDM]
+  nyc 2026-03-26: 23.3C (74F) [METAR LGA]
+  nyc 2026-03-27: 19.4C (67F) [METAR LGA]
+  nyc 2026-03-28: 6.7C (44F) [METAR LGA]
+  nyc 2026-03-29: 11.1C (52F) [METAR LGA]
+  nyc 2026-03-30: 22.2C (72F) [METAR LGA]
+  sea 2026-03-26: 11.1C (52F) [METAR KSEA]
+  sea 2026-03-27: 14.4C (58F) [METAR KSEA]
+  sea 2026-03-28: 12.8C (55F) [METAR KSEA]
+  sea 2026-03-29: 12.2C (54F) [METAR KSEA]
+  sea 2026-03-30: 10.0C (50F) [METAR KSEA]
+  sel 2026-03-26: 9.0C [METAR RKSI]
+  sel 2026-03-27: 13.0C [METAR RKSI]
+  sel 2026-03-28: 11.0C [METAR RKSI]
+  sel 2026-03-29: 17.0C [METAR RKSI]
+  sel 2026-03-30: 18.0C [METAR RKSI]
+  sfo 2026-03-26: 21.7C (71F) [METAR KSFO]
+  sfo 2026-03-27: 25.0C (77F) [METAR KSFO]
+  sfo 2026-03-28: 22.2C (72F) [METAR KSFO]
+  sfo 2026-03-29: 28.3C (83F) [METAR KSFO]
+  sfo 2026-03-30: 25.6C (78F) [METAR KSFO]
+  sha 2026-03-26: 16.0C [METAR ZSPD]
+  sha 2026-03-27: 18.0C [METAR ZSPD]
+  sha 2026-03-28: 21.0C [METAR ZSPD]
+  sha 2026-03-29: 18.0C [METAR ZSPD]
+  sha 2026-03-30: 22.0C [METAR ZSPD]
+  szn 2026-03-26: 27.0C [METAR ZGSZ]
+  szn 2026-03-27: 27.0C [METAR ZGSZ]
+  szn 2026-03-28: 26.0C [METAR ZGSZ]
+  szn 2026-03-29: 27.0C [METAR ZGSZ]
+  szn 2026-03-30: 26.0C [METAR ZGSZ]
+  tor 2026-03-26: 10.0C [METAR CYYZ]
+  tor 2026-03-27: 9.0C [METAR CYYZ]
+  tor 2026-03-28: 1.0C [METAR CYYZ]
+  tor 2026-03-29: 10.0C [METAR CYYZ]
+  tor 2026-03-30: 21.0C [METAR CYYZ]
+  tyo 2026-03-26: 13.0C [METAR RJTT]
+  tyo 2026-03-27: 16.0C [METAR RJTT]
+  tyo 2026-03-28: 18.0C [METAR RJTT]
+  tyo 2026-03-29: 21.0C [METAR RJTT]
+  tyo 2026-03-30: 20.0C [METAR RJTT]
+  war 2026-03-26: 10.0C [METAR EPWA]
+  war 2026-03-27: 10.0C [METAR EPWA]
+  war 2026-03-28: 16.0C [METAR EPWA]
+  war 2026-03-29: 17.0C [METAR EPWA]
+  war 2026-03-30: 11.0C [METAR EPWA]
+  wlg 2026-03-26: 20.0C [METAR NZWN]
+  wlg 2026-03-27: 23.0C [METAR NZWN]
+  wlg 2026-03-28: 22.0C [METAR NZWN]
+  wlg 2026-03-29: 20.0C [METAR NZWN]
+  wlg 2026-03-30: 20.0C [METAR NZWN]
+
+--- Fetching Polymarket Resolutions ---
+  Found 0 resolved weather market outcomes
+  Market map has 1205 entries
+
+==================================================================================================================================
+City  | Date       | Unit |  Raw Fcst | Corrected |  Offset | METAR Obs |  Err Raw | Err Corr | Improved?
+----------------------------------------------------------------------------------------------------------------------------------
+atl   | 2026-03-26 | F   |     78.4F |     80.2F |   +1.7F |     79.0F |     -0.6 |     +1.2 |     WORSE
+atl   | 2026-03-27 | F   |     81.6F |     83.3F |   +1.7F |     83.0F |     -1.4 |     +0.3 |       YES
+atl   | 2026-03-28 | F   |     76.5F |     78.2F |   +1.7F |     75.0F |     +1.5 |     +3.2 |     WORSE
+atl   | 2026-03-30 | F   |     71.6F |     73.3F |   +1.7F |     73.0F |     -1.4 |     +0.3 |       YES
+aus   | 2026-03-26 | F   |     87.0F |     87.0F |   -0.0F |     89.0F |     -2.0 |     -2.0 |      same
+aus   | 2026-03-27 | F   |     85.8F |     85.8F |   -0.0F |     87.0F |     -1.2 |     -1.2 |      same
+aus   | 2026-03-28 | F   |     76.3F |     76.3F |   -0.0F |     72.0F |     +4.3 |     +4.3 |      same
+aus   | 2026-03-29 | F   |     82.3F |     82.3F |   -0.0F |     84.0F |     -1.7 |     -1.7 |      same
+aus   | 2026-03-30 | F   |     85.2F |     85.2F |   -0.0F |     88.0F |     -2.8 |     -2.8 |      same
+bue   | 2026-03-26 | C   |     26.6C |     27.7C |  +1.15C |     28.0C |     -1.4 |     -0.3 |       YES
+bue   | 2026-03-27 | C   |     25.3C |     26.5C |  +1.15C |     26.0C |     -0.7 |     +0.5 |       YES
+bue   | 2026-03-28 | C   |     25.9C |     27.1C |  +1.15C |     27.0C |     -1.1 |     +0.1 |       YES
+bue   | 2026-03-29 | C   |     27.3C |     28.4C |  +1.15C |     27.0C |     +0.3 |     +1.4 |     WORSE
+bue   | 2026-03-30 | C   |     28.2C |     29.3C |  +1.15C |     30.0C |     -1.8 |     -0.7 |       YES
+chi   | 2026-03-26 | F   |     68.3F |     69.3F |   +1.1F |     68.0F |     +0.3 |     +1.3 |     WORSE
+chi   | 2026-03-27 | F   |     44.3F |     45.4F |   +1.1F |     44.0F |     +0.3 |     +1.4 |     WORSE
+chi   | 2026-03-28 | F   |     47.4F |     48.4F |   +1.1F |     48.0F |     -0.6 |     +0.4 |       YES
+chi   | 2026-03-30 | F   |     76.6F |     77.6F |   +1.1F |     80.0F |     -3.4 |     -2.4 |       YES
+dal   | 2026-03-26 | F   |     85.5F |     86.1F |   +0.6F |     85.0F |     +0.5 |     +1.1 |     WORSE
+dal   | 2026-03-27 | F   |     83.5F |     84.1F |   +0.6F |     82.0F |     +1.5 |     +2.1 |     WORSE
+dal   | 2026-03-28 | F   |     60.2F |     60.8F |   +0.6F |     57.0F |     +3.2 |     +3.8 |     WORSE
+dal   | 2026-03-29 | F   |     80.7F |     81.3F |   +0.6F |     82.0F |     -1.3 |     -0.7 |       YES
+dal   | 2026-03-30 | F   |     83.0F |     83.6F |   +0.6F |     83.0F |     -0.0 |     +0.6 |     WORSE
+den   | 2026-03-26 | F   |     84.4F |     84.2F |   -0.2F |     78.0F |     +6.4 |     +6.2 |       YES
+den   | 2026-03-27 | F   |     59.8F |     59.6F |   -0.2F |     54.0F |     +5.8 |     +5.6 |       YES
+den   | 2026-03-28 | F   |     79.1F |     78.8F |   -0.2F |     79.0F |     +0.1 |     -0.2 |     WORSE
+den   | 2026-03-29 | F   |     77.8F |     77.6F |   -0.2F |     79.0F |     -1.2 |     -1.4 |     WORSE
+den   | 2026-03-30 | F   |     78.2F |     78.0F |   -0.2F |     78.0F |     +0.2 |     -0.0 |       YES
+hkg   | 2026-03-26 | C   |     25.5C |     26.8C |  +1.32C |     28.0C |     -2.6 |     -1.2 |       YES
+hkg   | 2026-03-27 | C   |     25.8C |     27.1C |  +1.32C |     29.0C |     -3.2 |     -1.9 |       YES
+hkg   | 2026-03-28 | C   |     25.9C |     27.2C |  +1.32C |     28.0C |     -2.1 |     -0.8 |       YES
+hkg   | 2026-03-30 | C   |     26.2C |     27.5C |  +1.32C |     27.0C |     -0.8 |     +0.5 |       YES
+hou   | 2026-03-26 | F   |     83.0F |     84.3F |   +1.3F |     84.0F |     -1.0 |     +0.3 |       YES
+hou   | 2026-03-27 | F   |     84.8F |     86.1F |   +1.3F |     86.0F |     -1.2 |     +0.1 |       YES
+hou   | 2026-03-28 | F   |     81.8F |     83.1F |   +1.3F |     77.0F |     +4.8 |     +6.1 |     WORSE
+hou   | 2026-03-29 | F   |     82.0F |     83.3F |   +1.3F |     82.0F |     +0.0 |     +1.3 |     WORSE
+hou   | 2026-03-30 | F   |     83.1F |     84.4F |   +1.3F |     84.0F |     -0.9 |     +0.4 |       YES
+lax   | 2026-03-26 | F   |     73.3F |     73.6F |   +0.3F |     71.0F |     +2.3 |     +2.6 |     WORSE
+lax   | 2026-03-27 | F   |     71.9F |     72.3F |   +0.3F |     70.0F |     +1.9 |     +2.3 |     WORSE
+lax   | 2026-03-28 | F   |     71.2F |     71.6F |   +0.3F |     66.0F |     +5.2 |     +5.6 |     WORSE
+lko   | 2026-03-26 | C   |     36.1C |     35.2C |  -0.91C |     36.0C |     +0.1 |     -0.8 |     WORSE
+lko   | 2026-03-27 | C   |     33.3C |     32.4C |  -0.91C |     30.0C |     +3.3 |     +2.4 |       YES
+lko   | 2026-03-28 | C   |     34.1C |     33.1C |  -0.91C |     33.0C |     +1.1 |     +0.1 |       YES
+lon   | 2026-03-26 | C   |     10.0C |     10.5C |  +0.53C |     10.0C |     +0.0 |     +0.5 |     WORSE
+lon   | 2026-03-27 | C   |     12.1C |     12.6C |  +0.53C |     12.0C |     +0.1 |     +0.6 |     WORSE
+lon   | 2026-03-28 | C   |     10.8C |     11.3C |  +0.53C |     11.0C |     -0.2 |     +0.3 |     WORSE
+lon   | 2026-03-30 | C   |     11.8C |     12.4C |  +0.53C |     12.0C |     -0.2 |     +0.4 |     WORSE
+mad   | 2026-03-26 | C   |     16.2C |     16.3C |  +0.15C |     17.0C |     -0.8 |     -0.7 |       YES
+mad   | 2026-03-27 | C   |     17.8C |     17.9C |  +0.15C |     18.0C |     -0.3 |     -0.1 |       YES
+mad   | 2026-03-28 | C   |     16.3C |     16.4C |  +0.15C |     15.0C |     +1.3 |     +1.4 |     WORSE
+mad   | 2026-03-30 | C   |     18.0C |     18.1C |  +0.15C |     19.0C |     -1.0 |     -0.9 |       YES
+mia   | 2026-03-26 | F   |     82.7F |     84.1F |   +1.4F |     83.0F |     -0.3 |     +1.1 |     WORSE
+mia   | 2026-03-27 | F   |     82.6F |     84.0F |   +1.4F |     82.0F |     +0.6 |     +2.0 |     WORSE
+mia   | 2026-03-28 | F   |     84.6F |     85.9F |   +1.4F |     84.0F |     +0.6 |     +1.9 |     WORSE
+mia   | 2026-03-29 | F   |     78.1F |     79.5F |   +1.4F |     78.0F |     +0.1 |     +1.5 |     WORSE
+mia   | 2026-03-30 | F   |     78.6F |     79.9F |   +1.4F |     78.0F |     +0.6 |     +1.9 |     WORSE
+muc   | 2026-03-26 | C   |      5.4C |      5.6C |  +0.15C |      5.0C |     +0.4 |     +0.6 |     WORSE
+muc   | 2026-03-27 | C   |      6.1C |      6.2C |  +0.15C |      7.0C |     -0.9 |     -0.8 |       YES
+muc   | 2026-03-28 | C   |      7.9C |      8.0C |  +0.15C |      8.0C |     -0.1 |     +0.0 |       YES
+nyc   | 2026-03-26 | F   |     70.6F |     71.6F |   +1.1F |     74.0F |     -3.4 |     -2.4 |       YES
+nyc   | 2026-03-27 | F   |     63.3F |     64.4F |   +1.1F |     67.0F |     -3.7 |     -2.6 |       YES
+nyc   | 2026-03-28 | F   |     44.3F |     45.4F |   +1.1F |     44.0F |     +0.3 |     +1.4 |     WORSE
+nyc   | 2026-03-29 | F   |     51.7F |     52.8F |   +1.1F |     52.0F |     -0.3 |     +0.8 |     WORSE
+sea   | 2026-03-26 | F   |     51.6F |     52.0F |   +0.4F |     52.0F |     -0.4 |     +0.0 |       YES
+sea   | 2026-03-27 | F   |     55.2F |     55.5F |   +0.4F |     58.0F |     -2.8 |     -2.5 |       YES
+sea   | 2026-03-28 | F   |     55.5F |     55.9F |   +0.4F |     55.0F |     +0.5 |     +0.9 |     WORSE
+sea   | 2026-03-29 | F   |     55.3F |     55.7F |   +0.4F |     54.0F |     +1.3 |     +1.7 |     WORSE
+sea   | 2026-03-30 | F   |     47.4F |     47.7F |   +0.4F |     50.0F |     -2.6 |     -2.3 |       YES
+sel   | 2026-03-26 | C   |     10.5C |     11.0C |  +0.47C |      9.0C |     +1.5 |     +2.0 |     WORSE
+sel   | 2026-03-27 | C   |     11.2C |     11.6C |  +0.47C |     13.0C |     -1.8 |     -1.4 |       YES
+sel   | 2026-03-28 | C   |     11.2C |     11.7C |  +0.47C |     11.0C |     +0.2 |     +0.7 |     WORSE
+sfo   | 2026-03-26 | F   |     67.4F |     66.9F |   -0.5F |     71.0F |     -3.6 |     -4.1 |     WORSE
+sfo   | 2026-03-27 | F   |     72.9F |     72.3F |   -0.5F |     77.0F |     -4.1 |     -4.7 |     WORSE
+sfo   | 2026-03-28 | F   |     69.7F |     69.2F |   -0.5F |     72.0F |     -2.3 |     -2.8 |     WORSE
+sha   | 2026-03-26 | C   |     14.1C |     14.3C |  +0.17C |     16.0C |     -1.9 |     -1.7 |       YES
+sha   | 2026-03-27 | C   |     15.2C |     15.4C |  +0.17C |     18.0C |     -2.8 |     -2.6 |       YES
+sha   | 2026-03-28 | C   |     17.3C |     17.4C |  +0.17C |     21.0C |     -3.7 |     -3.6 |       YES
+szn   | 2026-03-26 | C   |     26.8C |     26.5C |  -0.30C |     27.0C |     -0.2 |     -0.5 |     WORSE
+szn   | 2026-03-27 | C   |     27.2C |     26.9C |  -0.30C |     27.0C |     +0.2 |     -0.1 |       YES
+szn   | 2026-03-28 | C   |     26.8C |     26.4C |  -0.30C |     26.0C |     +0.8 |     +0.4 |       YES
+szn   | 2026-03-30 | C   |     27.5C |     27.2C |  -0.30C |     26.0C |     +1.5 |     +1.2 |       YES
+tor   | 2026-03-26 | C   |      9.9C |     10.5C |  +0.54C |     10.0C |     -0.1 |     +0.5 |     WORSE
+tor   | 2026-03-27 | C   |      7.6C |      8.2C |  +0.54C |      9.0C |     -1.4 |     -0.8 |       YES
+tor   | 2026-03-28 | C   |      2.0C |      2.6C |  +0.54C |      1.0C |     +1.0 |     +1.6 |     WORSE
+tyo   | 2026-03-26 | C   |     12.8C |     13.1C |  +0.37C |     13.0C |     -0.2 |     +0.1 |       YES
+tyo   | 2026-03-27 | C   |     16.2C |     16.6C |  +0.37C |     16.0C |     +0.2 |     +0.6 |     WORSE
+tyo   | 2026-03-28 | C   |     17.3C |     17.7C |  +0.37C |     18.0C |     -0.7 |     -0.3 |       YES
+tyo   | 2026-03-30 | C   |     18.4C |     18.7C |  +0.37C |     20.0C |     -1.6 |     -1.3 |       YES
+war   | 2026-03-26 | C   |      9.1C |      9.5C |  +0.48C |     10.0C |     -0.9 |     -0.5 |       YES
+war   | 2026-03-27 | C   |      9.8C |     10.3C |  +0.48C |     10.0C |     -0.2 |     +0.3 |     WORSE
+war   | 2026-03-28 | C   |     14.3C |     14.8C |  +0.48C |     16.0C |     -1.7 |     -1.2 |       YES
+war   | 2026-03-30 | C   |     10.5C |     11.0C |  +0.48C |     11.0C |     -0.5 |     -0.0 |       YES
+wlg   | 2026-03-26 | C   |     20.1C |     21.1C |  +1.03C |     20.0C |     +0.1 |     +1.1 |     WORSE
+wlg   | 2026-03-27 | C   |     21.1C |     22.1C |  +1.03C |     23.0C |     -1.9 |     -0.9 |       YES
+wlg   | 2026-03-28 | C   |     19.8C |     20.8C |  +1.03C |     22.0C |     -2.2 |     -1.2 |       YES
+----------------------------------------------------------------------------------------------------------------------------------
+
+======================================================================
+SUMMARY STATISTICS
+======================================================================
+  Forecast-Observation pairs analyzed: 95
+  Raw mean bias:       -0.31
+  Corrected mean bias: +0.24
+  Raw MAE:             1.45
+  Corrected MAE:       1.46
+  MAE improvement:     -0.01 (-0.7%)
+
+  Correction helped:  47/95 (49%)
+  Correction same:    5/95 (5%)
+  Correction worse:   43/95 (45%)
+
+  Bucket accuracy fixes: 12/95 (correction moved forecast into correct bucket)
+
+======================================================================
+RESOLVED TRADE ANALYSIS
+======================================================================
+  Total resolved trades: 180
+  Won: 85, Lost: 95, Win rate: 47.2%
+  Total P&L: $+8470.70
+
+  City  | Won | Lost |  Win% |      P&L | Sample Trade
+  ------------------------------------------------------------
+  atl   |   4 |    7 |   36% | $+156.32 | [PENNY] Will the highest temperature in 
+  aus   |   5 |    3 |   62% | $+218.56 | [TODAY] Will the highest temperature in 
+  bue   |   3 |    3 |   50% | $ +38.54 | [TOMORROW] Will the highest temperature 
+  chi   |   3 |    8 |   27% | $-174.99 | [PENNY] Will the highest temperature in 
+  dal   |   5 |    4 |   56% | $+941.89 | [PENNY] Will the highest temperature in 
+  den   |   7 |    7 |   50% | $ +25.22 | [TODAY] Will the highest temperature in 
+  hkg   |   6 |    3 |   67% | $+1394.32 | [TOMORROW] Will the highest temperature 
+  hou   |   3 |   12 |   20% | $-333.75 | [TODAY] Will the highest temperature in 
+  lko   |   3 |    3 |   50% | $ -22.29 | [TOMORROW] Will the highest temperature 
+  lon   |   6 |    1 |   86% | $+1256.60 | [TOMORROW] Will the highest temperature 
+  mad   |   7 |    3 |   70% | $+729.03 | [PENNY] Will the highest temperature in 
+  mia   |  10 |   14 |   42% | $+933.61 | [TOMORROW] Will the highest temperature 
+  muc   |   1 |    2 |   33% | $+708.55 | [TODAY] Will the highest temperature in 
+  nyc   |   1 |   11 |    8% | $-373.15 | [TOMORROW] Will the highest temperature 
+  sea   |  14 |   12 |   54% | $+1280.88 | [TOMORROW] Will the highest temperature 
+  szn   |   2 |    0 |  100% | $+659.07 | [TOMORROW] Will the highest temperature 
+  tor   |   1 |    0 |  100% | $+571.58 | [TOMORROW] Will the highest temperature 
+  tyo   |   3 |    0 |  100% | $ +96.44 | [TOMORROW] Will the highest temperature 
+  war   |   0 |    1 |    0% | $ -20.00 | [PENNY] Will the highest temperature in 
+  wlg   |   1 |    1 |   50% | $+384.27 | [PENNY] Will the highest temperature in 
+
+======================================================================
+PER-CITY OFFSET IMPACT (would correction have changed outcomes?)
+======================================================================
+  atl   (Atlanta       ): offset=-0.965C, RAW MAE=0.67C, CORR MAE=0.70C, delta=-0.03C (-4%) [NEUTRAL]
+  bue   (Buenos Aires  ): offset=-1.146C, RAW MAE=1.05C, CORR MAE=0.58C, delta=+0.46C (+44%) [HELPS]
+  chi   (Chicago       ): offset=-0.587C, RAW MAE=0.64C, CORR MAE=0.76C, delta=-0.12C (-18%) [HURTS]
+  dal   (Dallas        ): offset=-0.332C, RAW MAE=0.72C, CORR MAE=0.92C, delta=-0.20C (-27%) [HURTS]
+  den   (Denver        ): offset=+0.124C, RAW MAE=1.51C, CORR MAE=1.48C, delta=+0.04C (+2%) [NEUTRAL]
+  hkg   (Hong Kong     ): offset=-1.318C, RAW MAE=2.17C, CORR MAE=1.10C, delta=+1.07C (+49%) [HELPS]
+  hou   (Houston       ): offset=-0.728C, RAW MAE=0.88C, CORR MAE=0.93C, delta=-0.04C (-5%) [NEUTRAL]
+  lax   (Los Angeles   ): offset=-0.174C, RAW MAE=1.75C, CORR MAE=1.92C, delta=-0.17C (-10%) [HURTS]
+  lko   (Lucknow       ): offset=+0.913C, RAW MAE=1.48C, CORR MAE=1.10C, delta=+0.38C (+26%) [HELPS]
+  lon   (London        ): offset=-0.534C, RAW MAE=0.11C, CORR MAE=0.46C, delta=-0.34C (-302%) [HURTS]
+  mad   (Madrid        ): offset=-0.153C, RAW MAE=0.85C, CORR MAE=0.77C, delta=+0.08C (+9%) [HELPS]
+  mia   (Miami         ): offset=-0.751C, RAW MAE=0.24C, CORR MAE=0.93C, delta=-0.69C (-287%) [HURTS]
+  muc   (Munich        ): offset=-0.151C, RAW MAE=0.50C, CORR MAE=0.45C, delta=+0.05C (+10%) [NEUTRAL]
+  nyc   (New York      ): offset=-0.593C, RAW MAE=1.08C, CORR MAE=1.00C, delta=+0.08C (+7%) [HELPS]
+  sea   (Seattle       ): offset=-0.203C, RAW MAE=0.85C, CORR MAE=0.81C, delta=+0.04C (+5%) [NEUTRAL]
+  sel   (Seoul         ): offset=-0.466C, RAW MAE=1.18C, CORR MAE=1.34C, delta=-0.16C (-13%) [HURTS]
+  sfo   (San Francisco ): offset=+0.304C, RAW MAE=1.85C, CORR MAE=2.15C, delta=-0.30C (-16%) [HURTS]
+  sha   (Shanghai      ): offset=-0.174C, RAW MAE=2.82C, CORR MAE=2.64C, delta=+0.17C (+6%) [HELPS]
+  szn   (Shenzhen      ): offset=+0.301C, RAW MAE=0.66C, CORR MAE=0.55C, delta=+0.12C (+18%) [HELPS]
+  tor   (Toronto       ): offset=-0.541C, RAW MAE=0.83C, CORR MAE=0.95C, delta=-0.12C (-15%) [HURTS]
+  tyo   (Tokyo         ): offset=-0.374C, RAW MAE=0.69C, CORR MAE=0.57C, delta=+0.12C (+17%) [HELPS]
+  war   (Warsaw        ): offset=-0.479C, RAW MAE=0.82C, CORR MAE=0.49C, delta=+0.34C (+41%) [HELPS]
+  wlg   (Wellington    ): offset=-1.029C, RAW MAE=1.40C, CORR MAE=1.06C, delta=+0.34C (+24%) [HELPS]
+
+======================================================================
+ALL FORECAST SNAPSHOT DATA (DB actual_value vs forecast)
+======================================================================
+  City  | Date       | Models | Avg Fcst |   Actual |  Raw Err |  Offset | Corr Err
+  --------------------------------------------------------------------------------
+  atl   | 2026-03-30 |    512 |    22.01 |    22.50 |    -0.49 |  +0.965 |    +0.47
+  aus   | 2026-03-30 |    512 |    29.58 |    29.20 |    +0.38 |  -0.000 |    +0.38
+  bue   | 2026-03-30 |    384 |    28.20 |    28.70 |    -0.50 |  +1.146 |    +0.65
+  chi   | 2026-03-30 |    512 |    24.77 |    26.20 |    -1.43 |  +0.587 |    -0.84
+  dal   | 2026-03-30 |    512 |    28.33 |    29.10 |    -0.77 |  +0.332 |    -0.44
+  den   | 2026-03-30 |    512 |    25.67 |    26.20 |    -0.53 |  -0.124 |    -0.65
+  hkg   | 2026-03-30 |    276 |    26.19 |    26.00 |    +0.19 |  +1.318 |    +1.51
+  hou   | 2026-03-30 |    512 |    28.40 |    29.40 |    -1.00 |  +0.728 |    -0.27
+  lon   | 2026-03-30 |    427 |    11.83 |    11.30 |    +0.53 |  +0.534 |    +1.06
+  mad   | 2026-03-30 |    354 |    17.97 |    18.90 |    -0.93 |  +0.153 |    -0.78
+  mia   | 2026-03-30 |    512 |    25.87 |    25.10 |    +0.77 |  +0.751 |    +1.52
+  sea   | 2026-03-30 |    512 |     8.53 |     8.60 |    -0.07 |  +0.203 |    +0.13
+  szn   | 2026-03-30 |    276 |    27.49 |    28.30 |    -0.81 |  -0.301 |    -1.11
+  tyo   | 2026-03-30 |    270 |    18.36 |    18.20 |    +0.16 |  +0.374 |    +0.53
+  war   | 2026-03-30 |    354 |    10.48 |    10.60 |    -0.12 |  +0.479 |    +0.36
+  aus   | 2026-03-29 |     72 |    27.94 |    28.00 |    -0.06 |  -0.000 |    -0.06
+  bue   | 2026-03-29 |     54 |    27.28 |    26.50 |    +0.78 |  +1.146 |    +1.93
+  dal   | 2026-03-29 |     72 |    27.04 |    27.60 |    -0.56 |  +0.332 |    -0.23
+  den   | 2026-03-29 |     72 |    25.46 |    26.00 |    -0.54 |  -0.124 |    -0.66
+  hou   | 2026-03-29 |     72 |    27.80 |    28.80 |    -1.00 |  +0.728 |    -0.27
+  mia   | 2026-03-29 |     72 |    25.63 |    26.00 |    -0.37 |  +0.751 |    +0.38
+  nyc   | 2026-03-29 |     72 |    10.95 |    10.90 |    +0.05 |  +0.593 |    +0.64
+  sea   | 2026-03-29 |     72 |    12.94 |     8.30 |    +4.64 |  +0.203 |    +4.84
+  atl   | 2026-03-28 |     16 |    24.70 |    24.70 |    -0.00 |  +0.965 |    +0.96
+  aus   | 2026-03-28 |     16 |    24.64 |    24.10 |    +0.54 |  -0.000 |    +0.54
+  bue   | 2026-03-28 |     12 |    25.93 |    25.50 |    +0.43 |  +1.146 |    +1.58
+  chi   | 2026-03-28 |     16 |     8.54 |     7.60 |    +0.94 |  +0.587 |    +1.53
+  dal   | 2026-03-28 |     16 |    15.65 |    15.90 |    -0.25 |  +0.332 |    +0.08
+  den   | 2026-03-28 |     16 |    26.15 |    27.00 |    -0.85 |  -0.124 |    -0.97
+  hkg   | 2026-03-28 |     12 |    25.92 |    25.40 |    +0.52 |  +1.318 |    +1.84
+  hou   | 2026-03-28 |     16 |    27.69 |    27.50 |    +0.19 |  +0.728 |    +0.92
+  lax   | 2026-03-28 |     16 |    21.80 |    20.80 |    +1.00 |  +0.174 |    +1.17
+  lko   | 2026-03-28 |     12 |    34.05 |    33.80 |    +0.25 |  -0.913 |    -0.66
+  lon   | 2026-03-28 |     14 |    10.79 |    10.40 |    +0.39 |  +0.534 |    +0.92
+  mad   | 2026-03-28 |     12 |    16.28 |    17.10 |    -0.82 |  +0.153 |    -0.67
+  mia   | 2026-03-28 |     16 |    29.20 |    28.90 |    +0.30 |  +0.751 |    +1.05
+  muc   | 2026-03-28 |     12 |     7.85 |     7.50 |    +0.35 |  +0.151 |    +0.50
+  nyc   | 2026-03-28 |     16 |     6.85 |     6.50 |    +0.35 |  +0.593 |    +0.94
+  sea   | 2026-03-28 |     16 |    13.06 |    13.90 |    -0.84 |  +0.203 |    -0.64
+  sel   | 2026-03-28 |     14 |    11.20 |    18.00 |    -6.80 |  +0.466 |    -6.33
+  sfo   | 2026-03-28 |     16 |    20.95 |    24.90 |    -3.95 |  -0.304 |    -4.25
+  sha   | 2026-03-28 |     12 |    17.27 |    19.50 |    -2.23 |  +0.174 |    -2.06
+  szn   | 2026-03-28 |     12 |    26.75 |    28.80 |    -2.05 |  -0.301 |    -2.35
+  tor   | 2026-03-28 |     16 |     2.03 |     1.10 |    +0.92 |  +0.541 |    +1.47
+  tyo   | 2026-03-28 |     12 |    17.30 |    17.10 |    +0.20 |  +0.374 |    +0.57
+  war   | 2026-03-28 |     12 |    14.35 |    14.40 |    -0.05 |  +0.479 |    +0.43
+  wlg   | 2026-03-28 |     12 |    19.77 |    20.40 |    -0.63 |  +1.029 |    +0.40
+  atl   | 2026-03-27 |     16 |    27.54 |    28.60 |    -1.06 |  +0.965 |    -0.10
+  aus   | 2026-03-27 |     16 |    29.90 |    29.00 |    +0.90 |  -0.000 |    +0.90
+  bue   | 2026-03-27 |     12 |    25.33 |    25.40 |    -0.07 |  +1.146 |    +1.08
+
+======================================================================
+DONE. Backtest complete.
+======================================================================
