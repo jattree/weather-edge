@@ -7,7 +7,7 @@ with the crowd's price.
 
 > ### ⚠️ Status: sunset. This bot lost money. Read before forking.
 >
-> Over a live proving run it went **$210 → $51.61 (−75.4%)** and was retired.
+> Over a live proving run it went **$210 → $51.61 (-75.4%)** and was retired.
 > It is published as **(1) a cautionary tale** about how a clever architecture
 > can hide a non-existent edge, and **(2) a clean reference implementation** of
 > the moving parts (multi-model consensus, METAR-faithful resolution, dual-AI
@@ -55,20 +55,20 @@ Twelve fixes (commit `5e07054`), each with regression tests:
 
 ## How it works
 
-1. Fetch forecasts from 6–8 weather models per city via the Open-Meteo API.
+1. Fetch forecasts from 6-8 weather models per city via the Open-Meteo API.
 2. Apply **METAR-calibrated bias corrections** from hindcast snapshots.
 3. Apply EMOS calibration (spread inflation, bias shrinkage, variance floor).
 4. Compute a **Brier-weighted consensus** (better-scoring models get more weight).
 5. Detect bust-causing weather patterns (Chinook, Foehn, marine layer, …).
 6. Discover active Polymarket weather markets via the Gamma API.
-7. **Claude (Meteorologist)**, physical plausibility, market-blind.
-8. **Gemini (Risk Quant)**, execution cost / order-book risk, weather-blind.
+7. **Claude (Meteorologist)**: physical plausibility, market-blind.
+8. **Gemini (Risk Quant)**: execution cost / order-book risk, weather-blind.
    Both AI calls run in parallel.
 9. Compute edge against market prices; apply risk controls (circuit breaker,
    correlation limits, model-agreement gate).
 10. Resolve trades against **IEM METAR observations** (the Wunderground mirror).
 11. Auto-redeem winners via the **Polymarket Relayer** (gasless).
-12. Persist everything to SQL, trades, forecasts, AI decisions, fills.
+12. Persist everything to SQL: trades, forecasts, AI decisions, fills.
 
 ## Resolution source (the most important detail)
 
@@ -128,7 +128,7 @@ core pipeline, tests, and backtester run without them. Trading is **paper by
 default**; live execution requires `[execution]` deps and wallet credentials and
 is **not recommended** (see the status banner).
 
-### The backtester is honest now, read its caveats
+### The backtester is honest now: read its caveats
 
 There is **no historical Polymarket order-book data** in this repo, so the
 backtester cannot produce a real track record. It reports two separate things:
@@ -141,7 +141,7 @@ track record.
 
 ## Dashboard
 
-A FastAPI monitoring dashboard (`src/weather_edge/dashboard/`) shows live state,
+A FastAPI monitoring dashboard (`src/weather_edge/dashboard/`) shows live state:
 consensus forecasts, open positions, P&L, and the Claude/Gemini decisions.
 
 ```bash
@@ -205,7 +205,7 @@ ICAO/station codes are the ones the **temperature-high** markets resolve against
 
 ## Lessons (for the next person)
 
-1. **Verify the resolution source end-to-end before depositing a dollar**, the
+1. **Verify the resolution source end-to-end before depositing a dollar**: the
    exact station, exact rounding, exact URL, for *every* market, not one.
 2. **Backtests without fees, spread, slippage, fill probability and market impact
    are fiction.** You will tune to beat the liar, not the market.
