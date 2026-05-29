@@ -5,6 +5,7 @@ import asyncio
 import json
 import logging
 import sys
+import time
 from datetime import date, datetime, timedelta, timezone
 
 # Ensure all loggers output to stdout so systemd/journald captures them
@@ -17,8 +18,8 @@ logging.basicConfig(
 from pathlib import Path
 
 import httpx
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from weather_edge.analysis.claude_reasoning import clear_decisions, get_decisions
@@ -42,6 +43,87 @@ app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="stat
 
 # Read the HTML template once at startup (it's entirely client-side JS, no server templating needed)
 _index_html = (BASE_DIR / "templates" / "index.html").read_text()
+
+# ── CSRF protection ──────────────────────────────────────────────────────
+# The dashboard ships without auth (single-operator, localhost-bound by
+# default). Without a CSRF backstop, any page the operator visits in the same
+# browser could drive money-moving endpoints (/api/close-all, /api/start, the
+# kill switch, /api/backtest, etc.) via a simple cross-origin POST. The browser
+# attaches cookies/sends the request even though it can't read the response.
+# Defense: for state-changing methods, require that the browser-supplied Origin
+# (or Referer) matches the dashboard's own Host. Same-origin dashboard requests
+# match; cross-origin attacker pages don't. Non-browser clients (curl, the CLI)
+# send no Origin and are allowed through.
+_CSRF_SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS", "TRACE"})
+
+
+def _host_only(netloc_or_host: str) -> str:
+    """Strip the port from a netloc/Host value, handling IPv6 literals."""
+    h = netloc_or_host.strip().lower()
+    if h.startswith("["):  # [::1]:8000
+        return h[1:].split("]", 1)[0]
+    return h.rsplit(":", 1)[0] if ":" in h else h
+
+
+def _allowed_hosts() -> set[str]:
+    """Host names the dashboard will answer to.
+
+    Defaults to localhost only (the default bind). Configurable via
+    WE_DASHBOARD_ALLOWED_HOSTS (comma-separated) for operators who bind
+    off-localhost behind their own auth/proxy. A specific WE_DASHBOARD_HOST
+    bind is trusted automatically (but never a 0.0.0.0/:: wildcard).
+    """
+    import os
+
+    hosts = {h.strip().lower() for h in os.environ.get("WE_DASHBOARD_ALLOWED_HOSTS", "").split(",") if h.strip()}
+    if not hosts:
+        hosts = {"127.0.0.1", "localhost", "::1"}
+    bind = os.environ.get("WE_DASHBOARD_HOST", "").strip().lower()
+    if bind and bind not in {"0.0.0.0", "::"}:
+        hosts.add(bind)
+    return hosts
+
+
+def _host_allowed(host_header: str) -> bool:
+    """True if the request Host is one we expect. Defeats DNS rebinding."""
+    return bool(host_header) and _host_only(host_header) in _allowed_hosts()
+
+
+def _origin_matches_host(origin_or_referer: str | None, host: str) -> bool:
+    """True if an Origin/Referer URL's host:port equals the request Host header."""
+    if not origin_or_referer or not host:
+        return False
+    from urllib.parse import urlsplit
+
+    return urlsplit(origin_or_referer).netloc.lower() == host.lower()
+
+
+@app.middleware("http")
+async def csrf_guard(request: Request, call_next):
+    host = request.headers.get("host", "")
+    # Host allowlist applies to ALL requests: defeats DNS rebinding, where an
+    # attacker domain rebinds to 127.0.0.1 so Origin and Host both read the
+    # attacker's name (passing an Origin==Host check) yet the request lands on
+    # the localhost dashboard. Also stops the read-side leak (GET /api/state).
+    if not _host_allowed(host):
+        logger.warning("CSRF BLOCK: unexpected Host %r on %s %s", host, request.method, request.url.path)
+        return JSONResponse(status_code=403, content={"error": "host not allowed"})
+    if request.method not in _CSRF_SAFE_METHODS:
+        # Prefer Origin (sent on all cross-origin + same-origin non-GET fetches);
+        # fall back to Referer for form posts that omit Origin.
+        source = request.headers.get("origin")
+        if source is None:
+            source = request.headers.get("referer")
+        if source is not None and not _origin_matches_host(source, host):
+            logger.warning(
+                "CSRF BLOCK: %s %s from cross-origin %r (host=%r)",
+                request.method, request.url.path, source, host,
+            )
+            return JSONResponse(
+                status_code=403,
+                content={"error": "cross-origin request rejected"},
+            )
+    return await call_next(request)
 
 # Global state
 paper_trader = PersistentPaperTrader(bankroll=settings.bankroll)
@@ -991,12 +1073,31 @@ async def api_state():
     return state
 
 
+# Operator-triggered refresh rate limit: data refreshes every time, but the
+# PAID Claude+Gemini reasoning runs at most once per cooldown window so a flood
+# of /api/refresh or WS 'refresh' requests can't drain LLM budget.
+_AI_REFRESH_COOLDOWN_SEC = 60.0
+_last_ai_refresh_monotonic = -_AI_REFRESH_COOLDOWN_SEC  # allow the first refresh to run AI
+
+
+async def _user_triggered_refresh() -> None:
+    """Run a dashboard cycle on operator demand, rate-limiting the paid AI step."""
+    global _last_ai_refresh_monotonic
+    now = time.monotonic()
+    run_ai = (now - _last_ai_refresh_monotonic) >= _AI_REFRESH_COOLDOWN_SEC
+    if run_ai:
+        _last_ai_refresh_monotonic = now
+    else:
+        logger.info("Refresh: AI reasoning on cooldown, refreshing data only")
+    await run_dashboard_cycle(run_ai=run_ai)
+
+
 @app.post("/api/refresh")
 async def api_refresh():
     """Trigger an immediate data refresh (runs in background)."""
     async def _safe_refresh():
         try:
-            await run_dashboard_cycle()
+            await _user_triggered_refresh()
         except Exception:
             logger.exception("Manual refresh cycle failed")
     asyncio.create_task(_safe_refresh())
@@ -1105,9 +1206,20 @@ async def api_close_all():
                 asset_id = pos.get("asset_id", "")
                 shares = pos.get("total_shares", 0)
                 city = (pos.get("city_id") or "").upper()
-                # Sell at market price (use current YES price from discovery)
+                # Sell at the live market mark from discovery. If we have no
+                # current price for this position, skip it rather than dumping
+                # at an arbitrary 0.5 fallback. Blind-selling the whole book at
+                # an unvalidated price was the worst-case slippage hole. Pass
+                # reference_price so the executor's slippage guard is active
+                # (matches the emergency-exit caller).
                 condition_id = pos.get("condition_id", "")
-                sell_price = current_prices.get(condition_id, 0.5)
+                sell_price = current_prices.get(condition_id)
+                if sell_price is None:
+                    logger.warning(
+                        "CLOSE ALL: no live price for %s (%s), skipping, "
+                        "close it manually", city, condition_id,
+                    )
+                    continue
                 if asset_id and shares >= 5:
                     try:
                         result = await live_executor.place_sell_order(
@@ -1117,6 +1229,7 @@ async def api_close_all():
                             market_id=condition_id,
                             city_id=city,
                             description="CLOSE ALL",
+                            reference_price=sell_price,
                             force_taker=True,
                         )
                         if result:
@@ -1185,10 +1298,25 @@ async def api_weather_alerts():
 
 @app.post("/api/backtest")
 async def api_backtest(days: int = 7, cities: str | None = None):
-    """Run a historical backtest. Optional query params: days (default 7), cities (comma-separated)."""
+    """Run a historical backtest. Optional query params: days (default 7), cities (comma-separated).
+
+    days is clamped to 1..90 and cities are validated against the City enum to
+    prevent unbounded fan-out of external weather-API calls.
+    """
     from weather_edge.analysis.backtester import run_backtest
 
-    city_list = [c.strip() for c in cities.split(",")] if cities else None
+    if not 1 <= days <= 90:
+        raise HTTPException(status_code=400, detail="days must be between 1 and 90")
+
+    city_list: list[str] | None = None
+    if cities:
+        requested = [c.strip().lower() for c in cities.split(",") if c.strip()]
+        valid = {c.value for c in City}
+        unknown = [c for c in requested if c not in valid]
+        if unknown:
+            raise HTTPException(status_code=400, detail=f"unknown cities: {', '.join(unknown)}")
+        city_list = requested
+
     result = await run_backtest(days=days, cities=city_list)
     return result
 
@@ -1313,6 +1441,15 @@ async def api_update_settings(body: dict):
 
 @app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket):
+    # CSRF: reject unexpected-Host (DNS rebinding) and cross-origin handshakes
+    # so a malicious page can't open a socket and send 'refresh' to trigger
+    # AI-reasoning cycles (paid API spend).
+    ws_host = ws.headers.get("host", "")
+    origin = ws.headers.get("origin")
+    if not _host_allowed(ws_host) or (origin is not None and not _origin_matches_host(origin, ws_host)):
+        logger.warning("CSRF BLOCK (ws): origin=%r host=%r", origin, ws_host)
+        await ws.close(code=1008)  # policy violation
+        return
     await ws.accept()
     connected_websockets.append(ws)
     # Send current state immediately
@@ -1322,7 +1459,7 @@ async def websocket_endpoint(ws: WebSocket):
             # Keep connection alive, listen for commands
             data = await ws.receive_text()
             if data == "refresh":
-                await run_dashboard_cycle()
+                await _user_triggered_refresh()
     except WebSocketDisconnect:
         if ws in connected_websockets:
             connected_websockets.remove(ws)
