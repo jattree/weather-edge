@@ -1,238 +1,208 @@
 # Weather Edge
 
-Automated weather prediction market trading system for Polymarket. Exploits the gap between multi-model weather forecast consensus and crowd-implied market prices.
+An automated trading bot for Polymarket's daily-high-temperature markets. It
+bias-corrects a multi-model weather forecast consensus against the same METAR
+station data Polymarket resolves on, and bets where its probability disagrees
+with the crowd's price.
 
-## Current Strategy (2026-04-05)
+> ### ⚠️ Status: sunset. This bot lost money. Read before forking.
+>
+> Over a live proving run it went **$210 → $51.61 (−75.4%)** and was retired.
+> It is published as **(1) a cautionary tale** about how a clever architecture
+> can hide a non-existent edge, and **(2) a clean reference implementation** of
+> the moving parts (multi-model consensus, METAR-faithful resolution, dual-AI
+> review, gasless redemption, a paper-trading + backtest harness).
+>
+> **Do not point real money at it.** The forecast edge was never proven. See
+> [`OPEN_SOURCE_ARCHIVE.md`](OPEN_SOURCE_ARCHIVE.md) for the full post-mortem.
 
-**One-bet-per-city + tail-No grind.** Picks the single best bet per city per date. Prioritises high-probability No bets on unlikely temperatures over speculative Yes bets. Max 6 new trades per cycle. Model agreement gate skips cities with std > 2.0°C.
+---
 
-### Resolution Source: Weather Underground (METAR)
+## Why it failed (the short version)
 
-Polymarket resolves weather markets against **Wunderground displayed values** from specific airport METAR stations. Our bias correction and trade resolution are calibrated against the same source via **IEM ASOS** (Iowa Environmental Mesonet), which serves the identical raw METAR data.
+Three audit-preventable mistakes, then a deeper one:
 
-- **Celsius markets**: `round(max(hourly_tmpc_readings))`, whole degrees
-- **Fahrenheit markets**: `round(max(hourly_tmpf_readings))`, whole degrees
-- **Hong Kong exception**: resolves from HK Observatory (0.1C precision), NOT Wunderground
+1. **Wrong data source.** Backtests resolved against Open-Meteo gridded
+   reanalysis; Polymarket resolves against Weather Underground's displayed METAR
+   value (~0.9 °C MAE apart). The glowing paper P&L was fiction.
+2. **Wrong stations.** Three of 24 cities resolved against the wrong airport
+   (Denver, Houston, Hong Kong), a guaranteed loss on every trade there.
+3. **Wrong execution structure.** Buying several adjacent YES buckets per city
+   means most legs lose by construction.
+4. **The deeper failure.** Even after fixing all of the above, there was no
+   durable edge: forecast MAE (~1.4 °C) is *wider than the buckets* (~1.1 °C), and
+   sub-48h markets belong to bots with direct NWS feeds. A clever pipeline cannot
+   save a thesis with no alpha.
 
-### Calibration Settings
+Full numbers and lessons: [`OPEN_SOURCE_ARCHIVE.md`](OPEN_SOURCE_ARCHIVE.md).
 
-| Parameter | Value | Why |
-|-----------|-------|-----|
-| SPREAD_INFLATION_FACTOR | 1.3 | Models are correlated but 2.0x was killing real edges |
-| BIAS_SHRINKAGE | 0.9 | Trust METAR-calibrated hindcast (was 0.5 with wrong data) |
-| EMOS_VARIANCE_FLOOR_C | 0.7 | Old floor (1.2) was wider than the bucket itself |
-| MAX_BUCKET_PROBABILITY | 0.70 | Cap single-bucket probability |
+## Post-mortem cleanup (what the open-source version fixes)
 
-### City Accuracy Tiers (MAE vs correct METAR station)
+After sunsetting, a fresh audit found the project was *still* wrong in ways the
+original post-mortem missed, so the resolution layer never actually matched the
+oracle, and the "no edge" verdict was measured through a distorted lens. The
+public history is fixed so you fork from a correct base, not a broken one. The
+exact as-it-died state is preserved at the git tag **`v1.0-as-it-died`**.
 
-| Tier | Cities | MAE | Strategy |
-|------|--------|-----|----------|
-| **Gold** | Shanghai (0.67), Madrid (0.68), London (0.69), HKG (0.71) | < 0.8C | Full position, highest confidence |
-| **Silver** | Miami (0.80), Houston (0.81), Seattle (0.86), Munich (0.88), Tokyo (0.94) | 0.8-1.0C | Standard position |
-| **Bronze** | Warsaw (1.04), Chicago (1.05), SFO (1.04), Lucknow (1.09), Dallas (1.10), Atlanta (1.10) | 1.0-1.2C | Trade when mispricing is large |
-| **Caution** | Seoul (1.14), Austin (1.17), Toronto (1.29), LA (1.31), Wellington (1.37) | 1.2-1.5C | Only tail-No bets |
-| **Avoid** | Buenos Aires (1.59), Shenzhen (1.61), NYC (1.62), Denver (1.94) | > 1.5C | Model error too high for reliable trading |
+Twelve fixes (commit `5e07054`), each with regression tests:
 
-### Bankroll-Dependent Sizing
+| Area | Fix |
+|------|-----|
+| Resolution | Subzero buckets parse (signed regex); accept Fahrenheit-only METAR instead of silently using reanalysis; capture SPECI + the METAR `T`-group and 6-hr max group; round **half-up** (Wunderground) not banker's; bucket by the station's **local civil day**; hindcast shares the live parsing path |
+| Signal | Fahrenheit range buckets integrate the correct round-half-up °C band (the old code added 1.0 °C to a converted bound, inflating YES probability) |
+| Honesty | Backtester models spread/fees/fills and reports skill vs a climatology baseline instead of a flat fictional P&L; paper exits can realise losses; the "Brier" score is honestly renamed and statistically caveated |
+| Docs | Station table corrected and **all 24 stations verified** against live market resolution URLs |
 
-| Bankroll | MIN_SIZE | MAX_POSITIONS | Taker Threshold |
-|----------|----------|---------------|-----------------|
-| < $200 (current) | $5 | 20 | 8% edge |
-| $200-500 | $10 | 20 | 10% edge |
-| $500-630 | $10 | 15 | 10% edge |
-| $630+ (friends' capital) | $15 | 12 | 12% edge |
+## How it works
 
-### Model Agreement Gate (Gemini recommendation)
+1. Fetch forecasts from 6–8 weather models per city via the Open-Meteo API.
+2. Apply **METAR-calibrated bias corrections** from hindcast snapshots.
+3. Apply EMOS calibration (spread inflation, bias shrinkage, variance floor).
+4. Compute a **Brier-weighted consensus** (better-scoring models get more weight).
+5. Detect bust-causing weather patterns (Chinook, Foehn, marine layer, …).
+6. Discover active Polymarket weather markets via the Gamma API.
+7. **Claude (Meteorologist)**, physical plausibility, market-blind.
+8. **Gemini (Risk Quant)**, execution cost / order-book risk, weather-blind.
+   Both AI calls run in parallel.
+9. Compute edge against market prices; apply risk controls (circuit breaker,
+   correlation limits, model-agreement gate).
+10. Resolve trades against **IEM METAR observations** (the Wunderground mirror).
+11. Auto-redeem winners via the **Polymarket Relayer** (gasless).
+12. Persist everything to SQL, trades, forecasts, AI decisions, fills.
 
-| Model Spread (raw std) | Action |
-|------------------------|--------|
-| < 1.5C | Full bet, models agree, high confidence |
-| 1.5-2.0C | Spread across top 2 adjacent buckets |
-| > 2.0C | Skip, models disagree, edge is noise |
+## Resolution source (the most important detail)
 
-### Key Lessons Learned
+Polymarket resolves daily-high temperature markets against the
+**Weather Underground displayed value** at a specific airport METAR station. This
+bot mirrors that exact source via **IEM ASOS** (Iowa Environmental Mesonet),
+which serves the same raw METAR data.
 
-1. **Audit stations against market descriptions before trading.** Three cities (Denver, Houston, Hong Kong) had wrong ICAO stations. Houston gap was 1.7°C on a single day, guaranteed loss on every trade. A 10-minute audit would have caught all three.
-2. **Data source must match oracle.** Open-Meteo archive (gridded reanalysis) ≠ Wunderground (airport METAR sensors). 0.9°C MAE gap caused 67% rounding mismatches. Paper P&L of +$8,471 was fiction.
-3. **Never spread across multiple buckets per city.** Buying Yes on 3-4 adjacent temperatures means 2-3 guaranteed losses per win. The losers outpace the winners structurally. One bet per city, or No bets on unlikely outcomes.
-4. **Verify end-to-end before declaring "fixed."** Auto-redeem went through 6+ iterations of "it's working" before actually working. Every fix needs real money verification, not just unit tests.
-5. **When numbers don't match reality, stop and audit everything.** The $380 vs -$60 discrepancy on day 1 should have triggered a full station audit. Instead we patched one layer at a time over 3 days.
+- Celsius markets: `round_half_up(max(daily readings))`, whole degrees.
+- Fahrenheit markets: `round_half_up(max(daily readings))`, whole degrees.
+- Daily max is taken over the station's **local civil day**, includes SPECI
+  reports and the METAR 6-hour max-temp group.
+- **Hong Kong exception**: resolves from the HK Observatory "Absolute Daily Max"
+  (`data.weather.gov.hk`), not an airport METAR.
 
-### Strategy Evolution
+All 24 station codes below were verified (2026-05) against each market's live
+Wunderground/HKO resolution URL. Note Polymarket's *precipitation* markets for the
+same cities use different sources (NYC→Central Park, London→Heathrow, Seoul→KMA),
+do not reuse these codes for precip.
 
-| Date | Strategy | Result | Lesson |
-|------|----------|--------|--------|
-| Mar 31 | Maker-only, all cities | 17% fill rate, adverse selection | Faster bots front-run us on <24h |
-| Apr 1 | Swing bot (48h+), taker at 8% | -$69 live vs +$8,471 paper | Paper P&L was against wrong data |
-| Apr 2 | METAR fix, tighter calibration | $87→$130 | Correct data source matters |
-| Apr 2 | Multi-bucket spreading | $130→$115 | Structure kills edge |
-| Apr 3 | ICAO audit, one-bet, tail-No | 72h proving run | First fair test of the model |
-
-## How It Works
-
-1. Fetches forecasts from 6-8 weather models per city via Open-Meteo customer API
-2. Applies **METAR-calibrated bias corrections** from hindcast snapshots (model vs actual station reading)
-3. Applies EMOS calibration (1.3x spread inflation, 0.9 bias shrinkage, 0.7C variance floor)
-4. Computes **adaptive Brier-weighted consensus**, models that predict well get more influence
-5. Detects bust-causing weather patterns (13 patterns: Chinook, Foehn, marine layer, etc.)
-6. Discovers active Polymarket weather markets via Gamma API
-7. **Claude Sonnet 4 (Meteorologist)**, physical plausibility, market-blind
-8. **Gemini 2.5 Flash (Risk Quant)**, execution cost, order book depth, weather-blind
-9. Both AI calls run **in parallel** via `asyncio.gather`
-10. Calculates edge against market prices
-11. **Risk controls**: circuit breaker, correlation limits, model agreement gate
-12. **Three-tier exit system**: 2-min emergency (edge < -15%), 30-min AI-reviewed, stale model detection
-13. Auto-resolves trades against **IEM METAR observations** (same source as Wunderground)
-14. Auto-redeems winning positions via **Polymarket Relayer API** (gasless)
-15. Persists everything to SQLite, trades, forecasts, AI decisions, fills
-
-## Trading Modes
-
-Two independent settings in `.env`:
+## Repository layout
 
 ```
-PAPER_MODE=true    # Run paper trading (simulated)
-LIVE_MODE=true     # Run live trading (real money on Polymarket)
+src/weather_edge/
+  fetchers/      Open-Meteo, Polymarket (Gamma), METAR/IEM, gribstream
+  analysis/      consensus, bias_correction, edge, resolver, backtester,
+                 pattern_detector, claude/gemini reasoning, learner, risk_controls
+  trading/       paper trading, executor, fills, fees, portfolio sync
+  dashboard/     FastAPI status dashboard
+  scheduler.py   the main cycle (fetch → consensus → edge → trade → resolve)
+  config.py      24 cities: ICAO station, timezone, unit, model weights
+scripts/         hindcast/bias-table builders, ops helpers
+tests/           pytest suite (164 tests)
+OPEN_SOURCE_ARCHIVE.md   the post-mortem (read this)
 ```
 
-## Live Execution
+## Quickstart
 
-### Swing Bot (48h+ Horizon)
+Requires Python ≥ 3.11.
 
-The bot only trades markets resolving 48+ hours out, where:
-- Our bias correction edge is strongest (no ground truth yet for faster bots to exploit)
-- Data lag (Open-Meteo 1-2h behind NWS) is less damaging
-- Less competition from faster bots with direct NWS feeds
+```bash
+python -m venv .venv && source .venv/bin/activate
+pip install -e ".[dev]"            # add ,dashboard,execution as needed
+cp .env.example .env               # fill in keys; .env is gitignored
 
-### Entry Rules
+# Run the test suite (no network/keys needed)
+python -m pytest tests/ -q
 
-| Condition | Action |
-|-----------|--------|
-| Edge >= 8% | Taker entry (cross spread, +3c above midpoint) |
-| Edge 5-8% | Maker entry (post-only, 15 min timeout) |
-| Edge < 5% | Skip |
-| USDC < $20 | Block all entries (vulture mode) |
-| Model std > 2.0C | Skip (models disagree) |
+# Inspect what it would do, read-only, paper only
+python -m weather_edge forecast    # consensus forecasts per city
+python -m weather_edge markets     # discovered Polymarket weather markets
+python -m weather_edge run --days 2  # one paper cycle
+```
 
-### Exit Architecture (Three Tiers)
+`AI reasoning` is degraded without `ANTHROPIC_API_KEY` / `GEMINI_API_KEY`, but the
+core pipeline, tests, and backtester run without them. Trading is **paper by
+default**; live execution requires `[execution]` deps and wallet credentials and
+is **not recommended** (see the status banner).
 
-| Tier | Interval | Trigger | AI Review | Order Type |
-|------|----------|---------|-----------|------------|
-| Emergency | 2 min | Edge < -15% | None (auto-kill) | Taker |
-| Standard | 30 min | Edge < -7% | Claude + Gemini in parallel | Taker if urgent |
-| Stale model | 30 min | Data >4h old | Full AI review | Based on urgency |
+### The backtester is honest now, read its caveats
 
-### Auto-Redeem
+There is **no historical Polymarket order-book data** in this repo, so the
+backtester cannot produce a real track record. It reports two separate things:
+**forecast skill** (hit rate, MAE, vs a climatology baseline, real) and
+**illustrative P&L under explicit, stated costs** (spread, fee, fill probability).
+With a fair entry price and zero costs, expected P&L is exactly zero, so any loss
+it shows is the cost of the spread. That is the entire lesson. The result dict
+echoes its `cost_assumptions` and a list of `caveats`; do not read its P&L as a
+track record.
 
-Winning positions are automatically redeemed via the **Polymarket Relayer API**. The relayer executes `CTF.redeemPositions` from the proxy wallet (gasless, Polymarket pays gas). No MATIC needed.
+## Configuration (bring your own keys)
 
-### Source of Truth
+All configuration is environment variables, loaded from a gitignored `.env` (copy
+[`.env.example`](.env.example) and fill it in). `.env.example` documents every
+variable; this is the short version of what to get and where.
 
-- **Orders** = intentions (`live_trades` table)
-- **Fills** = reality (`fills` table, synced from exchange)
-- **Positions** = aggregated fills (rebuilt every cycle)
-- **Observations** = IEM METAR primary, Open-Meteo archive fallback
-- **Resolution** = Polymarket on-chain (CTF `payoutDenominator`)
+**Nothing is required** to run the tests or the read-only `forecast` / `markets`
+commands. Add keys to unlock more:
+
+| Variable | Needed for | Where to get it |
+|----------|-----------|-----------------|
+| `ANTHROPIC_API_KEY` | Claude "Meteorologist" review | <https://console.anthropic.com/> → API Keys |
+| `GEMINI_API_KEY` | Gemini "Risk Quant" review | <https://aistudio.google.com/app/apikey> |
+| `OPENMETEO_API_KEY` + `OPENMETEO_PAID_TIER=true` | Faster, parallel model fetches (free tier works without) | <https://open-meteo.com/en/pricing> |
+| `GRIBSTREAM_API_KEY` | Extra AI models (GraphCast/AIFS) | <https://gribstream.com> |
+| `DATABASE_URL`, `REDIS_*` | Live scheduler + dashboard persistence | your own Postgres/Redis |
+
+**Live trading (not recommended).** To place real orders you also need Polymarket
+credentials: `POLYMARKET_PRIVATE_KEY` (wallet key, the one true secret here,
+controls real funds), `POLYMARKET_WALLET`, `POLYMARKET_SIGNATURE_TYPE`, the CLOB
+`POLYMARKET_API_KEY`/`_SECRET`/`_PASSPHRASE` (create at
+<https://polymarket.com/settings>), and `POLYMARKET_RELAYER_API_KEY` for gasless
+redemption.
+
+> **Security:** `.env` is gitignored, keep it that way; never commit real keys.
+> Use a dedicated wallet with limited funds for any live experiment, and rotate
+> any key you suspect has leaked. There are **no secrets in this repository's
+> history**, it was scanned before publication; keep it that way.
 
 ## Cities (24)
 
-> **Station verification (2026-05):** the ICAO/station codes below are the ones
-> the **temperature-high** markets actually resolve against, confirmed from each
-> market's live Wunderground resolution URL (e.g. NYC→KLGA, London→EGLC,
-> Seoul→RKSI are correct *for temperature*). Note Polymarket's *precipitation*
-> markets for the same cities use different sources (NYC→Central Park/NOAA,
-> London→Heathrow/Met Office, Seoul→KMA), do not reuse these codes for precip.
+ICAO/station codes are the ones the **temperature-high** markets resolve against
+(verified against live Wunderground/HKO URLs).
 
-### Americas
-| City | ICAO | MAE | Notes |
-|------|------|-----|-------|
-| New York | KLGA | 1.41C | Urban heat island, sea breeze |
-| Chicago | KORD | 1.31C | Lake Michigan breeze |
-| Dallas | KDAL | 1.12C | GFS dry-soil warm bias |
-| Houston | KHOU | 1.12C | Hobby, south Houston (NOT KIAH/Bush, see lessons) |
-| Atlanta | KATL | 1.44C | Convective timing |
-| Miami | KMIA | 0.85C | Low variance, warm baseline |
-| Denver | KBKF | 1.83C | Buckley SFB (NOT KDEN/Intl, see lessons) |
-| Seattle | KSEA | 0.97C | Marine layer |
-| Los Angeles | KLAX | 1.45C | June Gloom, Santa Ana |
-| San Francisco | KSFO | 2.13C | Fog, highest MAE |
-| Austin | KAUS | 1.40C | GFS dry-soil warm bias |
-| Toronto | CYYZ | 1.92C | High variance |
+| City | Station | City | Station | City | Station |
+|------|---------|------|---------|------|---------|
+| New York | KLGA | London | EGLC | Seoul | RKSI |
+| Chicago | KORD | Madrid | LEMD | Tokyo | RJTT |
+| Dallas | KDAL | Munich | EDDM | Hong Kong | HKO (`45005`) |
+| Houston | KHOU | Warsaw | EPWA | Shanghai | ZSPD |
+| Atlanta | KATL | | | Shenzhen | ZGSZ |
+| Miami | KMIA | | | Buenos Aires | SAEZ |
+| Denver | KBKF | | | Wellington | NZWN |
+| Seattle | KSEA | | | Lucknow | VILK |
+| Los Angeles | KLAX | Austin | KAUS | Toronto | CYYZ |
+| San Francisco | KSFO | | | | |
 
-### Europe
-| City | ICAO | MAE | Notes |
-|------|------|-----|-------|
-| London | EGLC | 0.63C | Best accuracy |
-| Madrid | LEMD | 0.91C | Saharan dust |
-| Munich | EDDM | 1.02C | Alpine Foehn |
-| Warsaw | EPWA | 1.20C | Winter inversions |
+> Houston is **KHOU** (Hobby), Denver is **KBKF** (Buckley), Hong Kong is the
+> **HK Observatory**, the three stations the original run got wrong.
 
-### Asia-Pacific
-| City | ICAO | MAE | Notes |
-|------|------|-----|-------|
-| Seoul | RKSI | 2.08C | High MAE, caution |
-| Tokyo | RJTT | 1.12C | Sea breeze timing |
-| Hong Kong | 45005 | 1.49C | **HK Observatory HQ via data.weather.gov.hk, not VHHH** |
-| Shanghai | ZSPD | 1.99C | Coastal UHI, high MAE |
-| Shenzhen | ZGSZ | 1.31C | Pearl River Delta |
+## Lessons (for the next person)
 
-### Other
-| City | ICAO | MAE | Notes |
-|------|------|-----|-------|
-| Buenos Aires | SAEZ | 1.46C | Southern hemisphere autumn |
-| Wellington | NZWN | 1.16C | Maritime, windy |
-| Lucknow | VILK | 1.18C | Pre-monsoon transition |
-
-## Production Deployment
-
-**Server**: hf-toybox-001 (Rocky Linux 9.7, 10.30.20.200)
-
-```bash
-# Deploy
-git push origin main
-ssh root@10.30.20.200 "cd /home/weather/weather-edge && sudo -u weather git pull && systemctl restart weather-edge"
-
-# Start/stop trading
-curl -s -X POST http://10.30.20.200:8000/api/start
-curl -s -X POST http://10.30.20.200:8000/api/stop
-
-# Logs
-journalctl -u weather-edge -f
-```
-
-## Testing
-
-```bash
-.venv/bin/python -m pytest tests/ -v    # 128 tests
-```
-
-## Roadmap
-
-**Pending: 72h proving run (started 2026-04-03).** If the model proves an edge with correct stations, these are next:
-
-1. **Portfolio Optimizer (Opportunity Cost Allocation)**
-   - Sell mediocre positions to fund higher-edge signals
-   - Compare `(new_edge - exit_spread - entry_spread) > (old_edge)` before churning
-   - Must account for thin Polymarket spreads (5-15¢) to avoid death by spread costs
-   - Professional quant "capital reallocation", the bot is position-aware but not portfolio-aware
-
-2. **Bankroll Scaling**
-   - Auto-adjust MIN_SIZE, MAX_POSITIONS, taker threshold based on current portfolio equity
-   - See bankroll table in strategy section
-
-3. **Self-Learning Engine**
-   - Needs 200+ resolved trades with correct METAR data for statistical significance
-   - Adaptive Brier-weighted model selection per city
-
-4. **HKG Dedicated Model**
-   - HK Observatory: 0.1°C precision, urban microclimate, custom data source
-   - May need separate bias correction and sizing rules
-
-5. **Open Source Preparation** (if edge not proven)
-   - Sanitise credentials and API keys
-   - Write technical blog post: "Building an AI Weather Trading Bot, Lessons from Losing Money"
-   - Clean up README for public consumption
+1. **Verify the resolution source end-to-end before depositing a dollar**, the
+   exact station, exact rounding, exact URL, for *every* market, not one.
+2. **Backtests without fees, spread, slippage, fill probability and market impact
+   are fiction.** You will tune to beat the liar, not the market.
+3. **A discrepancy is a stop-everything event.** Day-one P&L mismatched reality by
+   $440 and the run continued. Layers of error compound.
+4. **Don't spread across adjacent buckets.** Most legs lose by construction.
+5. **Speed beats cleverness on short-horizon markets.** Without direct exchange/NWS
+   feeds you can't win sub-48h.
+6. **A clever architecture won't save a flawed thesis.** Prove the edge first;
+   build the infrastructure second.
 
 ## License
 
-Private. Not for redistribution.
+Provided as-is for educational purposes. See [`OPEN_SOURCE_ARCHIVE.md`](OPEN_SOURCE_ARCHIVE.md).

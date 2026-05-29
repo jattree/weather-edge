@@ -437,7 +437,7 @@ async def _run_dashboard_cycle_inner(run_ai: bool = True) -> None:
         try:
             from weather_edge.trading.portfolio_sync import fetch_polymarket_state
             # Proxy wallet is the on-chain address that holds positions
-            proxy = "0xe23940d70793b441c9f949741daa65289947fadb"
+            proxy = settings.polymarket_wallet
             pm = await fetch_polymarket_state(live_executor, proxy)
 
             # Build position list for dashboard
@@ -770,7 +770,7 @@ async def fast_exit_loop() -> None:
             # Update live state from Polymarket (source of truth)
             try:
                 from weather_edge.trading.portfolio_sync import fetch_polymarket_state
-                proxy = "0xe23940d70793b441c9f949741daa65289947fadb"
+                proxy = settings.polymarket_wallet
                 pm = await fetch_polymarket_state(live_executor, proxy)
                 if "live" in latest_state:
                     latest_state["live"]["balance"] = pm["balance"]
