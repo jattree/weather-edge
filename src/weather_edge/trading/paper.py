@@ -9,6 +9,7 @@ from weather_edge.analysis.contracts import validate_pool_budget, validate_reser
 from weather_edge.analysis.edge import Signal
 from weather_edge.models.enums import SignalTier, TradeStatus
 from weather_edge.models.position import Position
+from weather_edge.trading.fees import calculate_taker_fee
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +22,7 @@ class PaperTrade(Position):
     exit_price: float | None = None
     resolved_at: datetime | None = None
     pnl: float | None = None
+    fee_usd: float = 0.0  # Taker fee charged at entry (deducted from P&L)
 
     def __post_init__(self):
         if not self.source:
@@ -262,13 +264,30 @@ class PaperTrader:
 
         desc = f"{pool_tag} {signal.description}"
 
+        # --- Microstructure-honest entry (taker assumption) ---
+        # Fill by crossing the spread: a YES buyer lifts the ask (mid + half
+        # spread); a NO buyer lifting the NO ask maps to a LOWER equivalent
+        # YES price. Charge the dynamic taker fee on the notional. Live mostly
+        # rests maker orders ($0 fee) but is never guaranteed a fill, so paper
+        # assumes the pessimistic taker path: paper P&L is a floor, not the
+        # zero-cost midpoint fiction that inflated the original +$8,470.
+        half_spread = max(0.0, getattr(signal, "spread", 0.0)) / 2.0
+        if signal.recommended_side.value == "YES":
+            entry_yes = min(0.99, signal.market_prob + half_spread)
+            effective_entry = entry_yes
+        else:
+            entry_yes = max(0.01, signal.market_prob - half_spread)
+            effective_entry = 1.0 - entry_yes
+        fee_usd = calculate_taker_fee(effective_entry, size)
+
         trade = PaperTrade(
             trade_id=self._next_id,
             market_id=signal.market_id,
             city_id=signal.city_id,
             side=signal.recommended_side.value,
             size_usd=size,
-            entry_price=signal.market_prob,
+            entry_price=entry_yes,
+            fee_usd=round(fee_usd, 4),
             description=desc,
             strategy="penny" if strategy == "tail" else "core",
         )
@@ -276,11 +295,14 @@ class PaperTrader:
         self.trades.append(trade)
 
         logger.info(
-            "PAPER TRADE: %s %s $%.0f @ %.2f | edge=%.1f%% conf=%.0f%% | %s",
+            "PAPER TRADE: %s %s $%.0f @ %.2f (+%.0f¢ spread, fee $%.2f) | "
+            "edge=%.1f%% conf=%.0f%% | %s",
             trade.side,
             trade.city_id,
             trade.size_usd,
             trade.entry_price,
+            half_spread * 100,
+            trade.fee_usd,
             signal.edge * 100,
             signal.model_confidence * 100,
             trade.description[:50],
@@ -363,28 +385,32 @@ class PaperTrader:
                     )
                     return
 
+        # Entry taker fee is sunk cost either way. Redemption of a resolved
+        # position is fee-free, so no exit fee here.
+        entry_fee = trade.fee_usd or 0.0
+
         if trade.side == "YES":
             # YES trade: paid entry_price per share, shares = size_usd / entry_price
             shares = trade.size_usd / trade.entry_price if trade.entry_price > 0 else 0
             if outcome_yes:
-                # Win: each share pays $1, profit = shares - cost
-                trade.pnl = shares - trade.size_usd
+                # Win: each share pays $1, profit = shares - cost - entry fee
+                trade.pnl = shares - trade.size_usd - entry_fee
                 trade.status = TradeStatus.WON
             else:
-                # Lose: shares worth $0, lose entire cost
-                trade.pnl = -trade.size_usd
+                # Lose: shares worth $0, lose entire cost + entry fee
+                trade.pnl = -(trade.size_usd + entry_fee)
                 trade.status = TradeStatus.LOST
         else:  # NO
             # NO trade: paid (1 - entry_price) per share, shares = size_usd / (1 - entry_price)
             no_price = 1.0 - trade.entry_price
             shares = trade.size_usd / no_price if no_price > 0 else 0
             if not outcome_yes:
-                # Win: each share pays $1, profit = shares - cost
-                trade.pnl = shares - trade.size_usd
+                # Win: each share pays $1, profit = shares - cost - entry fee
+                trade.pnl = shares - trade.size_usd - entry_fee
                 trade.status = TradeStatus.WON
             else:
-                # Lose: shares worth $0, lose entire cost
-                trade.pnl = -trade.size_usd
+                # Lose: shares worth $0, lose entire cost + entry fee
+                trade.pnl = -(trade.size_usd + entry_fee)
                 trade.status = TradeStatus.LOST
 
         trade.exit_price = 1.0 if outcome_yes else 0.0
@@ -440,6 +466,7 @@ class PaperTrader:
             exit_price = exit_price * (1.0 - self.PAPER_EXIT_SLIPPAGE)
             shares = trade.size_usd / trade.entry_price if trade.entry_price > 0 else 0
             pnl = (exit_price - trade.entry_price) * shares
+            exit_eff_price = exit_price
         else:
             # Selling NO: bid for NO is worse than midpoint
             exit_no_mid = 1.0 - current_price
@@ -448,6 +475,14 @@ class PaperTrader:
             entry_no = 1.0 - trade.entry_price
             shares = trade.size_usd / entry_no if entry_no > 0 else 0
             pnl = (exit_no_bid - entry_no) * shares
+            exit_eff_price = exit_no_bid
+
+        # Early exits sell into the book: charge the entry fee (sunk) plus a
+        # taker fee on the sale proceeds. Resolution/redemption is fee-free,
+        # but an early exit is a real taker order.
+        proceeds = max(0.0, exit_eff_price) * shares
+        exit_fee = calculate_taker_fee(exit_eff_price, proceeds)
+        pnl -= (trade.fee_usd or 0.0) + exit_fee
 
         # Realise the exit, win OR loss. A stop-loss must be allowed to book a
         # loss; refusing to (the old behaviour) made paper P&L fictitiously
@@ -534,6 +569,7 @@ class PaperTrader:
             "wins": sum(1 for t in closed if t.status == TradeStatus.WON),
             "losses": sum(1 for t in closed if t.status == TradeStatus.LOST),
             "total_pnl": round(self.total_pnl, 2),
+            "total_fees": round(sum(t.fee_usd or 0.0 for t in self.trades), 2),
             "win_rate": round(self.win_rate * 100, 1),
             # Three-pool breakdown
             "today_trades": len(today_trades),
