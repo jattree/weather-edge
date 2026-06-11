@@ -377,6 +377,12 @@ class Settings(BaseSettings):
     # Trading modes, can run both, either, or neither
     paper_mode: bool = True  # Run paper trading (simulated)
     live_mode: bool = False  # Run live trading (real money)
+    # HAIL MARY mode: the 2026-04-07 closing experiment (OPEN_SOURCE_ARCHIVE.md).
+    # Removes every safety rail and buys $1 penny lottery tickets: no horizon
+    # filter, no model-agreement gate, no per-city dedupe, no AI vetoes, no
+    # exposure caps, no exit monitor. Kept for the historical record. Leave
+    # False; never enable with real money.
+    hail_mary_mode: bool = False
     live_max_shares: float = 0  # 0=unlimited. Set to 5/20/50 for graduated testing
     polymarket_chain_id: int = 137  # Polygon mainnet
     max_slippage_pct: float = 0.02  # Max 2% price movement for exit orders

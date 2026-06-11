@@ -46,6 +46,8 @@ from weather_edge.trading.paper import PaperTrader
 logger = logging.getLogger(__name__)
 
 MIN_SELL_SHARES = 5.0  # Polymarket minimum order size
+MIN_LIVE_SIZE = 5.0  # Survival tier: $5 min until bankroll > $500, then $10
+HAILMARY_TICKET_USD = 1.00  # Fixed lottery-ticket size in hail-mary mode
 
 
 def _round_price(price: float) -> float:
@@ -210,12 +212,15 @@ async def run_cycle(
             today + timedelta(days=3),
         ]
 
-    # --- HAIL MARY: horizon filter disabled ---
-    # Original swing-bot blocked <36h markets. The hail-mary takes anything
-    # priced cheap regardless of horizon, penny lottery tickets only need
-    # to resolve, they don't need to be ahead of the front-running bots.
+    # --- SWING BOT: 36h horizon filter ---
+    # Block entries on markets resolving too soon. We get front-run by bots
+    # with fresher NWS data on short-dated markets. Our bias correction edge
+    # is strongest at 48-72h where model ensembles still disagree.
+    # HAIL MARY mode drops the filter: penny lottery tickets only need to
+    # resolve, they don't need to be ahead of the front-running bots.
     now_utc = datetime.now(timezone.utc)
-    min_horizon = timedelta(hours=0)
+    min_horizon_hours = 0 if settings.hail_mary_mode else 36
+    min_horizon = timedelta(hours=min_horizon_hours)
     original_dates = list(target_dates)
     target_dates = [
         d for d in target_dates
@@ -226,8 +231,9 @@ async def run_cycle(
     blocked = set(original_dates) - set(target_dates)
     if blocked:
         logger.info(
-            "HORIZON FILTER: blocked %s (resolve < 36h)",
+            "HORIZON FILTER: blocked %s (resolve < %dh)",
             ", ".join(str(d) for d in sorted(blocked)),
+            min_horizon_hours,
         )
 
     # Contract: verify EMOS calibration is active at cycle start
@@ -433,15 +439,23 @@ async def run_cycle(
             if consensus is None:
                 continue
 
-            # --- HAIL MARY: model agreement gate disabled ---
-            # Original blocked when std > 2.0C ("models disagree, edge is noise").
-            # In hail-mary mode every signal goes through, penny tickets are
-            # cheap enough that we'd rather take noisy bets than miss real ones.
+            # --- MODEL AGREEMENT GATE ---
+            # Per README: Skip if models disagree (std > 2.0C). This prevents
+            # trading on noise when ensembles are in chaos. HAIL MARY mode lets
+            # every signal through: penny tickets are cheap enough that noisy
+            # bets beat missed ones.
             if consensus.std_dev > 2.0:
-                logger.info(
-                    "HAILMARY allow: %s/%s std=%.1f > 2.0 (would have skipped)",
-                    city_id.value, variable, consensus.std_dev
-                )
+                if settings.hail_mary_mode:
+                    logger.info(
+                        "HAILMARY allow: %s/%s std=%.1f > 2.0 (would have skipped)",
+                        city_id.value, variable, consensus.std_dev
+                    )
+                else:
+                    logger.warning(
+                        "MODEL AGREEMENT REJECT: %s/%s std=%.1f > 2.0, skipping",
+                        city_id.value, variable, consensus.std_dev
+                    )
+                    continue
 
             # Apply pattern-based bias shift (e.g. haze suppression)
             if pattern_bias != 0:
@@ -552,45 +566,111 @@ async def run_cycle(
                     min_edge_no=risk_profile.min_edge_no,
                 )
 
-                # --- HAIL MARY: z-score guard disabled ---
-                # Original rejected core bets on buckets too far from consensus.
-                # We're penny-only now and they're all far-from-consensus by design.
+                # Z-score guard: reject core bets on buckets too far from consensus.
+                # Tail/penny bets (entry <=6c) are exempt, they're designed as
+                # lottery tickets. HAIL MARY mode skips the guard: penny-only
+                # baskets are far-from-consensus by design.
+                if (
+                    not settings.hail_mary_mode
+                    and signal.strategy != "tail"
+                    and market_prob > 0.06
+                ):
+                    bucket_center = None
+                    if (
+                        market.threshold_dir == "range"
+                        and market.threshold_low_c is not None
+                        and market.threshold_high_c is not None
+                    ):
+                        bucket_center = (market.threshold_low_c + market.threshold_high_c) / 2
+                    elif (
+                        market.threshold_dir in ("gte", "lte")
+                        and market.threshold_value is not None
+                    ):
+                        bucket_center = market.threshold_value
+
+                    if bucket_center is not None and consensus.std_dev > 0:
+                        zscore = abs(bucket_center - consensus.weighted_mean) / consensus.std_dev
+                        if zscore > settings.max_core_zscore:
+                            logger.info(
+                                "ZSCORE REJECT: %s %s, bucket=%.1f°C mean=%.1f°C std=%.1f z=%.1f (max=%.1f)",
+                                city_id.value, market.question[:40],
+                                bucket_center, consensus.weighted_mean,
+                                consensus.std_dev, zscore, settings.max_core_zscore,
+                            )
+                            continue
+
                 all_signals.append(signal)
 
-    # === HAIL MARY: penny lottery basket ===
-    # Original strategy filtered to one signal per city-date. The hail-mary
-    # takes EVERY cheap signal, multi-bucket stacking is fine when each
-    # ticket costs $1 because the math is "buy 30 lottery tickets, hope 1 hits."
-    # We still drop LOW-confidence tier on signals that can't even price an edge,
-    # but otherwise we let the basket be as wide as the bot can find.
-    hailmary_max_price = 0.10   # only buy stuff priced under 10¢
-    hailmary_max_trades_per_cycle = 999
     filtered_signals: list[Signal] = []
-    for s in all_signals:
-        # Penny ceiling, anything above 10¢ is "more of the same bs"
-        try:
-            if s.recommended_side.value == "YES":
+    if settings.hail_mary_mode:
+        # === HAIL MARY: penny lottery basket ===
+        # The normal strategy filters to one signal per city-date. The hail-mary
+        # takes EVERY cheap signal, multi-bucket stacking is fine when each
+        # ticket costs $1 because the math is "buy 30 lottery tickets, hope 1 hits."
+        hailmary_max_price = 0.10   # only buy stuff priced under 10¢
+        for s in all_signals:
+            # Penny ceiling, anything above 10¢ is "more of the same bs"
+            try:
+                if s.recommended_side.value == "YES":
+                    entry_price = s.market_prob
+                else:
+                    entry_price = 1.0 - s.market_prob
+            except Exception:
                 entry_price = s.market_prob
-            else:
-                entry_price = 1.0 - s.market_prob
-        except Exception:
-            entry_price = s.market_prob
-        if entry_price > hailmary_max_price:
-            continue
-        # Require some directional edge, we're not buying random things
-        if s.edge <= 0:
-            continue
-        filtered_signals.append(s)
+            if entry_price > hailmary_max_price:
+                continue
+            # Require some directional edge, we're not buying random things
+            if s.edge <= 0:
+                continue
+            filtered_signals.append(s)
 
-    if len(filtered_signals) > hailmary_max_trades_per_cycle:
-        filtered_signals = sorted(
-            filtered_signals, key=lambda s: s.edge, reverse=True,
-        )[:hailmary_max_trades_per_cycle]
+        logger.info(
+            "HAILMARY BASKET: %d penny signals (price<=%.2f, edge>0) from %d raw",
+            len(filtered_signals), hailmary_max_price, len(all_signals),
+        )
+    elif all_signals:
+        # === STRATEGY REDESIGN: One signal per city-date filter ===
+        # Prevents "multi-bucket bleed" by picking only the highest-edge bucket.
+        # Prioritizes tail_no (high-prob NO) and tail (penny) strategies.
+        signal_groups: dict[tuple[str, str], list[Signal]] = {}
+        for s in all_signals:
+            if s.confidence_tier.value == "low":
+                continue
+            key = (s.city_id, s.target_date)
+            signal_groups.setdefault(key, []).append(s)
 
-    logger.info(
-        "HAILMARY BASKET: %d penny signals (price<=%.2f, edge>0) from %d raw",
-        len(filtered_signals), hailmary_max_price, len(all_signals),
-    )
+        for key, group in signal_groups.items():
+            # Strategy priority: tail_no > tail > core
+            # Within same strategy, pick highest absolute net_edge
+            def _signal_score(sig: Signal) -> float:
+                prio = {"tail_no": 300, "tail": 200, "core": 100}.get(sig.strategy, 0)
+                return prio + abs(sig.net_edge)
+
+            best_signal = max(group, key=_signal_score)
+            filtered_signals.append(best_signal)
+
+            if len(group) > 1:
+                logger.info(
+                    "MULTI-BUCKET FILTER: %s %s picked %s (edge=%.1f%%) over %d others",
+                    key[0], key[1], best_signal.strategy,
+                    best_signal.net_edge * 100, len(group) - 1,
+                )
+
+        # Apply global max trades per cycle limit
+        # Sort by absolute net_edge descending, take top N
+        if len(filtered_signals) > settings.max_trades_per_cycle:
+            limited = sorted(
+                filtered_signals,
+                key=lambda s: abs(s.net_edge),
+                reverse=True,
+            )[:settings.max_trades_per_cycle]
+
+            logger.info(
+                "CYCLE LIMIT: %d signals filtered down to top %d by net_edge (max_trades_per_cycle=%d)",
+                len(filtered_signals), len(limited), settings.max_trades_per_cycle,
+            )
+            filtered_signals = limited
+
     all_signals = filtered_signals
 
     # === Claude + Gemini reasoning layer ===
@@ -645,14 +725,29 @@ async def run_cycle(
                     pass
 
                 if not reasoning.should_trade:
-                    # --- HAIL MARY: Claude SKIP is logged but does not block ---
-                    logger.info(
-                        "HAILMARY override CLAUDE SKIP: %s %s, %s",
-                        signal.city_id,
-                        signal.description[:40],
-                        reasoning.rationale,
+                    if settings.hail_mary_mode:
+                        # HAIL MARY: Claude SKIP is logged but does not block
+                        logger.info(
+                            "HAILMARY override CLAUDE SKIP: %s %s, %s",
+                            signal.city_id,
+                            signal.description[:40],
+                            reasoning.rationale,
+                        )
+                    else:
+                        logger.info(
+                            "CLAUDE SKIP: %s %s, %s",
+                            signal.city_id,
+                            signal.description[:40],
+                            reasoning.rationale,
+                        )
+                        continue
+                elif not settings.hail_mary_mode:
+                    # Apply Claude's confidence adjustment to position size.
+                    # HAIL MARY ignores it, sizing is fixed downstream.
+                    signal.recommended_size = round(
+                        signal.recommended_size
+                        * reasoning.confidence_adjustment, 2,
                     )
-                # Confidence adjustment is ignored, sizing is fixed downstream
 
                 # === Gemini red team on Claude-approved trades ===
                 try:
@@ -692,12 +787,39 @@ async def run_cycle(
                             )
                         except Exception:
                             pass
-                        # --- HAIL MARY: Gemini dissent is logged but ignored ---
+                        # Variable dissent sizing based on strength.
+                        # HAIL MARY logs the dissent but applies no cut.
                         sizing = gemini_result.get("sizing_recommendation", "full")
-                        if dissent >= 0.3:
+                        if settings.hail_mary_mode:
+                            if dissent >= 0.3:
+                                logger.info(
+                                    "HAILMARY override GEMINI DISSENT: %s d=%.1f %s (no cut applied)",
+                                    signal.city_id, dissent, sizing,
+                                )
+                        elif dissent >= 0.7 or sizing in ("half", "skip"):
+                            if sizing == "skip" and dissent >= 0.9:
+                                multiplier = 0.0
+                            elif sizing == "half" or dissent >= 0.7:
+                                multiplier = 0.5
+                            else:
+                                multiplier = 1.0 - (dissent * 0.5)
+                            old_size = signal.recommended_size
+                            signal.recommended_size = round(
+                                signal.recommended_size * multiplier, 2
+                            )
                             logger.info(
-                                "HAILMARY override GEMINI DISSENT: %s d=%.1f %s (no cut applied)",
-                                signal.city_id, dissent, sizing,
+                                "GEMINI DISSENT: %s, %.0f%% cut $%.0f->$%.0f (d=%.1f %s)",
+                                signal.city_id, (1 - multiplier) * 100,
+                                old_size, signal.recommended_size, dissent, sizing,
+                            )
+                        elif dissent >= 0.3 and sizing == "reduce_20pct":
+                            old_size = signal.recommended_size
+                            signal.recommended_size = round(
+                                signal.recommended_size * 0.8, 2
+                            )
+                            logger.info(
+                                "GEMINI MILD DISSENT: %s, 20%% trim $%.0f -> $%.0f (dissent=%.1f)",
+                                signal.city_id, old_size, signal.recommended_size, dissent,
                             )
                 except Exception:
                     logger.debug("Gemini red team skipped", exc_info=True)
@@ -748,9 +870,30 @@ async def run_cycle(
         except Exception:
             logger.warning("Failed to fetch live balance, will skip balance checks")
 
-    # --- HAIL MARY: USDC floor disabled, position cap removed ---
-    _usdc_floor_block = False
-    max_positions = 999
+    # --- SWING BOT: USDC floor ---
+    # Don't place ANY new live orders if balance is below $20. Prevents
+    # deploying dust into marginal trades. Capital comes back via
+    # resolution/redemption, then we re-enter on high-conviction 48h+ signals.
+    # HAIL MARY disables the floor ($1 tickets down to the last dollar).
+    usdc_floor = 0.0 if settings.hail_mary_mode else 20.0
+    _usdc_floor_block = bool(
+        live_executor
+        and not live_executor.dry_run
+        and _live_balance is not None
+        and _live_balance < usdc_floor
+    )
+    if _usdc_floor_block:
+        logger.warning(
+            "USDC FLOOR: $%.2f < $%.0f minimum, blocking all new live entries",
+            _live_balance, usdc_floor,
+        )
+
+    # --- SWING BOT: Position cap ---
+    # 50 allows new entries alongside existing positions; most existing
+    # positions are small/penny bets that resolve naturally. Effective
+    # concentration is managed by the min size + USDC floor. HAIL MARY
+    # removes the cap for the penny basket.
+    max_positions = 999 if settings.hail_mary_mode else 50
     _active_position_count = 0
     if store and live_executor and not live_executor.dry_run:
         try:
@@ -878,23 +1021,40 @@ async def run_cycle(
                             signal.city_id, signal.edge * 100,
                         )
 
-            # --- HAIL MARY: fixed $1.00 lottery-ticket sizing ---
-            # Override whatever Kelly/Claude/Gemini decided. Every order is
-            # exactly $1.00, penny basket, not concentrated bets.
-            hailmary_ticket_usd = 1.00
-            signal.recommended_size = hailmary_ticket_usd
+            if settings.hail_mary_mode:
+                # --- HAIL MARY: fixed $1.00 lottery-ticket sizing ---
+                # Override whatever Kelly/Claude/Gemini decided. Every order is
+                # exactly $1.00, penny basket, not concentrated bets.
+                signal.recommended_size = HAILMARY_TICKET_USD
 
-            # Margin check, only block if we don't even have $1
-            if _live_balance is not None and _live_balance < hailmary_ticket_usd:
-                logger.info(
-                    "HAILMARY OUT OF CASH: balance $%.2f < $%.2f, skipping %s",
-                    _live_balance, hailmary_ticket_usd, signal.city_id,
-                )
-                continue
+                # Margin check, only block if we don't even have $1
+                if _live_balance is not None and _live_balance < HAILMARY_TICKET_USD:
+                    logger.info(
+                        "HAILMARY OUT OF CASH: balance $%.2f < $%.2f, skipping %s",
+                        _live_balance, HAILMARY_TICKET_USD, signal.city_id,
+                    )
+                    continue
+            else:
+                # --- SWING BOT: Minimum position size ---
+                # Survival tier: $5 min until bankroll > $500, then raise to $10.
+                if signal.recommended_size < MIN_LIVE_SIZE:
+                    signal.recommended_size = MIN_LIVE_SIZE
+
+                # Margin check, use tracked live balance, not stale portfolio
+                # calc. Runs AFTER min size bump so the floor is respected.
+                if _live_balance is not None and signal.recommended_size > _live_balance:
+                    logger.info(
+                        "BALANCE LIMIT: %s needs $%.0f but exchange balance is $%.2f, skipping",
+                        signal.city_id, signal.recommended_size, _live_balance,
+                    )
+                    continue
 
             is_spread = getattr(signal, "strategy", "") == "spread"
-            # --- HAIL MARY: edge floor effectively disabled (any positive edge) ---
-            can_live = signal.edge > 0 or is_spread
+            # Minimum 2% live edge; HAIL MARY takes any positive edge.
+            if settings.hail_mary_mode:
+                can_live = signal.edge > 0 or is_spread
+            else:
+                can_live = signal.edge >= 0.02 or is_spread
             if not can_live:
                 logger.debug(
                     "LIVE SKIP: %s edge=%.3f size=$%.0f (need ≥2%% edge)",
@@ -1016,17 +1176,115 @@ async def run_cycle(
                                             old_id[:16], e,
                                         )
 
-                        # --- HAIL MARY: all risk control checks bypassed ---
-                        # yes_exposure_cap, correlation_limit, gross_exposure all skipped.
-                        # Sizing is fixed $1, max blast radius per ticket is $1.
-                        signal.recommended_size = hailmary_ticket_usd
+                        if settings.hail_mary_mode:
+                            # --- HAIL MARY: all risk control checks bypassed ---
+                            # yes_exposure_cap, correlation_limit, gross_exposure all
+                            # skipped. Sizing is fixed $1, max blast radius per
+                            # ticket is $1.
+                            signal.recommended_size = HAILMARY_TICKET_USD
+                        else:
+                            # === RISK CONTROL CHECKS ===
+                            from weather_edge.analysis.risk_controls import (
+                                check_correlation_limit,
+                                check_gross_exposure,
+                                check_yes_exposure_limit,
+                                get_active_profile,
+                            )
+                            from weather_edge.models.position import Position
+                            profile = get_active_profile()
+
+                            # 1. Yes Exposure Cap
+                            if signal.recommended_side.value == "YES":
+                                raw_pos = store.get_positions()
+                                open_pos = [
+                                    Position(
+                                        market_id=p.get("condition_id"),
+                                        city_id=p.get("city_id"),
+                                        side=p.get("outcome", p.get("side")),
+                                        size_usd=p.get("cost_basis", 0),
+                                        status="open" if p.get("total_shares", 0) > 0 else "closed"
+                                    ) for p in raw_pos
+                                ]
+                                allowed, new_size, reason = check_yes_exposure_limit(
+                                    signal.recommended_size, open_pos, total_equity, profile
+                                )
+                                if not allowed:
+                                    logger.warning(reason)
+                                    continue
+                                if new_size < signal.recommended_size:
+                                    logger.info(reason)
+                                    signal.recommended_size = new_size
+
+                            # 2. Correlation Limit
+                            raw_pos = store.get_positions()
+                            open_pos = [
+                                Position(
+                                    market_id=p.get("condition_id"),
+                                    city_id=p.get("city_id"),
+                                    side=p.get("outcome", p.get("side")),
+                                    size_usd=p.get("cost_basis", 0),
+                                    status="open" if p.get("total_shares", 0) > 0 else "closed"
+                                ) for p in raw_pos
+                            ]
+                            allowed, new_size, reason = check_correlation_limit(
+                                signal.city_id, signal.recommended_size, open_pos, total_equity, profile
+                            )
+                            if not allowed:
+                                logger.warning(reason)
+                                continue
+                            if new_size < signal.recommended_size:
+                                logger.info(reason)
+                                signal.recommended_size = new_size
+
+                            # 3. Gross Exposure
+                            # Use real position value (total_equity - cash) not inflated
+                            # DB cost_basis. DB cost_basis includes resolved positions;
+                            # Polymarket value is truth.
+                            total_at_risk = max(0, total_equity - (_live_balance or 0))
+                            allowed, new_size, reason = check_gross_exposure(
+                                signal.recommended_size, total_at_risk, total_equity, profile
+                            )
+                            if not allowed:
+                                logger.warning(reason)
+                                continue
+                            if new_size < signal.recommended_size:
+                                logger.info(reason)
+                                signal.recommended_size = new_size
+
+                            # Final min-size check after all trims
+                            if signal.recommended_size < MIN_LIVE_SIZE:
+                                logger.info("TRIMMED BELOW MIN: %s size $%.2f < $%.2f",
+                                            signal.city_id, signal.recommended_size, MIN_LIVE_SIZE)
+                                continue
 
                         try:
-                            # --- HAIL MARY: always taker on penny tickets ---
-                            # We need to actually fill before resolution. At 1-3¢
-                            # the taker fee is sub-cent and the maker order would
-                            # never get filled.
-                            use_taker = True
+                            if settings.hail_mary_mode:
+                                # --- HAIL MARY: always taker on penny tickets ---
+                                # We need to actually fill before resolution. At
+                                # 1-3¢ the taker fee is sub-cent and the maker
+                                # order would never get filled.
+                                use_taker = True
+                            else:
+                                # --- SWING BOT: Hybrid entry ---
+                                # Edge >= 8%: taker (cross spread, pay fee, secure alpha)
+                                # Below: maker (rest on book, cancel if unfilled)
+                                # At tail prices (<10c), taker fee is negligible anyway
+                                use_taker = signal.edge >= 0.08
+                                # Re-check fee gate for taker orders, maker is $0 fee
+                                # but taker pays real fees that could eat alpha.
+                                # At $5 bets, taker fee is ~10c, skip fee gate, not
+                                # worth the miss.
+                                if use_taker and fee_blocked and signal.recommended_size > 20:
+                                    logger.info(
+                                        "FEE GATE TAKER: %s edge=%.1f%% but fee eats >40%% alpha on $%.0f, using maker",
+                                        signal.city_id, signal.edge * 100, signal.recommended_size,
+                                    )
+                                    use_taker = False
+                                if use_taker:
+                                    logger.info(
+                                        "TAKER ENTRY: %s edge=%.1f%%, crossing spread",
+                                        signal.city_id, signal.edge * 100,
+                                    )
 
                             result = await live_executor.place_limit_order(
                                 signal, token_id, force_taker=use_taker,
@@ -1049,9 +1307,50 @@ async def run_cycle(
                                     _live_balance or 0,
                                 )
 
-                                # --- HAIL MARY: spread hedge disabled ---
-                                # No hedging on $1 lottery tickets, every dollar
-                                # of capital is one ticket, no doubling up.
+                                # --- LIVE SPREAD CAPTURE HEDGE ---
+                                # HAIL MARY skips hedging: every dollar of
+                                # capital is one ticket, no doubling up.
+                                if (
+                                    market_maker
+                                    and not settings.hail_mary_mode
+                                    and not live_executor.dry_run
+                                ):
+                                    # Use settings.bankroll as baseline for pool-sizing
+                                    hedge = market_maker.generate_hedge_orders(
+                                        signal, market_prices, settings.bankroll, is_live=True
+                                    )
+                                    if hedge:
+                                        m = market_by_id.get(hedge.market_id)
+                                        if m:
+                                            from weather_edge.models.enums import MarketType
+                                            h_side = MarketType.YES if hedge.side == "YES" else MarketType.NO
+                                            h_token_id = m.token_id_yes if hedge.side == "YES" else m.token_id_no
+
+                                            # Create synthetic signal for the hedge order
+                                            h_signal = Signal(
+                                                market_id=hedge.market_id,
+                                                city_id=signal.city_id,
+                                                recommended_side=h_side,
+                                                recommended_size=hedge.cost,
+                                                edge=0.0,  # Spread orders have guaranteed profit, not directional edge
+                                                confidence=1.0,
+                                                description=f"[SPREAD] {hedge.description}",
+                                                strategy="spread",
+                                                market_prob=hedge.limit_price,
+                                            )
+
+                                            try:
+                                                import requests
+                                                h_result = await live_executor.place_limit_order(h_signal, h_token_id)
+                                                if h_result:
+                                                    logger.info(
+                                                        "LIVE SPREAD HEDGE: %s %s %.0f shares @ %.3f, %s",
+                                                        h_side.value, signal.city_id,
+                                                        h_result.size_shares, h_result.limit_price,
+                                                        h_result.order_id,
+                                                    )
+                                            except (requests.RequestException, ValueError, KeyError) as e:
+                                                logger.error("LIVE SPREAD HEDGE FAILED: %s, %s", signal.city_id, e)
 
                         except Exception as e:
                             logger.error(
@@ -1118,10 +1417,15 @@ async def run_cycle(
                             candidate.current_market_price,
                         )
 
-        # --- HAIL MARY: live exit scanning disabled ---
-        # Penny lottery tickets must hold to resolution. Selling them at
-        # -7% edge wastes the spread cost on a $1 position.
-        if False and live_executor and not live_executor.dry_run and store:
+        # --- LIVE EXIT SCANNING (from positions table, independent of paper) ---
+        # HAIL MARY disables it: penny lottery tickets must hold to resolution,
+        # and selling at -7% edge wastes the spread cost on a $1 position.
+        if (
+            not settings.hail_mary_mode
+            and live_executor
+            and not live_executor.dry_run
+            and store
+        ):
             from weather_edge.models.position import Position
             positions = store.get_positions()
             live_positions: list[Position] = []

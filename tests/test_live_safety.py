@@ -256,6 +256,58 @@ class TestConfigContract:
 
 
 # ---------------------------------------------------------------------------
+# Safety rails: the hail-mary configuration must never be the default
+# The 2026-04-07 closing experiment removed every rail (no horizon filter,
+# no agreement gate, no dedupe, no vetoes, no caps). It is preserved behind
+# settings.hail_mary_mode and must stay opt-in.
+# ---------------------------------------------------------------------------
+
+class TestSafetyRailDefaults:
+
+    def test_hail_mary_mode_defaults_off(self):
+        """Fresh Settings must not start in hail-mary mode."""
+        from weather_edge.config import Settings
+        assert Settings(_env_file=None).hail_mary_mode is False
+
+    def test_rail_settings_have_safe_defaults(self):
+        """The rails the hail-mary removed must default to their safe values."""
+        from weather_edge.config import Settings
+        s = Settings(_env_file=None)
+        assert s.max_bets_per_city_date == 1   # one-bet-per-city dedupe
+        assert s.max_trades_per_cycle == 6     # cycle cap
+        assert s.max_core_zscore == 2.0        # z-score guard
+        assert s.min_edge >= 0.02              # edge floor
+
+    def test_scheduler_sizing_constants(self):
+        """$5 live minimum and $1 hail-mary ticket must both exist."""
+        from weather_edge import scheduler
+        assert scheduler.MIN_LIVE_SIZE == 5.0
+        assert scheduler.HAILMARY_TICKET_USD == 1.0
+
+    def test_no_dead_gated_rails_in_scheduler(self):
+        """No rail may be disabled via an 'if False and ...' dead gate.
+
+        The hail-mary commit turned off live exit scanning this way; rails
+        must be gated on settings.hail_mary_mode so they exist in both modes.
+        """
+        import inspect
+
+        from weather_edge import scheduler
+        source = inspect.getsource(scheduler)
+        assert "if False and" not in source
+
+    def test_rails_branch_on_hail_mary_setting(self):
+        """Every restored rail must consult settings.hail_mary_mode."""
+        import inspect
+
+        from weather_edge import scheduler
+        source = inspect.getsource(scheduler)
+        # 13 rail sites branch on the flag; require at least 10 mentions so
+        # a refactor that quietly drops most of them fails this test.
+        assert source.count("hail_mary_mode") >= 10
+
+
+# ---------------------------------------------------------------------------
 # ENSO fallback: must warn, not silently use stale data
 # ---------------------------------------------------------------------------
 
