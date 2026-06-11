@@ -44,7 +44,7 @@ oracle, and the "no edge" verdict was measured through a distorted lens. The
 public history is fixed so you fork from a correct base, not a broken one. The
 exact as-it-died state is preserved at the git tag **`v1.0-as-it-died`**.
 
-Twelve fixes (commit `5e07054`), each with regression tests:
+Twelve fixes (commit `9262e5e`), each with regression tests:
 
 | Area | Fix |
 |------|-----|
@@ -52,6 +52,20 @@ Twelve fixes (commit `5e07054`), each with regression tests:
 | Signal | Fahrenheit range buckets integrate the correct round-half-up °C band (the old code added 1.0 °C to a converted bound, inflating YES probability) |
 | Honesty | Backtester models spread/fees/fills and reports skill vs a climatology baseline instead of a flat fictional P&L; paper exits can realise losses; the "Brier" score is honestly renamed and statistically caveated |
 | Docs | Station table corrected and **all 24 stations verified** against live market resolution URLs |
+
+### Second cleanup wave (2026-06)
+
+A later independent review ([`docs/PROVING_RUN_REVIEW.md`](docs/PROVING_RUN_REVIEW.md))
+concluded that the proving run never actually tested the thesis (every day of
+it traded through at least one broken layer), so the honest verdict is
+"edge **unproven**", not "edge disproven". It also found the published repo
+still contradicted its own lessons in four ways, now fixed:
+
+| Area | Fix |
+|------|-----|
+| Safety | The rail-less **hail-mary configuration was the shipped default** (no horizon filter, no agreement gate, no dedupe, AI vetoes ignored, no exposure caps, exit monitor dead-gated). All rails restored; the hail-mary is preserved verbatim behind `HAIL_MARY_MODE` (default off, never enable with real money) |
+| Paper honesty | Paper fills crossed nothing and paid nothing (the lesson-2 fiction, again). Paper entries now cross the spread and pay the dynamic taker fee; early exits pay a taker fee on proceeds |
+| Signal | The dynamic bias correction now applies only when the measured bias clears a 2-standard-error significance gate (the uniform correction damaged already-good cities, London -302%); Kelly sizes at the effective fill price (mid + half-spread) instead of the frictionless midpoint; the HIGH-tier spread gate is real instead of a hardcoded `True` |
 
 ## How it works
 
@@ -101,8 +115,9 @@ src/weather_edge/
   scheduler.py   the main cycle (fetch → consensus → edge → trade → resolve)
   config.py      24 cities: ICAO station, timezone, unit, model weights
 scripts/         hindcast/bias-table builders, ops helpers
-tests/           pytest suite (164 tests)
+tests/           pytest suite (190 tests)
 OPEN_SOURCE_ARCHIVE.md   the post-mortem (read this)
+docs/PROVING_RUN_REVIEW.md   what the proving run did and did not prove
 ```
 
 ## Quickstart
