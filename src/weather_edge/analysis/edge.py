@@ -110,19 +110,26 @@ def calculate_edge(
     # When models disagree (low confidence), shrink toward market price
     adj_prob = adjusted_confidence * model_prob + (1 - adjusted_confidence) * market_prob
 
+    # Kelly is computed at the EFFECTIVE fill price (mid + half spread on
+    # the side we'd lift), not the frictionless midpoint. Midpoint Kelly
+    # systematically over-sizes: the spread is a real entry cost that
+    # shrinks the payout odds. With spread=0 this reduces to the old math.
+    half_spread = max(0.0, spread) / 2.0
+
     # Determine side: buy YES if model says higher prob than market
     if adj_prob > market_prob:
         side = TradeSide.YES
         edge = adj_prob - market_prob
-        # Kelly for YES bet: we're paying market_prob to win (1 - market_prob)
-        odds = (1.0 - market_prob) / market_prob
+        # Kelly for YES bet: we're paying price_eff to win (1 - price_eff)
+        price_eff = min(0.99, market_prob + half_spread)
+        odds = (1.0 - price_eff) / price_eff
         kelly_f = (adj_prob * odds - (1.0 - adj_prob)) / odds if odds > 0 else 0.0
     else:
         side = TradeSide.NO
         edge = market_prob - adj_prob
-        # Kelly for NO bet: we're paying (1 - market_prob) to win market_prob
-        no_price = 1.0 - market_prob
-        odds = market_prob / no_price if no_price > 0 else 0.0
+        # Kelly for NO bet: we're paying the NO ask to win the rest
+        no_price_eff = min(0.99, (1.0 - market_prob) + half_spread)
+        odds = (1.0 - no_price_eff) / no_price_eff if no_price_eff > 0 else 0.0
         no_prob = 1.0 - adj_prob
         kelly_f = (no_prob * odds - adj_prob) / odds if odds > 0 else 0.0
 
@@ -189,7 +196,12 @@ def calculate_edge(
     else:
         strategy = "core"
         # Determine confidence tier for core bets using net_edge (after fees)
-        spread_ok = True  # We'd check spread from price data in practice
+        # Spread gate: crossing the book costs half the spread in probability
+        # units. Same 40%-of-alpha convention as the fee gate: if half the
+        # spread eats >40% of the raw edge, the signal can't be HIGH tier.
+        # (This flag was a hardcoded True placeholder until the post-release
+        # cleanup, despite the real spread being passed in.)
+        spread_ok = edge > 0 and (half_spread <= 0.4 * edge)
 
         # Use differential thresholds if provided, fallback to standard otherwise
         m_edge_yes = min_edge_yes or 0.05
