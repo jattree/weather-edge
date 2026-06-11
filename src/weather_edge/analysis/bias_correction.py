@@ -21,6 +21,16 @@ logger = logging.getLogger(__name__)
 # Minimum snapshots needed to trust a bias correction
 MIN_SNAPSHOTS_FOR_BIAS = 14
 
+# Significance gate: only apply a correction whose mean bias is
+# distinguishable from sampling noise (|bias| > t * standard error).
+# The 2026-04-01 station-offset validation showed why a uniform
+# correction is a wash: it helped cities with large real offsets
+# (HKG -1.32C, +49% MAE) while actively damaging cities whose raw
+# forecast was already excellent (London raw MAE 0.11C, correction
+# made it 302% worse). Gating on significance keeps the HKG-style
+# wins without the London-style damage.
+BIAS_SIGNIFICANCE_T = 2.0
+
 
 @dataclass(frozen=True)
 class BiasCorrection:
@@ -35,12 +45,49 @@ _bias_cache: dict[tuple[str, str], BiasCorrection] = {}
 _cache_age: float = 0
 
 
+def compute_gated_bias(errors: list[float]) -> BiasCorrection:
+    """Turn a sample of forecast errors into a (possibly gated) correction.
+
+    errors are (forecast - actual) per snapshot. Returns a zero correction
+    when the sample is too small or the mean bias is not statistically
+    distinguishable from noise.
+    """
+    if len(errors) < MIN_SNAPSHOTS_FOR_BIAS:
+        return BiasCorrection(notes="insufficient data")
+
+    n = len(errors)
+    mean_bias = sum(errors) / n
+
+    # Significance gate: a bias within ~2 standard errors of zero is
+    # indistinguishable from noise; correcting for it just degrades
+    # cities whose forecast is already good (the London/Miami failure
+    # in the 2026-04-01 validation).
+    variance = sum((e - mean_bias) ** 2 for e in errors) / max(1, n - 1)
+    std_err = (variance ** 0.5) / (n ** 0.5)
+    if abs(mean_bias) < BIAS_SIGNIFICANCE_T * std_err:
+        return BiasCorrection(
+            notes=(
+                f"gated: bias {mean_bias:+.2f}°C within noise "
+                f"(±{BIAS_SIGNIFICANCE_T:.0f}·SE={std_err:.2f}°C, n={n})"
+            ),
+        )
+
+    # Correction = negative of bias (if model runs warm, subtract)
+    correction = -mean_bias
+
+    return BiasCorrection(
+        temp_max_offset=round(correction, 3),
+        temp_min_offset=round(correction, 3),
+        notes=f"dynamic {n}-sample, bias={mean_bias:+.2f}°C",
+    )
+
+
 def _load_dynamic_bias(model_name: str, city_id: City) -> BiasCorrection:
     """Compute bias correction from hindcast data.
 
     Queries forecast_snapshots for this model+city, computes
     mean(forecast - actual) over the most recent data, and returns
-    the negative as the correction offset.
+    the negative as the correction offset (gated on significance).
     """
     try:
         from weather_edge.persistence import PersistentStore
@@ -57,20 +104,8 @@ def _load_dynamic_bias(model_name: str, city_id: City) -> BiasCorrection:
         ).fetchall()
         store.close()
 
-        if len(rows) < MIN_SNAPSHOTS_FOR_BIAS:
-            return BiasCorrection(notes="insufficient data")
-
         errors = [r["forecast_value"] - r["actual_value"] for r in rows]
-        mean_bias = sum(errors) / len(errors)
-
-        # Correction = negative of bias (if model runs warm, subtract)
-        correction = -mean_bias
-
-        return BiasCorrection(
-            temp_max_offset=round(correction, 3),
-            temp_min_offset=round(correction, 3),
-            notes=f"dynamic {len(rows)}-sample, bias={mean_bias:+.2f}°C",
-        )
+        return compute_gated_bias(errors)
     except Exception as e:
         logger.debug("Dynamic bias lookup failed: %s", e)
         return BiasCorrection()
