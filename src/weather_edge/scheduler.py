@@ -342,6 +342,150 @@ def _gemini_size_multiplier(dissent: float, sizing: str) -> float:
     return 1.0
 
 
+def _save_claude_decision(store, signal: Signal, reasoning) -> None:
+    """Persist a Claude verdict for accuracy analysis (best effort)."""
+    try:
+        store.save_ai_decision(
+            source="claude",
+            decision="TRADE" if reasoning.should_trade else "SKIP",
+            city_id=signal.city_id,
+            market_id=signal.market_id,
+            rationale=reasoning.rationale[:500],
+            confidence_adj=reasoning.confidence_adjustment,
+        )
+    except Exception:
+        pass
+
+
+def _apply_claude_verdict(signal: Signal, reasoning, memory, hail: bool) -> float | None:
+    """Apply Claude's verdict. Returns the size multiplier, or None if vetoed."""
+    size_mult = 1.0
+    if not reasoning.should_trade:
+        if hail:
+            # HAIL MARY: Claude SKIP is logged but does not block
+            logger.info(
+                "HAILMARY override CLAUDE SKIP: %s %s, %s",
+                signal.city_id, signal.description[:40], reasoning.rationale,
+            )
+        else:
+            logger.info(
+                "CLAUDE SKIP: %s %s, %s",
+                signal.city_id, signal.description[:40], reasoning.rationale,
+            )
+            memory.record_veto(signal, reasoning.rationale, "claude")
+            return None
+    elif not hail:
+        # Apply Claude's confidence adjustment to position size.
+        # HAIL MARY ignores it, sizing is fixed downstream.
+        size_mult = reasoning.confidence_adjustment
+        signal.recommended_size = round(signal.recommended_size * size_mult, 2)
+    return size_mult
+
+
+async def _gemini_red_team(
+    signal: Signal, model_vals: dict[str, float], consensus_mean: float,
+    consensus_std: float, reasoning,
+) -> dict | None:
+    """Gemini red team on a Claude-approved trade.
+
+    None = Gemini not configured (Claude-only review). A configured Gemini
+    that errors returns a fail-closed result carrying "error".
+    """
+    from weather_edge.analysis import gemini_reasoning
+
+    try:
+        return await gemini_reasoning.red_team_trade(
+            signal, model_vals, consensus_mean, consensus_std,
+            claude_rationale=reasoning.rationale,
+        )
+    except Exception as e:
+        logger.warning("Gemini red team crashed for %s: %s", signal.city_id, e)
+        return {"error": str(e), "dissent_strength": 1.0,
+                "verdict": "DISSENT", "sizing_recommendation": "skip"}
+
+
+def _record_gemini_decision(
+    signal: Signal, gemini_result: dict, store, dissent: float, verdict: str,
+) -> None:
+    """Add a Gemini verdict to the AI Decisions tab and persist it (best effort)."""
+    from weather_edge.analysis.claude_reasoning import _decision_history
+
+    _decision_history.insert(0, {
+        "time": datetime.now(timezone.utc).strftime("%H:%M:%S"),
+        "city": (
+            signal.city_id.upper()
+            if isinstance(signal.city_id, str)
+            else signal.city_id
+        ),
+        "decision": "DISSENT" if verdict == "DISSENT" else "AGREE",
+        "signal": signal.description[:60],
+        "adjustment": round(1.0 - dissent, 2),
+        "rationale": "; ".join(gemini_result.get("counter_arguments", [])[:2]),
+        "risk_factors": [gemini_result.get("risk_the_bull_missed", "")],
+        "source": "gemini",
+    })
+    try:
+        store.save_ai_decision(
+            source="gemini",
+            decision=verdict,
+            city_id=signal.city_id,
+            market_id=signal.market_id,
+            rationale="; ".join(gemini_result.get("counter_arguments", [])[:2]),
+            dissent_strength=dissent,
+        )
+    except Exception:
+        pass
+
+
+def _apply_gemini_sizing(signal: Signal, dissent: float, sizing: str, memory) -> float | None:
+    """Cut ``signal`` by the Gemini multiplier. Returns it, or None if Gemini vetoes."""
+    multiplier = _gemini_size_multiplier(dissent, sizing)
+    if multiplier <= 0:
+        logger.info(
+            "GEMINI VETO: %s, sizing=%s dissent=%.1f, dropping signal",
+            signal.city_id, sizing, dissent,
+        )
+        memory.record_veto(signal, f"gemini {sizing} d={dissent:.1f}", "gemini")
+        return None
+    if multiplier < 1.0:
+        old_size = signal.recommended_size
+        signal.recommended_size = round(signal.recommended_size * multiplier, 2)
+        logger.info(
+            "GEMINI DISSENT: %s, %.0f%% cut $%.0f->$%.0f (d=%.1f %s)",
+            signal.city_id, (1 - multiplier) * 100,
+            old_size, signal.recommended_size, dissent, sizing,
+        )
+    return multiplier
+
+
+def _gemini_gate(
+    signal: Signal, gemini_result: dict, store, *, memory, hail: bool,
+) -> tuple[str | None, float]:
+    """Apply a Gemini verdict: (terminal outcome or None, size multiplier)."""
+    dissent = float(gemini_result.get("dissent_strength", 1.0))
+    verdict = gemini_result.get("verdict", "DISSENT")
+    sizing = gemini_result.get("sizing_recommendation", "skip")
+    _record_gemini_decision(signal, gemini_result, store, dissent, verdict)
+
+    if hail:
+        if gemini_result.get("error") or dissent >= 0.3:
+            logger.info(
+                "HAILMARY override GEMINI DISSENT: %s d=%.1f %s (no cut applied)",
+                signal.city_id, dissent, sizing,
+            )
+        return None, 1.0
+    if gemini_result.get("error"):
+        logger.warning(
+            "GEMINI REVIEW FAILED: %s, not executing this cycle (%s)",
+            signal.city_id, gemini_result["error"],
+        )
+        return "failed", 1.0
+    multiplier = _apply_gemini_sizing(signal, dissent, sizing, memory)
+    if multiplier is None:
+        return "vetoed", 1.0
+    return None, multiplier
+
+
 async def _review_signal(signal: Signal, forecast_cache: dict[tuple, list], store) -> str:
     """Claude + Gemini review of one signal: 'approved', 'vetoed' or 'failed'.
 
@@ -349,8 +493,7 @@ async def _review_signal(signal: Signal, forecast_cache: dict[tuple, list], stor
     records approvals/vetoes in the shared review memory. In hail-mary mode the
     verdicts are logged only (no cut, no block, nothing remembered).
     """
-    from weather_edge.analysis import gemini_reasoning
-    from weather_edge.analysis.claude_reasoning import _decision_history, get_review_memory
+    from weather_edge.analysis.claude_reasoning import get_review_memory
 
     hail = settings.hail_mary_mode
     memory = get_review_memory()
@@ -368,119 +511,102 @@ async def _review_signal(signal: Signal, forecast_cache: dict[tuple, list], stor
         return "failed"
 
     record_decision(reasoning)
-    try:
-        store.save_ai_decision(
-            source="claude",
-            decision="TRADE" if reasoning.should_trade else "SKIP",
-            city_id=signal.city_id,
-            market_id=signal.market_id,
-            rationale=reasoning.rationale[:500],
-            confidence_adj=reasoning.confidence_adjustment,
-        )
-    except Exception:
-        pass
+    _save_claude_decision(store, signal, reasoning)
 
     if not reasoning.review_ok and not hail:
         return "failed"
 
-    size_mult = 1.0
-    if not reasoning.should_trade:
-        if hail:
-            # HAIL MARY: Claude SKIP is logged but does not block
-            logger.info(
-                "HAILMARY override CLAUDE SKIP: %s %s, %s",
-                signal.city_id, signal.description[:40], reasoning.rationale,
-            )
-        else:
-            logger.info(
-                "CLAUDE SKIP: %s %s, %s",
-                signal.city_id, signal.description[:40], reasoning.rationale,
-            )
-            memory.record_veto(signal, reasoning.rationale, "claude")
-            return "vetoed"
-    elif not hail:
-        # Apply Claude's confidence adjustment to position size.
-        # HAIL MARY ignores it, sizing is fixed downstream.
-        size_mult = reasoning.confidence_adjustment
-        signal.recommended_size = round(signal.recommended_size * size_mult, 2)
+    size_mult = _apply_claude_verdict(signal, reasoning, memory, hail)
+    if size_mult is None:
+        return "vetoed"
 
-    # === Gemini red team on Claude-approved trades ===
-    # None = Gemini not configured (Claude-only review). A configured Gemini
-    # that errors returns a fail-closed result carrying "error".
-    try:
-        gemini_result = await gemini_reasoning.red_team_trade(
-            signal, model_vals, consensus_mean, consensus_std,
-            claude_rationale=reasoning.rationale,
-        )
-    except Exception as e:
-        logger.warning("Gemini red team crashed for %s: %s", signal.city_id, e)
-        gemini_result = {"error": str(e), "dissent_strength": 1.0,
-                         "verdict": "DISSENT", "sizing_recommendation": "skip"}
-
+    gemini_result = await _gemini_red_team(
+        signal, model_vals, consensus_mean, consensus_std, reasoning,
+    )
     if gemini_result:
-        dissent = float(gemini_result.get("dissent_strength", 1.0))
-        verdict = gemini_result.get("verdict", "DISSENT")
-        sizing = gemini_result.get("sizing_recommendation", "skip")
-        _decision_history.insert(0, {
-            "time": datetime.now(timezone.utc).strftime("%H:%M:%S"),
-            "city": (
-                signal.city_id.upper()
-                if isinstance(signal.city_id, str)
-                else signal.city_id
-            ),
-            "decision": "DISSENT" if verdict == "DISSENT" else "AGREE",
-            "signal": signal.description[:60],
-            "adjustment": round(1.0 - dissent, 2),
-            "rationale": "; ".join(gemini_result.get("counter_arguments", [])[:2]),
-            "risk_factors": [gemini_result.get("risk_the_bull_missed", "")],
-            "source": "gemini",
-        })
-        try:
-            store.save_ai_decision(
-                source="gemini",
-                decision=verdict,
-                city_id=signal.city_id,
-                market_id=signal.market_id,
-                rationale="; ".join(gemini_result.get("counter_arguments", [])[:2]),
-                dissent_strength=dissent,
-            )
-        except Exception:
-            pass
-
-        if hail:
-            if gemini_result.get("error") or dissent >= 0.3:
-                logger.info(
-                    "HAILMARY override GEMINI DISSENT: %s d=%.1f %s (no cut applied)",
-                    signal.city_id, dissent, sizing,
-                )
-        elif gemini_result.get("error"):
-            logger.warning(
-                "GEMINI REVIEW FAILED: %s, not executing this cycle (%s)",
-                signal.city_id, gemini_result["error"],
-            )
-            return "failed"
-        else:
-            multiplier = _gemini_size_multiplier(dissent, sizing)
-            if multiplier <= 0:
-                logger.info(
-                    "GEMINI VETO: %s, sizing=%s dissent=%.1f, dropping signal",
-                    signal.city_id, sizing, dissent,
-                )
-                memory.record_veto(signal, f"gemini {sizing} d={dissent:.1f}", "gemini")
-                return "vetoed"
-            if multiplier < 1.0:
-                old_size = signal.recommended_size
-                signal.recommended_size = round(signal.recommended_size * multiplier, 2)
-                logger.info(
-                    "GEMINI DISSENT: %s, %.0f%% cut $%.0f->$%.0f (d=%.1f %s)",
-                    signal.city_id, (1 - multiplier) * 100,
-                    old_size, signal.recommended_size, dissent, sizing,
-                )
-            size_mult *= multiplier
+        outcome, multiplier = _gemini_gate(
+            signal, gemini_result, store, memory=memory, hail=hail,
+        )
+        if outcome:
+            return outcome
+        size_mult *= multiplier
 
     if not hail:
         memory.record_approval(signal, size_mult, reasoning.rationale)
     return "approved"
+
+
+def _remembered_vetoes(signals: list[Signal], memory) -> dict[int, str]:
+    """``{id(signal): "vetoed"}`` for signals with a veto recorded earlier today."""
+    outcome: dict[int, str] = {}
+    for s in signals:
+        veto = memory.veto_for(s)
+        if veto:
+            outcome[id(s)] = "vetoed"
+            logger.info(
+                "AI VETO (remembered, %s): %s %s %s, %s",
+                veto.source, s.city_id, s.target_date, s.description[:40], veto.reason,
+            )
+    return outcome
+
+
+async def _review_candidates(
+    signals: list[Signal], outcome: dict[int, str], forecast_cache: dict[tuple, list],
+    store, *, memory, max_reviews: int,
+) -> None:
+    """Review up to ``max_reviews`` signals, recording each result in ``outcome``."""
+    candidates = [
+        s for s in signals
+        if s.confidence_tier.value != "low" and id(s) not in outcome
+    ]
+    # Unreviewed signals first so the budget eventually covers all of them.
+    candidates.sort(key=lambda s: (memory.approval_for(s) is not None, -abs(s.edge)))
+    for s in candidates[:max_reviews]:
+        outcome[id(s)] = await _review_signal(s, forecast_cache, store)
+
+
+def _unreviewed_reason(run_ai_reasoning: bool, max_reviews: int) -> str:
+    """Why a signal with no review this cycle went unreviewed (for the log)."""
+    if not run_ai_reasoning:
+        return "AI skipped on this cycle (sniper / refresh cooldown)"
+    if not ANTHROPIC_API_KEY:
+        return "no ANTHROPIC_API_KEY"
+    return f"outside the {max_reviews}-review budget"
+
+
+def _clears_ai_gate(
+    s: Signal, state: str | None, memory, *, require_review: bool, why: str,
+) -> bool:
+    """True if ``s`` may execute given its review ``state`` this cycle."""
+    if state == "vetoed":
+        return False
+    if state == "approved":
+        return s.recommended_size > 0
+    if state is None:
+        approval = memory.approval_for(s)
+        if approval:
+            s.recommended_size = round(s.recommended_size * approval.size_multiplier, 2)
+            if s.recommended_size > 0:
+                logger.info(
+                    "AI APPROVAL (remembered): %s %s %s, size x%.2f",
+                    s.city_id, s.target_date, s.description[:40],
+                    approval.size_multiplier,
+                )
+                return True
+            return False
+    # Failed review, or never reviewed
+    if not require_review:
+        logger.warning(
+            "UNREVIEWED TRADE (require_ai_review=False): %s %s %s",
+            s.city_id, s.target_date, s.description[:40],
+        )
+        return True
+    logger.info(
+        "NO AI APPROVAL: %s %s %s not executed (%s)",
+        s.city_id, s.target_date, s.description[:40],
+        "review failed" if state == "failed" else why,
+    )
+    return False
 
 
 async def apply_ai_review(
@@ -519,72 +645,24 @@ async def apply_ai_review(
     memory = get_review_memory()
     memory.evict_before(date.today())
 
-    outcome: dict[int, str] = {}
-    if not hail:
-        for s in signals:
-            veto = memory.veto_for(s)
-            if veto:
-                outcome[id(s)] = "vetoed"
-                logger.info(
-                    "AI VETO (remembered, %s): %s %s %s, %s",
-                    veto.source, s.city_id, s.target_date, s.description[:40], veto.reason,
-                )
+    outcome = {} if hail else _remembered_vetoes(signals, memory)
 
     ai_available = bool(run_ai_reasoning and ANTHROPIC_API_KEY)
     if ai_available:
-        candidates = [
-            s for s in signals
-            if s.confidence_tier.value != "low" and id(s) not in outcome
-        ]
-        # Unreviewed signals first so the budget eventually covers all of them.
-        candidates.sort(key=lambda s: (memory.approval_for(s) is not None, -abs(s.edge)))
-        for s in candidates[:max_reviews]:
-            outcome[id(s)] = await _review_signal(s, forecast_cache, store)
+        await _review_candidates(
+            signals, outcome, forecast_cache, store, memory=memory, max_reviews=max_reviews,
+        )
 
     if hail:
         return list(signals)
 
-    if not run_ai_reasoning:
-        why = "AI skipped on this cycle (sniper / refresh cooldown)"
-    elif not ANTHROPIC_API_KEY:
-        why = "no ANTHROPIC_API_KEY"
-    else:
-        why = f"outside the {max_reviews}-review budget"
-
-    executable: list[Signal] = []
-    for s in signals:
-        state = outcome.get(id(s))
-        if state == "vetoed":
-            continue
-        if state == "approved":
-            if s.recommended_size > 0:
-                executable.append(s)
-            continue
-        if state is None:
-            approval = memory.approval_for(s)
-            if approval:
-                s.recommended_size = round(s.recommended_size * approval.size_multiplier, 2)
-                if s.recommended_size > 0:
-                    logger.info(
-                        "AI APPROVAL (remembered): %s %s %s, size x%.2f",
-                        s.city_id, s.target_date, s.description[:40],
-                        approval.size_multiplier,
-                    )
-                    executable.append(s)
-                continue
-        # Failed review, or never reviewed
-        if not require_review:
-            logger.warning(
-                "UNREVIEWED TRADE (require_ai_review=False): %s %s %s",
-                s.city_id, s.target_date, s.description[:40],
-            )
-            executable.append(s)
-        else:
-            logger.info(
-                "NO AI APPROVAL: %s %s %s not executed (%s)",
-                s.city_id, s.target_date, s.description[:40],
-                "review failed" if state == "failed" else why,
-            )
+    why = _unreviewed_reason(run_ai_reasoning, max_reviews)
+    executable = [
+        s for s in signals
+        if _clears_ai_gate(
+            s, outcome.get(id(s)), memory, require_review=require_review, why=why,
+        )
+    ]
 
     logger.info(
         "AI GATE: %d/%d signals cleared for execution", len(executable), len(signals),
