@@ -17,6 +17,7 @@ from tests.test_run_cycle_characterization import (
 from weather_edge import scheduler
 from weather_edge.analysis import claude_reasoning
 from weather_edge.analysis.edge import Signal
+from weather_edge.fetchers import polymarket
 from weather_edge.models.enums import City, MarketType, SignalTier, TradeSide
 
 
@@ -238,7 +239,7 @@ def _page(prefix, n):
 
 
 async def test_cleanup_paginates_and_keeps_positions_on_later_pages(monkeypatch, tmp_path):
-    limit = scheduler.DATA_API_POSITIONS_PAGE_LIMIT
+    limit = polymarket.DATA_API_POSITIONS_PAGE_LIMIT
     pages = [(200, _page("a", limit)), (200, _page("b", 3))]
     store, calls = await _run_cleanup(
         monkeypatch, tmp_path, pages, ["a0", "b1", "resolved"],
@@ -250,7 +251,7 @@ async def test_cleanup_paginates_and_keeps_positions_on_later_pages(monkeypatch,
 
 @pytest.mark.parametrize("failure", ["status", "raise", "not_list"])
 async def test_cleanup_never_zeroes_when_a_page_fails(monkeypatch, tmp_path, failure):
-    limit = scheduler.DATA_API_POSITIONS_PAGE_LIMIT
+    limit = polymarket.DATA_API_POSITIONS_PAGE_LIMIT
     bad = {"status": (500, []), "raise": RuntimeError("down"),
            "not_list": (200, {"error": "x"})}[failure]
     pages = [(200, _page("a", limit)), bad]
@@ -259,11 +260,11 @@ async def test_cleanup_never_zeroes_when_a_page_fails(monkeypatch, tmp_path, fai
 
 
 async def test_cleanup_never_zeroes_when_every_page_is_full(monkeypatch, tmp_path):
-    limit = scheduler.DATA_API_POSITIONS_PAGE_LIMIT
+    limit = polymarket.DATA_API_POSITIONS_PAGE_LIMIT
     pages = [(200, _page(f"p{n}-", limit))
-             for n in range(scheduler.DATA_API_POSITIONS_MAX_PAGES)]
+             for n in range(polymarket.DATA_API_POSITIONS_MAX_PAGES)]
     store, calls = await _run_cleanup(monkeypatch, tmp_path, pages, ["p0-1", "resolved"])
-    assert len(calls) == scheduler.DATA_API_POSITIONS_MAX_PAGES
+    assert len(calls) == polymarket.DATA_API_POSITIONS_MAX_PAGES
     assert _held(store) == ["p0-1", "resolved"]
 
 

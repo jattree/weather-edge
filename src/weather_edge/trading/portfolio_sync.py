@@ -202,17 +202,18 @@ async def sync_portfolio(executor, store, market_lookup: dict | None = None) -> 
     # position count. Cross-reference with the Data API to clean up.
     try:
         import httpx as _httpx
+        from weather_edge.fetchers.polymarket import fetch_all_data_api_positions
         async with _httpx.AsyncClient() as _client:
-            _resp = await _client.get(
-                "https://data-api.polymarket.com/positions",
-                params={
-                    "user": (executor.wallet_address or our_address).lower(),
-                    "sizeThreshold": 0,
-                },
-                timeout=15.0,
+            api_positions = await fetch_all_data_api_positions(
+                _client, (executor.wallet_address or our_address).lower(),
             )
-            if _resp.status_code == 200:
-                api_positions = _resp.json()
+            # Only a complete list is trusted: a failed or truncated fetch
+            # would zero positions we still hold.
+            if api_positions is None:
+                logger.warning(
+                    "POSITION CLEANUP skipped: Data API position list incomplete",
+                )
+            else:
                 active_cids = {
                     p.get("conditionId")
                     for p in api_positions
@@ -357,15 +358,14 @@ async def fetch_polymarket_state(executor, wallet: str) -> dict:
 
     # 2. Positions from Data API (public, uses proxy wallet)
     try:
+        from weather_edge.fetchers.polymarket import fetch_all_data_api_positions
         async with httpx.AsyncClient() as client:
-            resp = await client.get(
-                "https://data-api.polymarket.com/positions",
-                params={"user": wallet.lower(), "sizeThreshold": 0},
-                timeout=15.0,
-            )
-            if resp.status_code == 200:
-                result["positions"] = resp.json()
+            positions = await fetch_all_data_api_positions(client, wallet.lower())
+            if positions is not None:
+                result["positions"] = positions
                 positions_ok = True
+            else:
+                logger.warning("Polymarket Data API position list incomplete")
     except Exception:
         logger.warning("Failed to fetch positions from Polymarket Data API")
 

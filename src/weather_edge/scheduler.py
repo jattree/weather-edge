@@ -46,6 +46,7 @@ from weather_edge.fetchers.openmeteo import f_to_c, fetch_city_forecasts
 from weather_edge.fetchers.polymarket import (
     MarketInfo,
     discover_weather_markets,
+    fetch_all_data_api_positions,
 )
 from weather_edge.models.enums import City
 from weather_edge.trading.paper import PaperTrader
@@ -1547,40 +1548,8 @@ def _usdc_floor_blocks(ctx: CycleContext) -> bool:
     return _usdc_floor_block
 
 
-DATA_API_POSITIONS_URL = "https://data-api.polymarket.com/positions"
-# Data API /positions pages with limit (default 100, max 500) and offset
-# (max 10000). An unpaginated call returns only the first 100 rows, and with
-# sizeThreshold=0 resolved dust counts toward that, so it truncates easily.
-DATA_API_POSITIONS_PAGE_LIMIT = 500
-DATA_API_POSITIONS_MAX_PAGES = 20
-
-
-async def _fetch_all_data_api_positions(client, wallet: str) -> list[dict] | None:
-    """Every /positions row for ``wallet``, or None if the list may be incomplete.
-
-    None when any page fails (non-200 or not a list), or when the last page we
-    are allowed to fetch is still full (more rows may exist beyond it).
-    """
-    rows: list[dict] = []
-    for page in range(DATA_API_POSITIONS_MAX_PAGES):
-        resp = await client.get(
-            DATA_API_POSITIONS_URL,
-            params={
-                "user": wallet, "sizeThreshold": 0,
-                "limit": DATA_API_POSITIONS_PAGE_LIMIT,
-                "offset": page * DATA_API_POSITIONS_PAGE_LIMIT,
-            },
-            timeout=15.0,
-        )
-        if resp.status_code != 200:
-            return None
-        batch = resp.json()
-        if not isinstance(batch, list):
-            return None
-        rows.extend(batch)
-        if len(batch) < DATA_API_POSITIONS_PAGE_LIMIT:
-            return rows
-    return None
+# Kept as a module attribute so tests can patch the scheduler's fetch.
+_fetch_all_data_api_positions = fetch_all_data_api_positions
 
 
 async def _clean_resolved_positions(store, live_executor) -> None:
