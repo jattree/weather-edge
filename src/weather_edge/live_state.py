@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -26,6 +27,10 @@ logger = logging.getLogger(__name__)
 _redis_client = None
 _redis_ever_connected = False  # True once a Redis ping has succeeded in this process
 _fallback_cache: dict[str, Any] = {}  # In-memory fallback if Redis is down
+# After a failed connect, don't retry (2s connect timeout) until this
+# time.monotonic() deadline, so an outage doesn't stall every call.
+REDIS_RETRY_BACKOFF_S = 30.0
+_redis_retry_after = 0.0
 
 
 class LiveStateUnavailableError(RuntimeError):
@@ -33,10 +38,17 @@ class LiveStateUnavailableError(RuntimeError):
 
 
 def _get_redis():
-    """Lazy Redis connection, only connects when first used."""
-    global _redis_client, _redis_ever_connected
+    """Lazy Redis connection, only connects when first used.
+
+    A failed connect is not retried for REDIS_RETRY_BACKOFF_S; callers get
+    None (fallback) meanwhile. Strict reads still raise during that window
+    if Redis was connected earlier (see get_value_strict).
+    """
+    global _redis_client, _redis_ever_connected, _redis_retry_after
     if _redis_client is not None:
         return _redis_client
+    if time.monotonic() < _redis_retry_after:
+        return None
     try:
         import redis
 
@@ -65,6 +77,7 @@ def _get_redis():
     except Exception as e:
         logger.warning("Redis unavailable (%s), using in-memory fallback", e)
         _redis_client = None
+        _redis_retry_after = time.monotonic() + REDIS_RETRY_BACKOFF_S
         try:
             from weather_edge.analysis.service_health import record_service_call
             record_service_call("redis", False)
