@@ -4,10 +4,12 @@ Compares 90 days of Open-Meteo gridded archive data against actual METAR
 station observations from IEM. The offset captures the systematic gap
 between the two sources per city.
 
-This is Layer 2 of bias correction:
-  Layer 1: model forecast vs Open-Meteo archive (existing hindcast)
-  Layer 2: Open-Meteo archive vs METAR station (this script)
-  Total correction = Layer 1 + Layer 2
+Diagnostic only: the live bias correction is single-layer (model vs METAR,
+see analysis/bias_correction.py) and does not apply these offsets.
+
+Both sides use the station's LOCAL civil day, station observations go through
+the live resolver's METAR/HKO parsing path, and rounding mismatches use the
+resolver's round-half-up (floor for HK Observatory).
 
 Usage:
     .venv/bin/python scripts/build_station_offsets.py [--days 90]
@@ -15,13 +17,11 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import csv
-import io
+import asyncio
 import logging
 import sqlite3
 import sys
 import time
-from collections import defaultdict
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -30,81 +30,53 @@ import httpx
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
+from weather_edge.analysis.resolver import _hkg_label, _round_half_up
 from weather_edge.config import CITIES
+from weather_edge.fetchers.metar import fetch_station_tmax_range
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s", stream=sys.stdout)
 logger = logging.getLogger(__name__)
 
 DB_PATH = Path(__file__).parent.parent / "weather_edge.db"
-IEM_ASOS_URL = "https://mesonet.agron.iastate.edu/cgi-bin/request/asos.py"
 ARCHIVE_URL = "https://archive-api.open-meteo.com/v1/archive"
 
 
-def fetch_iem_daily_max(
-    icao: str, start: date, end: date,
+def fetch_station_daily_max(
+    icao: str, start: date, end: date, station_tz: str,
 ) -> dict[str, float]:
-    """Fetch daily max temps from IEM METAR archive. Returns {date: tmax_celsius}."""
-    station_id = icao[1:] if icao.startswith("K") else icao
+    """Station daily max (°C) keyed by LOCAL date, via the live resolver's path.
 
-    params = {
-        "station": station_id,
-        "data": "tmpf",
-        "year1": start.year, "month1": start.month, "day1": start.day,
-        "year2": end.year, "month2": end.month, "day2": end.day,
-        "tz": "Etc/UTC",
-        "format": "onlycomma",
-        "latlon": "no", "elev": "no",
-        "missing": "M", "trace": "T",
-        "direct": "no", "report_type": "3",
-    }
-
-    resp = httpx.get(IEM_ASOS_URL, params=params, timeout=30.0)
-    resp.raise_for_status()
-
-    reader = csv.DictReader(io.StringIO(resp.text))
-    daily: dict[str, list[float]] = defaultdict(list)
-
-    for row in reader:
-        ts = row.get("valid", "")
-        tmpf = row.get("tmpf", "M")
-        if ts and tmpf and tmpf != "M":
-            try:
-                daily[ts[:10]].append(float(tmpf))
-            except ValueError:
-                continue
-
-    return {d: (max(vs) - 32.0) * 5.0 / 9.0 for d, vs in daily.items()}
+    Shares weather_edge.fetchers.metar with live resolution: the station's
+    local civil day, SPECI reports, the precise T-group and 6-hour max group,
+    the MIN_READINGS gate, and the HK Observatory feed for 45005. The previous
+    private IEM query used the UTC day, routine reports only, and hourly tmpf
+    alone, so it measured against a different "truth" than the oracle.
+    """
+    return asyncio.run(
+        fetch_station_tmax_range(icao, start, end, station_tz=station_tz),
+    )
 
 
-def fetch_hko_daily_max(start: date, end: date) -> dict[str, float]:
-    """Fetch daily max temps from HK Observatory Open Data API. Returns {date: tmax_celsius}."""
-    url = "https://data.weather.gov.hk/weatherAPI/opendata/opendata.php?dataType=CLMMAXT&rformat=json&station=HKO"
-    resp = httpx.get(url, timeout=30.0)
-    resp.raise_for_status()
-    data = resp.json().get("data", [])
-    
-    daily: dict[str, float] = {}
-    for row in data:
-        try:
-            y, m, d = int(row[0]), int(row[1]), int(row[2])
-            obs_date = date(y, m, d)
-            if start <= obs_date <= end:
-                daily[str(obs_date)] = float(row[3])
-        except (ValueError, IndexError):
-            continue
-    return daily
+def display_label(temp_c: float, is_hkg: bool) -> int:
+    """Whole-degree label the market would resolve on (resolver semantics).
+
+    Round-half-up (Wunderground display), or the floor for HK Observatory.
+    Python's round() is banker's rounding and disagrees on exact halves.
+    """
+    return _hkg_label(temp_c) if is_hkg else _round_half_up(temp_c)
 
 
 def fetch_openmeteo_daily_max(
-    lat: float, lon: float, start: date, end: date,
+    lat: float, lon: float, start: date, end: date, station_tz: str,
 ) -> dict[str, float]:
-    """Fetch daily max temps from Open-Meteo archive. Returns {date: tmax_celsius}."""
+    """Fetch daily max temps from Open-Meteo archive over the station-local day."""
     resp = httpx.get(
         ARCHIVE_URL,
         params={
             "latitude": lat, "longitude": lon,
             "start_date": str(start), "end_date": str(end),
             "daily": "temperature_2m_max",
-            "timezone": "UTC",
+            "timezone": station_tz,
         },
         timeout=15.0,
     )
@@ -156,18 +128,17 @@ def main():
         logger.info("Processing %s (%s)...", config.name, icao)
 
         try:
-            if icao == "45005":
-                iem = fetch_hko_daily_max(start, end)
-            else:
-                iem = fetch_iem_daily_max(icao, start, end)
+            iem = fetch_station_daily_max(icao, start, end, config.timezone)
         except Exception as e:
-            logger.error("  IEM failed: %s", e)
+            logger.error("  Station fetch failed: %s", e)
             continue
 
         time.sleep(0.5)
 
         try:
-            om = fetch_openmeteo_daily_max(config.latitude, config.longitude, start, end)
+            om = fetch_openmeteo_daily_max(
+                config.latitude, config.longitude, start, end, config.timezone,
+            )
         except Exception as e:
             logger.error("  Open-Meteo failed: %s", e)
             continue
@@ -183,7 +154,8 @@ def main():
                 gap = om[d] - iem[d]  # positive = OM reads higher than station
                 gaps.append(gap)
                 matched += 1
-                if round(om[d]) != round(iem[d]):
+                is_hkg = icao == "45005"
+                if display_label(om[d], is_hkg) != display_label(iem[d], is_hkg):
                     rounding_mismatches += 1
 
         if matched < 14:
