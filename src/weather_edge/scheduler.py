@@ -701,6 +701,8 @@ class CycleContext:
     portfolio_summary: dict = field(default_factory=dict)
     # (city_id, target_date) -> GraphCast forecast
     ai_forecasts: dict[tuple[str, date], object] = field(default_factory=dict)
+    # GribStream's compute_ai_physics_divergence, bound when the fetch imports
+    ai_divergence_fn: object | None = None
 
     # Signals: every candidate after filtering, and the AI-cleared subset
     all_signals: list[Signal] = field(default_factory=list)
@@ -918,6 +920,413 @@ async def _discover_markets(ctx: CycleContext) -> None:
     logger.info("Active market groups: %d city-date combos", len(ctx.market_groups))
 
 
+async def _fetch_ai_forecasts_for_date(
+    ctx: CycleContext, ai_target: date, fetch_ai_forecasts_batch,
+) -> None:
+    """GraphCast forecasts for every city with markets on ``ai_target``."""
+    market_cities = sorted(
+        {c for c, d in ctx.market_groups if d == ai_target}, key=lambda c: c.value,
+    )
+    try:
+        ai_batch = await fetch_ai_forecasts_batch(market_cities, ai_target)
+    except Exception:
+        logger.debug("GribStream AI fetch failed for %s", ai_target, exc_info=True)
+        return
+    for cid, fc in (ai_batch or {}).items():
+        ctx.ai_forecasts[(getattr(cid, "value", cid), ai_target)] = fc
+    if ai_batch:
+        logger.info(
+            "GraphCast: %d city forecasts fetched for %s", len(ai_batch), ai_target,
+        )
+
+
+async def _fetch_ai_forecasts(ctx: CycleContext) -> None:
+    """Step 1c: fetch AI model forecasts (GraphCast via GribStream) for comparison.
+
+    Keyed (city_id, target_date): a GraphCast run for one date must never be
+    compared against the physics consensus for another. The divergence
+    function is bound here, with the fetch, so one failed import disables both.
+    """
+    try:
+        from weather_edge.fetchers.gribstream import (
+            compute_ai_physics_divergence,
+            fetch_ai_forecasts_batch,
+        )
+        ctx.ai_divergence_fn = compute_ai_physics_divergence
+        for ai_target in sorted({d for _, d in ctx.market_groups}):
+            await _fetch_ai_forecasts_for_date(ctx, ai_target, fetch_ai_forecasts_batch)
+    except Exception:
+        logger.debug("GribStream AI fetch skipped", exc_info=True)
+
+
+@dataclass
+class SignalGroup:
+    """One (city, target date) market group with its forecasts and pattern adjustment."""
+
+    city_id: City
+    target_date: date
+    markets: list[MarketInfo]
+    forecasts: list
+    pattern_conf_mult: float
+    pattern_bias: float
+
+
+def _save_forecast_snapshot(store, city_id: City, target_date: date, forecasts: list) -> None:
+    """Persist a forecast snapshot for self-learning (best effort)."""
+    try:
+        m_vals = {f.model_name: f.temp_max_c for f in forecasts if f.temp_max_c is not None}
+        if m_vals:
+            store.save_forecast_snapshot(
+                city_id.value, str(target_date), m_vals,
+            )
+    except Exception:
+        pass  # Don't break pipeline if persistence fails
+
+
+def _fresh_cached_forecasts(ctx: CycleContext, city_id: City, target_date: date) -> list | None:
+    """Cached forecasts to fall back on after a failed fetch, if young enough."""
+    cached = ctx.forecast_cache.get((city_id, target_date))
+    max_stale_h = float(getattr(
+        settings, "max_stale_forecast_hours", DEFAULT_MAX_STALE_FORECAST_HOURS,
+    ))
+    age_h = _forecast_age_hours(cached, ctx.now_utc) if cached else None
+    if cached and age_h is not None and age_h <= max_stale_h:
+        logger.warning(
+            "STALE DATA: fetch failed for %s on %s, using cached data from %s "
+            "(%.1fh old)",
+            city_id.value, target_date,
+            cached[0].fetched_at.strftime("%H:%M:%S"), age_h,
+        )
+        return cached
+    if cached:
+        logger.warning(
+            "STALE DATA REJECTED: cached forecast for %s on %s is too old "
+            "(%s h > %.1f h), skipping",
+            city_id.value, target_date,
+            f"{age_h:.1f}" if age_h is not None else "unknown", max_stale_h,
+        )
+    return None
+
+
+async def _group_forecasts(ctx: CycleContext, city_id: City, target_date: date) -> list:
+    """Fetch multi-model forecasts for a group, falling back to a fresh-enough cache."""
+    forecasts = await fetch_city_forecasts(city_id, target_date)
+    if forecasts:
+        ctx.forecast_cache[(city_id, target_date)] = forecasts
+        ctx.refreshed.add((city_id, target_date))
+        _save_forecast_snapshot(ctx.store, city_id, target_date, forecasts)
+        return forecasts
+    # Check if we have stale data in cache
+    return _fresh_cached_forecasts(ctx, city_id, target_date) or forecasts
+
+
+def _variables_needed(markets: list[MarketInfo]) -> set[str]:
+    """Consensus variables the group's markets need (temp_max_c always)."""
+    variables_needed = set()
+    for m in markets:
+        var = get_required_variable(m)
+        if var:
+            variables_needed.add(var)
+    variables_needed.add("temp_max_c")  # Always compute
+    return variables_needed
+
+
+def _collect_thresholds(markets: list[MarketInfo], variable: str) -> list[float]:
+    """Thresholds from all markets needing ``variable``."""
+    thresholds = []
+    for m in markets:
+        if get_required_variable(m) == variable:
+            # Pre-compute on the EXACT band edges that
+            # compute_model_prob_for_market will look up, so the
+            # calibrated blend is served from threshold_probs instead
+            # of missing every key (get_probability_for_threshold also
+            # computes the blend on demand for any other edge).
+            band = _bucket_celsius_band(m)
+            if band is not None:
+                thresholds.extend(e for e in band if e is not None)
+            if m.threshold_low_c is not None:
+                thresholds.append(m.threshold_low_c)
+            if m.threshold_high_c is not None:
+                thresholds.append(m.threshold_high_c)
+            thresholds.append(m.threshold_value)
+    return thresholds
+
+
+def _passes_model_agreement(city_id: City, variable: str, consensus) -> bool:
+    """MODEL AGREEMENT GATE on the raw model spread.
+
+    Per README: Skip if models disagree (std > 2.0C). This prevents
+    trading on noise when ensembles are in chaos. HAIL MARY mode lets
+    every signal through: penny tickets are cheap enough that noisy
+    bets beat missed ones.
+    Applied to the RAW model spread, see _model_agreement_std.
+    """
+    agreement_std = _model_agreement_std(consensus)
+    if agreement_std > MODEL_AGREEMENT_MAX_STD_C:
+        if settings.hail_mary_mode:
+            logger.info(
+                "HAILMARY allow: %s/%s raw std=%.1f > 2.0 (would have skipped)",
+                city_id.value, variable, agreement_std
+            )
+        else:
+            logger.warning(
+                "MODEL AGREEMENT REJECT: %s/%s raw std=%.1f > 2.0, skipping",
+                city_id.value, variable, agreement_std
+            )
+            return False
+    return True
+
+
+def _apply_pattern_bias(group: SignalGroup, variable: str, consensus) -> None:
+    """Apply pattern-based bias shift (e.g. haze suppression) to the consensus."""
+    pattern_bias = group.pattern_bias
+    if pattern_bias != 0:
+        old_mean = consensus.weighted_mean
+        consensus.weighted_mean += pattern_bias
+        consensus.mean_value += pattern_bias
+        logger.info(
+            "  %s/%s PATTERN SHIFT: %.1f°C -> %.1f°C (%+.1f°C)",
+            group.city_id.value, variable, old_mean, consensus.weighted_mean, pattern_bias
+        )
+
+
+def _trend_multiplier(city_id: City, variable: str, consensus) -> float:
+    """Track forecast trends (run-to-run consistency); returns the confidence multiplier."""
+    trend_mult = 1.0
+    try:
+        from weather_edge.analysis.forecast_trends import compute_trend, record_forecast
+        if variable == "temp_max_c":
+            record_forecast(city_id.value, consensus.weighted_mean)
+            trend = compute_trend(city_id.value, consensus.weighted_mean)
+            trend_mult = trend.confidence_multiplier
+            if trend.signal not in ("stable", "insufficient_data"):
+                logger.info(
+                    "  %s TREND: %s (%.2f°C/cycle, stability=%.1f) → conf ×%.2f",
+                    city_id.value, trend.signal, trend.trend_per_cycle,
+                    trend.stability, trend_mult,
+                )
+    except Exception:
+        pass
+    return trend_mult
+
+
+def _ai_divergence(
+    ctx: CycleContext, group: SignalGroup, variable: str, consensus,
+) -> dict | None:
+    """AI vs physics divergence (GraphCast comparison), computed once per city-date-variable."""
+    city_id, target_date = group.city_id, group.target_date
+    _ai_div_key = (city_id.value, target_date, variable)
+    if _ai_div_key not in ctx.ai_divergence_cache:
+        ai_fc = ctx.ai_forecasts.get((city_id.value, target_date))
+        if ai_fc and variable == "temp_max_c":
+            try:
+                div = ctx.ai_divergence_fn(
+                    ai_fc, consensus.weighted_mean,
+                )
+                ctx.ai_divergence_cache[_ai_div_key] = div
+                if div["signal"] == "strong_diverge":
+                    logger.info(
+                        "AI DIVERGE: %s GraphCast="
+                        "%.1fC vs physics=%.1fC "
+                        "(%+.1fC), conf ×%.2f",
+                        city_id.value,
+                        div["ai_max_c"],
+                        div["physics_mean_c"],
+                        div["divergence_c"],
+                        div["confidence_multiplier"],
+                    )
+            except Exception:
+                ctx.ai_divergence_cache[_ai_div_key] = None
+
+    return ctx.ai_divergence_cache.get(_ai_div_key)
+
+
+def _bucket_center(market: MarketInfo) -> float | None:
+    """°C centre of a range bucket, or the threshold of a gte/lte bucket."""
+    bucket_center = None
+    if (
+        market.threshold_dir == "range"
+        and market.threshold_low_c is not None
+        and market.threshold_high_c is not None
+    ):
+        bucket_center = (market.threshold_low_c + market.threshold_high_c) / 2
+    elif (
+        market.threshold_dir in ("gte", "lte")
+        and market.threshold_value is not None
+    ):
+        bucket_center = market.threshold_value
+    return bucket_center
+
+
+def _zscore_rejects(signal: Signal, market: MarketInfo, consensus, city_id: City) -> bool:
+    """Z-score guard: reject core bets on buckets too far from consensus.
+
+    Tail/penny bets (entry <=6c) are exempt, they're designed as
+    lottery tickets. HAIL MARY mode skips the guard: penny-only
+    baskets are far-from-consensus by design.
+    """
+    market_prob = market.yes_price
+    if (
+        not settings.hail_mary_mode
+        and signal.strategy != "tail"
+        and market_prob > 0.06
+    ):
+        bucket_center = _bucket_center(market)
+        if bucket_center is not None and consensus.std_dev > 0:
+            zscore = abs(bucket_center - consensus.weighted_mean) / consensus.std_dev
+            if zscore > settings.max_core_zscore:
+                logger.info(
+                    "ZSCORE REJECT: %s %s, bucket=%.1f°C mean=%.1f°C std=%.1f z=%.1f (max=%.1f)",
+                    city_id.value, market.question[:40],
+                    bucket_center, consensus.weighted_mean,
+                    consensus.std_dev, zscore, settings.max_core_zscore,
+                )
+                return True
+    return False
+
+
+def _signal_for_market(
+    ctx: CycleContext, group: SignalGroup, market: MarketInfo, *,
+    variable: str, consensus, trend_mult: float,
+) -> Signal | None:
+    """Edge signal for one market bucket, or None if it is skipped or rejected."""
+    city_id, target_date = group.city_id, group.target_date
+    if get_required_variable(market) != variable:
+        return None
+
+    # Use price from Gamma API
+    market_prob = market.yes_price
+    if market_prob <= 0.01 or market_prob >= 0.99:
+        return None  # Skip extreme prices (no edge possible)
+
+    model_prob = compute_model_prob_for_market(market, consensus)
+    if model_prob is None:
+        return None
+
+    # Hours to resolution: end of the target date in the city's
+    # local time, not 00:00 UTC.
+    hours_to = hours_to_local_end_of_day(city_id, market.target_date)
+    # The date-level horizon filter above assumes UTC midnight;
+    # enforce it per city too (Asia/Pacific resolve earlier).
+    if hours_to < ctx.min_horizon_hours:
+        return None
+
+    # Apply pattern-based confidence boost + forecast trend stability
+    adjusted_conf = min(1.0, consensus.confidence * group.pattern_conf_mult * trend_mult)
+
+    ai_div = _ai_divergence(ctx, group, variable, consensus)
+    if ai_div:
+        adjusted_conf = min(1.0, adjusted_conf * ai_div["confidence_multiplier"])
+
+    # Spread: real top-of-book if the market carries it, else a
+    # conservative default. Gamma outcomePrices are complementary
+    # (YES + NO ~= 1), so 1-(yes+no) is ~0 and hid the real cost.
+    from weather_edge.trading.market_maker import estimate_market_spread
+    estimated_spread = estimate_market_spread(market)
+
+    from weather_edge.analysis.risk_controls import get_active_profile
+    risk_profile = get_active_profile()
+
+    signal = calculate_edge(
+        market_id=market.market_id,
+        model_prob=model_prob,
+        market_prob=market_prob,
+        model_confidence=adjusted_conf,
+        bankroll=ctx.total_equity,
+        consensus_id=None,
+        hours_to_resolution=hours_to,
+        city_id=city_id.value,
+        target_date=str(target_date),
+        description=market.question[:80],
+        spread=estimated_spread,
+        min_edge_yes=risk_profile.min_edge_yes,
+        min_edge_no=risk_profile.min_edge_no,
+    )
+
+    if _zscore_rejects(signal, market, consensus, city_id):
+        return None
+    return signal
+
+
+def _signals_for_variable(ctx: CycleContext, group: SignalGroup, variable: str) -> None:
+    """Consensus for one variable, then a signal per matching market bucket."""
+    city_id = group.city_id
+    thresholds = _collect_thresholds(group.markets, variable)
+    consensus = compute_consensus(
+        city_id, str(group.target_date), variable, group.forecasts,
+        sorted(set(thresholds)) if thresholds else None,
+    )
+    if consensus is None:
+        return
+    if not _passes_model_agreement(city_id, variable, consensus):
+        return
+
+    _apply_pattern_bias(group, variable, consensus)
+    trend_mult = _trend_multiplier(city_id, variable, consensus)
+
+    logger.info(
+        "  %s/%s: mean=%.1f°C std=%.1f conf=%.0f%% (%d models)",
+        city_id.value, variable,
+        consensus.weighted_mean, consensus.std_dev,
+        consensus.confidence * 100, consensus.model_count,
+    )
+
+    # Compute edge for each matching market bucket
+    for market in group.markets:
+        signal = _signal_for_market(
+            ctx, group, market, variable=variable, consensus=consensus, trend_mult=trend_mult,
+        )
+        if signal is not None:
+            ctx.all_signals.append(signal)
+
+
+async def _signals_for_group(
+    ctx: CycleContext, city_config, city_id: City, target_date: date,
+    city_markets: list[MarketInfo],
+) -> None:
+    """Forecasts, contract check and pattern adjustment for one (city, date) group."""
+    forecasts = await _group_forecasts(ctx, city_id, target_date)
+    if not forecasts:
+        logger.warning("No forecasts for %s on %s", city_id.value, target_date)
+        return
+
+    # Contract: verify sufficient models for reliable consensus
+    has_regional = bool(city_config.regional_models)
+    model_check = validate_model_count(len(forecasts), has_regional)
+    if not model_check.valid:
+        logger.warning(
+            "CONTRACT VIOLATION [%s]: %s, skipping %s on %s",
+            model_check.code, model_check.error, city_id.value, target_date,
+        )
+        return
+
+    # Detect bust-causing weather patterns (Chinook, Foehn, marine layer, etc.)
+    pattern_alerts = detect_patterns(city_id, forecasts)
+    pattern_conf_mult, pattern_bias = get_pattern_adjustment(city_id, pattern_alerts)
+    group = SignalGroup(
+        city_id=city_id, target_date=target_date, markets=city_markets,
+        forecasts=forecasts, pattern_conf_mult=pattern_conf_mult, pattern_bias=pattern_bias,
+    )
+
+    # Compute consensus per variable
+    for variable in _variables_needed(city_markets):
+        _signals_for_variable(ctx, group, variable)
+
+
+async def _compute_signals(ctx: CycleContext) -> None:
+    """Stage 2: for each city with markets, fetch forecasts and compute signals."""
+    cities_processed = set()
+    for (city_id, target_date), city_markets in ctx.market_groups.items():
+        city_config = CITIES[city_id]
+
+        if (city_id, target_date) not in cities_processed:
+            logger.info("=== %s (%s) on %s, %d markets ===",
+                       city_config.name, city_config.icao, target_date, len(city_markets))
+            cities_processed.add((city_id, target_date))
+
+        await _signals_for_group(ctx, city_config, city_id, target_date, city_markets)
+
+
 async def run_cycle(
     paper_trader: PaperTrader | None,
     target_dates: list[date] | None = None,
@@ -951,313 +1360,17 @@ async def run_cycle(
     )
     await _discover_markets(ctx)
 
+    await _fetch_ai_forecasts(ctx)
+    await _compute_signals(ctx)
+
     store = ctx.store
     target_dates = ctx.target_dates
-    now_utc = ctx.now_utc
-    min_horizon_hours = ctx.min_horizon_hours
     all_signals = ctx.all_signals
     _forecast_cache = ctx.forecast_cache
     _refreshed_this_cycle = ctx.refreshed
-    _ai_divergence_cache = ctx.ai_divergence_cache
     markets = ctx.markets
     total_equity = ctx.total_equity
     city_volume = ctx.city_volume
-    market_groups = ctx.market_groups
-
-    # Step 1c: Fetch AI model forecasts (GraphCast via GribStream) for comparison
-    # Keyed (city_id, target_date): a GraphCast run for one date must never be
-    # compared against the physics consensus for another.
-    ai_forecasts: dict[tuple[str, date], object] = {}
-    try:
-        from weather_edge.fetchers.gribstream import (
-            compute_ai_physics_divergence,
-            fetch_ai_forecasts_batch,
-        )
-        for ai_target in sorted({d for _, d in market_groups}):
-            market_cities = sorted(
-                {c for c, d in market_groups if d == ai_target}, key=lambda c: c.value,
-            )
-            try:
-                ai_batch = await fetch_ai_forecasts_batch(market_cities, ai_target)
-            except Exception:
-                logger.debug("GribStream AI fetch failed for %s", ai_target, exc_info=True)
-                continue
-            for cid, fc in (ai_batch or {}).items():
-                ai_forecasts[(getattr(cid, "value", cid), ai_target)] = fc
-            if ai_batch:
-                logger.info(
-                    "GraphCast: %d city forecasts fetched for %s", len(ai_batch), ai_target,
-                )
-    except Exception:
-        logger.debug("GribStream AI fetch skipped", exc_info=True)
-
-    # Step 2: For each city with markets, fetch forecasts and compute signals
-    cities_processed = set()
-    for (city_id, target_date), city_markets in market_groups.items():
-        city_config = CITIES[city_id]
-
-        if (city_id, target_date) not in cities_processed:
-            logger.info("=== %s (%s) on %s, %d markets ===",
-                       city_config.name, city_config.icao, target_date, len(city_markets))
-            cities_processed.add((city_id, target_date))
-
-        # Fetch multi-model forecasts
-        forecasts = await fetch_city_forecasts(city_id, target_date)
-        if forecasts:
-            _forecast_cache[(city_id, target_date)] = forecasts
-            _refreshed_this_cycle.add((city_id, target_date))
-
-            # Persist forecast snapshot for self-learning
-            try:
-                m_vals = {f.model_name: f.temp_max_c for f in forecasts if f.temp_max_c is not None}
-                if m_vals:
-                    store.save_forecast_snapshot(
-                        city_id.value, str(target_date), m_vals,
-                    )
-            except Exception:
-                pass  # Don't break pipeline if persistence fails
-        else:
-            # Check if we have stale data in cache
-            cached = _forecast_cache.get((city_id, target_date))
-            max_stale_h = float(getattr(
-                settings, "max_stale_forecast_hours", DEFAULT_MAX_STALE_FORECAST_HOURS,
-            ))
-            age_h = _forecast_age_hours(cached, now_utc) if cached else None
-            if cached and age_h is not None and age_h <= max_stale_h:
-                forecasts = cached
-                logger.warning(
-                    "STALE DATA: fetch failed for %s on %s, using cached data from %s "
-                    "(%.1fh old)",
-                    city_id.value, target_date,
-                    cached[0].fetched_at.strftime("%H:%M:%S"), age_h,
-                )
-            elif cached:
-                logger.warning(
-                    "STALE DATA REJECTED: cached forecast for %s on %s is too old "
-                    "(%s h > %.1f h), skipping",
-                    city_id.value, target_date,
-                    f"{age_h:.1f}" if age_h is not None else "unknown", max_stale_h,
-                )
-
-        if not forecasts:
-            logger.warning("No forecasts for %s on %s", city_id.value, target_date)
-            continue
-
-        # Contract: verify sufficient models for reliable consensus
-        has_regional = bool(city_config.regional_models)
-        model_check = validate_model_count(len(forecasts), has_regional)
-        if not model_check.valid:
-            logger.warning(
-                "CONTRACT VIOLATION [%s]: %s, skipping %s on %s",
-                model_check.code, model_check.error, city_id.value, target_date,
-            )
-            continue
-
-        # Detect bust-causing weather patterns (Chinook, Foehn, marine layer, etc.)
-        pattern_alerts = detect_patterns(city_id, forecasts)
-        pattern_conf_mult, pattern_bias = get_pattern_adjustment(city_id, pattern_alerts)
-
-        # Determine which variables we need
-        variables_needed = set()
-        for m in city_markets:
-            var = get_required_variable(m)
-            if var:
-                variables_needed.add(var)
-        variables_needed.add("temp_max_c")  # Always compute
-
-        # Compute consensus per variable
-        for variable in variables_needed:
-            # Collect thresholds from all markets needing this variable
-            thresholds = []
-            for m in city_markets:
-                if get_required_variable(m) == variable:
-                    # Pre-compute on the EXACT band edges that
-                    # compute_model_prob_for_market will look up, so the
-                    # calibrated blend is served from threshold_probs instead
-                    # of missing every key (get_probability_for_threshold also
-                    # computes the blend on demand for any other edge).
-                    band = _bucket_celsius_band(m)
-                    if band is not None:
-                        thresholds.extend(e for e in band if e is not None)
-                    if m.threshold_low_c is not None:
-                        thresholds.append(m.threshold_low_c)
-                    if m.threshold_high_c is not None:
-                        thresholds.append(m.threshold_high_c)
-                    thresholds.append(m.threshold_value)
-
-            consensus = compute_consensus(
-                city_id, str(target_date), variable, forecasts,
-                sorted(set(thresholds)) if thresholds else None,
-            )
-            if consensus is None:
-                continue
-
-            # --- MODEL AGREEMENT GATE ---
-            # Per README: Skip if models disagree (std > 2.0C). This prevents
-            # trading on noise when ensembles are in chaos. HAIL MARY mode lets
-            # every signal through: penny tickets are cheap enough that noisy
-            # bets beat missed ones.
-            # Applied to the RAW model spread, see _model_agreement_std.
-            agreement_std = _model_agreement_std(consensus)
-            if agreement_std > MODEL_AGREEMENT_MAX_STD_C:
-                if settings.hail_mary_mode:
-                    logger.info(
-                        "HAILMARY allow: %s/%s raw std=%.1f > 2.0 (would have skipped)",
-                        city_id.value, variable, agreement_std
-                    )
-                else:
-                    logger.warning(
-                        "MODEL AGREEMENT REJECT: %s/%s raw std=%.1f > 2.0, skipping",
-                        city_id.value, variable, agreement_std
-                    )
-                    continue
-
-            # Apply pattern-based bias shift (e.g. haze suppression)
-            if pattern_bias != 0:
-                old_mean = consensus.weighted_mean
-                consensus.weighted_mean += pattern_bias
-                consensus.mean_value += pattern_bias
-                logger.info(
-                    "  %s/%s PATTERN SHIFT: %.1f°C -> %.1f°C (%+.1f°C)",
-                    city_id.value, variable, old_mean, consensus.weighted_mean, pattern_bias
-                )
-
-            # Track forecast trends (run-to-run consistency)
-            trend_mult = 1.0
-            try:
-                from weather_edge.analysis.forecast_trends import compute_trend, record_forecast
-                if variable == "temp_max_c":
-                    record_forecast(city_id.value, consensus.weighted_mean)
-                    trend = compute_trend(city_id.value, consensus.weighted_mean)
-                    trend_mult = trend.confidence_multiplier
-                    if trend.signal not in ("stable", "insufficient_data"):
-                        logger.info(
-                            "  %s TREND: %s (%.2f°C/cycle, stability=%.1f) → conf ×%.2f",
-                            city_id.value, trend.signal, trend.trend_per_cycle,
-                            trend.stability, trend_mult,
-                        )
-            except Exception:
-                pass
-
-            logger.info(
-                "  %s/%s: mean=%.1f°C std=%.1f conf=%.0f%% (%d models)",
-                city_id.value, variable,
-                consensus.weighted_mean, consensus.std_dev,
-                consensus.confidence * 100, consensus.model_count,
-            )
-
-            # Compute edge for each matching market bucket
-            for market in city_markets:
-                if get_required_variable(market) != variable:
-                    continue
-
-                # Use price from Gamma API
-                market_prob = market.yes_price
-                if market_prob <= 0.01 or market_prob >= 0.99:
-                    continue  # Skip extreme prices (no edge possible)
-
-                model_prob = compute_model_prob_for_market(market, consensus)
-                if model_prob is None:
-                    continue
-
-                # Hours to resolution: end of the target date in the city's
-                # local time, not 00:00 UTC.
-                hours_to = hours_to_local_end_of_day(city_id, market.target_date)
-                # The date-level horizon filter above assumes UTC midnight;
-                # enforce it per city too (Asia/Pacific resolve earlier).
-                if hours_to < min_horizon_hours:
-                    continue
-
-                # Apply pattern-based confidence boost + forecast trend stability
-                adjusted_conf = min(1.0, consensus.confidence * pattern_conf_mult * trend_mult)
-
-                # Apply AI vs physics divergence (GraphCast comparison), computed once per city
-                _ai_div_key = (city_id.value, target_date, variable)
-                if _ai_div_key not in _ai_divergence_cache:
-                    ai_fc = ai_forecasts.get((city_id.value, target_date))
-                    if ai_fc and variable == "temp_max_c":
-                        try:
-                            div = compute_ai_physics_divergence(
-                                ai_fc, consensus.weighted_mean,
-                            )
-                            _ai_divergence_cache[_ai_div_key] = div
-                            if div["signal"] == "strong_diverge":
-                                logger.info(
-                                    "AI DIVERGE: %s GraphCast="
-                                    "%.1fC vs physics=%.1fC "
-                                    "(%+.1fC), conf ×%.2f",
-                                    city_id.value,
-                                    div["ai_max_c"],
-                                    div["physics_mean_c"],
-                                    div["divergence_c"],
-                                    div["confidence_multiplier"],
-                                )
-                        except Exception:
-                            _ai_divergence_cache[_ai_div_key] = None
-
-                ai_div = _ai_divergence_cache.get(_ai_div_key)
-                if ai_div:
-                    adjusted_conf = min(1.0, adjusted_conf * ai_div["confidence_multiplier"])
-
-                # Spread: real top-of-book if the market carries it, else a
-                # conservative default. Gamma outcomePrices are complementary
-                # (YES + NO ~= 1), so 1-(yes+no) is ~0 and hid the real cost.
-                from weather_edge.trading.market_maker import estimate_market_spread
-                estimated_spread = estimate_market_spread(market)
-
-                from weather_edge.analysis.risk_controls import get_active_profile
-                risk_profile = get_active_profile()
-
-                signal = calculate_edge(
-                    market_id=market.market_id,
-                    model_prob=model_prob,
-                    market_prob=market_prob,
-                    model_confidence=adjusted_conf,
-                    bankroll=total_equity,
-                    consensus_id=None,
-                    hours_to_resolution=hours_to,
-                    city_id=city_id.value,
-                    target_date=str(target_date),
-                    description=market.question[:80],
-                    spread=estimated_spread,
-                    min_edge_yes=risk_profile.min_edge_yes,
-                    min_edge_no=risk_profile.min_edge_no,
-                )
-
-                # Z-score guard: reject core bets on buckets too far from consensus.
-                # Tail/penny bets (entry <=6c) are exempt, they're designed as
-                # lottery tickets. HAIL MARY mode skips the guard: penny-only
-                # baskets are far-from-consensus by design.
-                if (
-                    not settings.hail_mary_mode
-                    and signal.strategy != "tail"
-                    and market_prob > 0.06
-                ):
-                    bucket_center = None
-                    if (
-                        market.threshold_dir == "range"
-                        and market.threshold_low_c is not None
-                        and market.threshold_high_c is not None
-                    ):
-                        bucket_center = (market.threshold_low_c + market.threshold_high_c) / 2
-                    elif (
-                        market.threshold_dir in ("gte", "lte")
-                        and market.threshold_value is not None
-                    ):
-                        bucket_center = market.threshold_value
-
-                    if bucket_center is not None and consensus.std_dev > 0:
-                        zscore = abs(bucket_center - consensus.weighted_mean) / consensus.std_dev
-                        if zscore > settings.max_core_zscore:
-                            logger.info(
-                                "ZSCORE REJECT: %s %s, bucket=%.1f°C mean=%.1f°C std=%.1f z=%.1f (max=%.1f)",
-                                city_id.value, market.question[:40],
-                                bucket_center, consensus.weighted_mean,
-                                consensus.std_dev, zscore, settings.max_core_zscore,
-                            )
-                            continue
-
-                all_signals.append(signal)
 
     filtered_signals: list[Signal] = []
     if settings.hail_mary_mode:
