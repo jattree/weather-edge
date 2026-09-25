@@ -202,6 +202,7 @@ async def sync_portfolio(executor, store, market_lookup: dict | None = None) -> 
     # position count. Cross-reference with the Data API to clean up.
     try:
         import httpx as _httpx
+
         from weather_edge.fetchers.polymarket import fetch_all_data_api_positions
         async with _httpx.AsyncClient() as _client:
             api_positions = await fetch_all_data_api_positions(
