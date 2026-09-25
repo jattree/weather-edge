@@ -1,7 +1,39 @@
-"""Quick check of live trading status."""
-import sqlite3
+"""Quick check of live trading status (read-only).
 
-conn = sqlite3.connect("/opt/weather-edge/weather_edge.db")
+    python scripts/check_live.py                 # default project DB
+    python scripts/check_live.py --db path/to/weather_edge.db
+
+The DB path defaults to $WEATHER_EDGE_DB, else the project's
+persistence.DEFAULT_DB_PATH.
+"""
+import argparse
+import os
+import sqlite3
+import sys
+
+
+def default_db_path() -> str:
+    env = os.environ.get("WEATHER_EDGE_DB")
+    if env:
+        return env
+    from weather_edge.persistence import DEFAULT_DB_PATH
+    return str(DEFAULT_DB_PATH)
+
+
+def parse_args(argv=None):
+    ap = argparse.ArgumentParser(description="Summarise live_trades")
+    ap.add_argument("--db", default=None, help="Path to weather_edge.db")
+    args = ap.parse_args(argv)
+    if args.db is None:
+        args.db = default_db_path()
+    return args
+
+
+args = parse_args()
+if not os.path.exists(args.db):
+    sys.exit(f"DB not found: {args.db}")
+# Read-only: never create an empty DB by mistake
+conn = sqlite3.connect(f"file:{args.db}?mode=ro", uri=True)
 conn.row_factory = sqlite3.Row
 
 rows = conn.execute("SELECT * FROM live_trades ORDER BY placed_at DESC").fetchall()
