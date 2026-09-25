@@ -1,0 +1,421 @@
+{
+ "city_volume": {
+  "nyc": {
+   "liquidity": 50.0,
+   "markets": 1,
+   "volume_24h": 100.0
+  }
+ },
+ "consensus_calls": [
+  [
+   "nyc",
+   "<D2>",
+   "temp_max_c",
+   5,
+   [
+    21.0
+   ]
+  ],
+  [
+   "nyc",
+   "<D3>",
+   "temp_max_c",
+   5,
+   null
+  ],
+  [
+   "lon",
+   "<D3>",
+   "temp_max_c",
+   5,
+   null
+  ],
+  [
+   "dal",
+   "<D3>",
+   "temp_max_c",
+   5,
+   null
+  ],
+  [
+   "sea",
+   "<D3>",
+   "temp_max_c",
+   5,
+   null
+  ],
+  [
+   "atl",
+   "<D3>",
+   "temp_max_c",
+   5,
+   null
+  ],
+  [
+   "tor",
+   "<D3>",
+   "temp_max_c",
+   5,
+   null
+  ],
+  [
+   "bue",
+   "<D3>",
+   "temp_max_c",
+   5,
+   null
+  ],
+  [
+   "sel",
+   "<D3>",
+   "temp_max_c",
+   5,
+   null
+  ],
+  [
+   "chi",
+   "<D3>",
+   "temp_max_c",
+   5,
+   null
+  ],
+  [
+   "mia",
+   "<D3>",
+   "temp_max_c",
+   5,
+   null
+  ],
+  [
+   "lax",
+   "<D3>",
+   "temp_max_c",
+   5,
+   null
+  ],
+  [
+   "hou",
+   "<D3>",
+   "temp_max_c",
+   5,
+   null
+  ],
+  [
+   "den",
+   "<D3>",
+   "temp_max_c",
+   5,
+   null
+  ],
+  [
+   "sfo",
+   "<D3>",
+   "temp_max_c",
+   5,
+   null
+  ],
+  [
+   "sha",
+   "<D3>",
+   "temp_max_c",
+   5,
+   null
+  ],
+  [
+   "mad",
+   "<D3>",
+   "temp_max_c",
+   5,
+   null
+  ],
+  [
+   "tyo",
+   "<D3>",
+   "temp_max_c",
+   5,
+   null
+  ],
+  [
+   "hkg",
+   "<D3>",
+   "temp_max_c",
+   5,
+   null
+  ],
+  [
+   "muc",
+   "<D3>",
+   "temp_max_c",
+   5,
+   null
+  ],
+  [
+   "war",
+   "<D3>",
+   "temp_max_c",
+   5,
+   null
+  ],
+  [
+   "szn",
+   "<D3>",
+   "temp_max_c",
+   5,
+   null
+  ],
+  [
+   "aus",
+   "<D3>",
+   "temp_max_c",
+   5,
+   null
+  ],
+  [
+   "wlg",
+   "<D3>",
+   "temp_max_c",
+   5,
+   null
+  ],
+  [
+   "lko",
+   "<D3>",
+   "temp_max_c",
+   5,
+   null
+  ]
+ ],
+ "db": {
+  "ai_decisions": [
+   [
+    "claude",
+    "TRADE",
+    "nyc-a",
+    1.0,
+    null
+   ]
+  ],
+  "forecast_snapshots": [
+   [
+    "nyc",
+    "<D2>",
+    5
+   ]
+  ],
+  "live_trades": [],
+  "positions": []
+ },
+ "decision_history": [],
+ "edge_calls": [
+  {
+   "bankroll": 1000.0,
+   "city_id": "nyc",
+   "consensus_id": null,
+   "description": "nyc-a bucket?",
+   "hours_ok": true,
+   "market_id": "nyc-a",
+   "market_prob": 0.3,
+   "min_edge_no": 0.03,
+   "min_edge_yes": 0.06,
+   "model_confidence": 0.9900000000000001,
+   "model_prob": 0.35,
+   "spread": 0.03,
+   "target_date": "<D2>"
+  }
+ ],
+ "events": [
+  [
+   "discover"
+  ],
+  [
+   "sync_market_map",
+   1
+  ],
+  [
+   "sync_portfolio"
+  ],
+  [
+   "gribstream",
+   [
+    "nyc"
+   ],
+   "<D2>"
+  ],
+  [
+   "store.save_forecast_snapshot",
+   [
+    "nyc",
+    "<D2>",
+    {
+     "model0": 20.0,
+     "model1": 20.25,
+     "model2": 20.5,
+     "model3": 20.75,
+     "model4": 21.0
+    }
+   ],
+   {}
+  ],
+  [
+   "claude",
+   "nyc-a",
+   20.5,
+   0.5
+  ],
+  [
+   "store.save_ai_decision",
+   [],
+   {
+    "city_id": "nyc",
+    "confidence_adj": 1.0,
+    "decision": "TRADE",
+    "dissent_strength": null,
+    "market_id": "nyc-a",
+    "source": "claude"
+   }
+  ],
+  [
+   "gemini",
+   "nyc-a"
+  ],
+  [
+   "book",
+   "nyc-a"
+  ],
+  [
+   "exec.check_balance"
+  ],
+  [
+   "http.get",
+   "https://data-api.polymarket.com/positions",
+   {
+    "sizeThreshold": 0,
+    "user": "0xwallet"
+   }
+  ],
+  [
+   "store.get_portfolio_summary",
+   [],
+   {}
+  ],
+  [
+   "store.get_position_for_market",
+   [
+    "nyc-a"
+   ],
+   {}
+  ],
+  [
+   "store.get_open_order_for_market",
+   [
+    "nyc-a"
+   ],
+   {}
+  ],
+  [
+   "store.get_positions",
+   [],
+   {}
+  ],
+  [
+   "exec.place_limit_order",
+   {
+    "description": "nyc-a bucket?",
+    "force_taker": false,
+    "improve_price_by": 0.005,
+    "market_id": "nyc-a",
+    "market_prob": 0.3,
+    "side": "NO",
+    "size": 20.0,
+    "strategy": "core",
+    "token_id": "nyc-a-N"
+   }
+  ],
+  [
+   "store.get_positions",
+   [],
+   {}
+  ]
+ ],
+ "forecast_cache_keys": [
+  "atl|<D3>",
+  "aus|<D3>",
+  "bue|<D3>",
+  "chi|<D3>",
+  "dal|<D3>",
+  "den|<D3>",
+  "hkg|<D3>",
+  "hou|<D3>",
+  "lax|<D3>",
+  "lko|<D3>",
+  "lon|<D3>",
+  "mad|<D3>",
+  "mia|<D3>",
+  "muc|<D3>",
+  "nyc|<D2>",
+  "nyc|<D3>",
+  "sea|<D3>",
+  "sel|<D3>",
+  "sfo|<D3>",
+  "sha|<D3>",
+  "szn|<D3>",
+  "tor|<D3>",
+  "tyo|<D3>",
+  "war|<D3>",
+  "wlg|<D3>"
+ ],
+ "logs": [
+  "INFO weather_edge.persistence Persistence: <TMP>/cycle.db",
+  "INFO weather_edge.scheduler HORIZON FILTER: blocked <D0> (resolve < 36h)",
+  "INFO weather_edge.scheduler === Discovering Polymarket weather markets ===",
+  "INFO weather_edge.scheduler Market map updated: 1 token mappings",
+  "ERROR weather_edge.scheduler Portfolio sync failed, continuing with stale positions",
+  "INFO weather_edge.scheduler Active market groups: 1 city-date combos",
+  "INFO weather_edge.scheduler === New York (KLGA) on <D2>, 1 markets ===",
+  "INFO weather_edge.scheduler   nyc TREND: warming (0.40\u00b0C/cycle, stability=0.7) \u2192 conf \u00d71.10",
+  "INFO weather_edge.scheduler   nyc/temp_max_c: mean=21.0\u00b0C std=0.5 conf=90% (5 models)",
+  "INFO weather_edge.scheduler AI GATE: 1/1 signals cleared for execution",
+  "INFO weather_edge.scheduler Fetching order book prices for spread detection...",
+  "INFO weather_edge.scheduler Book price fetch complete, placing trades...",
+  "INFO weather_edge.scheduler USDC balance: $500.00",
+  "INFO weather_edge.scheduler EXECUTION LOOP: 1 signals, live_executor=True, dry_run=False, usdc_floor_block=False, pos_count=0/50",
+  "INFO weather_edge.scheduler LIVE: MAKER pending NO nyc 29 shares @ 0.690, new-1 (bal=$480.00)",
+  "INFO weather_edge.scheduler   nyc (no markets): mean=21.0\u00b0C conf=90%",
+  "INFO weather_edge.scheduler   lon (no markets): mean=21.0\u00b0C conf=90%",
+  "INFO weather_edge.scheduler   dal (no markets): mean=21.0\u00b0C conf=90%",
+  "INFO weather_edge.scheduler   sea (no markets): mean=21.0\u00b0C conf=90%",
+  "INFO weather_edge.scheduler   atl (no markets): mean=21.0\u00b0C conf=90%",
+  "INFO weather_edge.scheduler   tor (no markets): mean=21.0\u00b0C conf=90%",
+  "INFO weather_edge.scheduler   bue (no markets): mean=21.0\u00b0C conf=90%",
+  "INFO weather_edge.scheduler   sel (no markets): mean=21.0\u00b0C conf=90%",
+  "INFO weather_edge.scheduler   chi (no markets): mean=21.0\u00b0C conf=90%",
+  "INFO weather_edge.scheduler   mia (no markets): mean=21.0\u00b0C conf=90%",
+  "INFO weather_edge.scheduler   lax (no markets): mean=21.0\u00b0C conf=90%",
+  "INFO weather_edge.scheduler   hou (no markets): mean=21.0\u00b0C conf=90%",
+  "INFO weather_edge.scheduler   den (no markets): mean=21.0\u00b0C conf=90%",
+  "INFO weather_edge.scheduler   sfo (no markets): mean=21.0\u00b0C conf=90%",
+  "INFO weather_edge.scheduler   sha (no markets): mean=21.0\u00b0C conf=90%",
+  "INFO weather_edge.scheduler   mad (no markets): mean=21.0\u00b0C conf=90%",
+  "INFO weather_edge.scheduler   tyo (no markets): mean=21.0\u00b0C conf=90%",
+  "INFO weather_edge.scheduler   hkg (no markets): mean=21.0\u00b0C conf=90%",
+  "INFO weather_edge.scheduler   muc (no markets): mean=21.0\u00b0C conf=90%",
+  "INFO weather_edge.scheduler   war (no markets): mean=21.0\u00b0C conf=90%",
+  "INFO weather_edge.scheduler   szn (no markets): mean=21.0\u00b0C conf=90%",
+  "INFO weather_edge.scheduler   aus (no markets): mean=21.0\u00b0C conf=90%",
+  "INFO weather_edge.scheduler   wlg (no markets): mean=21.0\u00b0C conf=90%",
+  "INFO weather_edge.scheduler   lko (no markets): mean=21.0\u00b0C conf=90%"
+ ],
+ "returned_signals": [
+  {
+   "city": "nyc",
+   "edge": 0.05,
+   "market_id": "nyc-a",
+   "market_prob": 0.3,
+   "net_edge": 0.04,
+   "side": "NO",
+   "size": 20.0,
+   "strategy": "core",
+   "tier": "high"
+  }
+ ]
+}

@@ -1,0 +1,891 @@
+{
+ "city_volume": {
+  "dal": {
+   "liquidity": 50.0,
+   "markets": 1,
+   "volume_24h": 100.0
+  },
+  "muc": {
+   "liquidity": 50.0,
+   "markets": 1,
+   "volume_24h": 100.0
+  },
+  "nyc": {
+   "liquidity": 50.0,
+   "markets": 1,
+   "volume_24h": 100.0
+  },
+  "sea": {
+   "liquidity": 50.0,
+   "markets": 1,
+   "volume_24h": 100.0
+  }
+ },
+ "consensus_calls": [
+  [
+   "nyc",
+   "<D2>",
+   "temp_max_c",
+   5,
+   [
+    21.0
+   ]
+  ],
+  [
+   "muc",
+   "<D2>",
+   "temp_max_c",
+   5,
+   [
+    21.0
+   ]
+  ],
+  [
+   "dal",
+   "<D2>",
+   "temp_max_c",
+   5,
+   [
+    21.0
+   ]
+  ],
+  [
+   "sea",
+   "<D2>",
+   "temp_max_c",
+   5,
+   [
+    21.0
+   ]
+  ],
+  [
+   "nyc",
+   "<D3>",
+   "temp_max_c",
+   5,
+   null
+  ],
+  [
+   "lon",
+   "<D3>",
+   "temp_max_c",
+   5,
+   null
+  ],
+  [
+   "dal",
+   "<D3>",
+   "temp_max_c",
+   5,
+   null
+  ],
+  [
+   "sea",
+   "<D3>",
+   "temp_max_c",
+   5,
+   null
+  ],
+  [
+   "atl",
+   "<D3>",
+   "temp_max_c",
+   5,
+   null
+  ],
+  [
+   "tor",
+   "<D3>",
+   "temp_max_c",
+   5,
+   null
+  ],
+  [
+   "bue",
+   "<D3>",
+   "temp_max_c",
+   5,
+   null
+  ],
+  [
+   "sel",
+   "<D3>",
+   "temp_max_c",
+   5,
+   null
+  ],
+  [
+   "chi",
+   "<D3>",
+   "temp_max_c",
+   5,
+   null
+  ],
+  [
+   "mia",
+   "<D3>",
+   "temp_max_c",
+   5,
+   null
+  ],
+  [
+   "lax",
+   "<D3>",
+   "temp_max_c",
+   5,
+   null
+  ],
+  [
+   "hou",
+   "<D3>",
+   "temp_max_c",
+   5,
+   null
+  ],
+  [
+   "den",
+   "<D3>",
+   "temp_max_c",
+   5,
+   null
+  ],
+  [
+   "sfo",
+   "<D3>",
+   "temp_max_c",
+   5,
+   null
+  ],
+  [
+   "sha",
+   "<D3>",
+   "temp_max_c",
+   5,
+   null
+  ],
+  [
+   "mad",
+   "<D3>",
+   "temp_max_c",
+   5,
+   null
+  ],
+  [
+   "tyo",
+   "<D3>",
+   "temp_max_c",
+   5,
+   null
+  ],
+  [
+   "hkg",
+   "<D3>",
+   "temp_max_c",
+   5,
+   null
+  ],
+  [
+   "muc",
+   "<D3>",
+   "temp_max_c",
+   5,
+   null
+  ],
+  [
+   "war",
+   "<D3>",
+   "temp_max_c",
+   5,
+   null
+  ],
+  [
+   "szn",
+   "<D3>",
+   "temp_max_c",
+   5,
+   null
+  ],
+  [
+   "aus",
+   "<D3>",
+   "temp_max_c",
+   5,
+   null
+  ],
+  [
+   "wlg",
+   "<D3>",
+   "temp_max_c",
+   5,
+   null
+  ],
+  [
+   "lko",
+   "<D3>",
+   "temp_max_c",
+   5,
+   null
+  ]
+ ],
+ "db": {
+  "ai_decisions": [
+   [
+    "claude",
+    "TRADE",
+    "yesdeny",
+    1.0,
+    null
+   ],
+   [
+    "claude",
+    "TRADE",
+    "corr",
+    1.0,
+    null
+   ],
+   [
+    "claude",
+    "TRADE",
+    "gross",
+    1.0,
+    null
+   ],
+   [
+    "claude",
+    "TRADE",
+    "corrtrim",
+    1.0,
+    null
+   ]
+  ],
+  "forecast_snapshots": [
+   [
+    "dal",
+    "<D2>",
+    5
+   ],
+   [
+    "muc",
+    "<D2>",
+    5
+   ],
+   [
+    "nyc",
+    "<D2>",
+    5
+   ],
+   [
+    "sea",
+    "<D2>",
+    5
+   ]
+  ],
+  "live_trades": [],
+  "positions": [
+   [
+    "tok-grp",
+    "grpheld",
+    100.0
+   ],
+   [
+    "tok-yes",
+    "yesheld",
+    100.0
+   ]
+  ]
+ },
+ "decision_history": [],
+ "edge_calls": [
+  {
+   "bankroll": 100.0,
+   "city_id": "nyc",
+   "consensus_id": null,
+   "description": "yesdeny bucket?",
+   "hours_ok": true,
+   "market_id": "yesdeny",
+   "market_prob": 0.3,
+   "min_edge_no": 0.03,
+   "min_edge_yes": 0.06,
+   "model_confidence": 0.9900000000000001,
+   "model_prob": 0.35,
+   "spread": 0.03,
+   "target_date": "<D2>"
+  },
+  {
+   "bankroll": 100.0,
+   "city_id": "muc",
+   "consensus_id": null,
+   "description": "corr bucket?",
+   "hours_ok": true,
+   "market_id": "corr",
+   "market_prob": 0.3,
+   "min_edge_no": 0.03,
+   "min_edge_yes": 0.06,
+   "model_confidence": 0.9,
+   "model_prob": 0.35,
+   "spread": 0.03,
+   "target_date": "<D2>"
+  },
+  {
+   "bankroll": 100.0,
+   "city_id": "dal",
+   "consensus_id": null,
+   "description": "gross bucket?",
+   "hours_ok": true,
+   "market_id": "gross",
+   "market_prob": 0.3,
+   "min_edge_no": 0.03,
+   "min_edge_yes": 0.06,
+   "model_confidence": 0.9,
+   "model_prob": 0.35,
+   "spread": 0.03,
+   "target_date": "<D2>"
+  },
+  {
+   "bankroll": 100.0,
+   "city_id": "sea",
+   "consensus_id": null,
+   "description": "corrtrim bucket?",
+   "hours_ok": true,
+   "market_id": "corrtrim",
+   "market_prob": 0.3,
+   "min_edge_no": 0.03,
+   "min_edge_yes": 0.06,
+   "model_confidence": 0.9,
+   "model_prob": 0.35,
+   "spread": 0.03,
+   "target_date": "<D2>"
+  }
+ ],
+ "events": [
+  [
+   "discover"
+  ],
+  [
+   "sync_market_map",
+   4
+  ],
+  [
+   "sync_portfolio"
+  ],
+  [
+   "fetch_polymarket_state",
+   "0xWALLET"
+  ],
+  [
+   "store.rebuild_positions"
+  ],
+  [
+   "store.get_portfolio_summary",
+   [],
+   {}
+  ],
+  [
+   "gribstream",
+   [
+    "dal",
+    "muc",
+    "nyc",
+    "sea"
+   ],
+   "<D2>"
+  ],
+  [
+   "store.save_forecast_snapshot",
+   [
+    "nyc",
+    "<D2>",
+    {
+     "model0": 20.0,
+     "model1": 20.25,
+     "model2": 20.5,
+     "model3": 20.75,
+     "model4": 21.0
+    }
+   ],
+   {}
+  ],
+  [
+   "store.save_forecast_snapshot",
+   [
+    "muc",
+    "<D2>",
+    {
+     "model0": 20.0,
+     "model1": 20.25,
+     "model2": 20.5,
+     "model3": 20.75,
+     "model4": 21.0
+    }
+   ],
+   {}
+  ],
+  [
+   "store.save_forecast_snapshot",
+   [
+    "dal",
+    "<D2>",
+    {
+     "model0": 20.0,
+     "model1": 20.25,
+     "model2": 20.5,
+     "model3": 20.75,
+     "model4": 21.0
+    }
+   ],
+   {}
+  ],
+  [
+   "store.save_forecast_snapshot",
+   [
+    "sea",
+    "<D2>",
+    {
+     "model0": 20.0,
+     "model1": 20.25,
+     "model2": 20.5,
+     "model3": 20.75,
+     "model4": 21.0
+    }
+   ],
+   {}
+  ],
+  [
+   "claude",
+   "yesdeny",
+   20.5,
+   0.5
+  ],
+  [
+   "store.save_ai_decision",
+   [],
+   {
+    "city_id": "nyc",
+    "confidence_adj": 1.0,
+    "decision": "TRADE",
+    "dissent_strength": null,
+    "market_id": "yesdeny",
+    "source": "claude"
+   }
+  ],
+  [
+   "gemini",
+   "yesdeny"
+  ],
+  [
+   "claude",
+   "corr",
+   20.5,
+   0.5
+  ],
+  [
+   "store.save_ai_decision",
+   [],
+   {
+    "city_id": "muc",
+    "confidence_adj": 1.0,
+    "decision": "TRADE",
+    "dissent_strength": null,
+    "market_id": "corr",
+    "source": "claude"
+   }
+  ],
+  [
+   "gemini",
+   "corr"
+  ],
+  [
+   "claude",
+   "gross",
+   20.5,
+   0.5
+  ],
+  [
+   "store.save_ai_decision",
+   [],
+   {
+    "city_id": "dal",
+    "confidence_adj": 1.0,
+    "decision": "TRADE",
+    "dissent_strength": null,
+    "market_id": "gross",
+    "source": "claude"
+   }
+  ],
+  [
+   "gemini",
+   "gross"
+  ],
+  [
+   "claude",
+   "corrtrim",
+   20.5,
+   0.5
+  ],
+  [
+   "store.save_ai_decision",
+   [],
+   {
+    "city_id": "sea",
+    "confidence_adj": 1.0,
+    "decision": "TRADE",
+    "dissent_strength": null,
+    "market_id": "corrtrim",
+    "source": "claude"
+   }
+  ],
+  [
+   "gemini",
+   "corrtrim"
+  ],
+  [
+   "book",
+   "yesdeny"
+  ],
+  [
+   "book",
+   "corr"
+  ],
+  [
+   "book",
+   "gross"
+  ],
+  [
+   "book",
+   "corrtrim"
+  ],
+  [
+   "exec.check_balance"
+  ],
+  [
+   "http.get",
+   "https://data-api.polymarket.com/positions",
+   {
+    "sizeThreshold": 0,
+    "user": "0xwallet"
+   }
+  ],
+  [
+   "store.get_portfolio_summary",
+   [],
+   {}
+  ],
+  [
+   "store.get_position_for_market",
+   [
+    "yesdeny"
+   ],
+   {}
+  ],
+  [
+   "store.get_open_order_for_market",
+   [
+    "yesdeny"
+   ],
+   {}
+  ],
+  [
+   "store.get_positions",
+   [],
+   {}
+  ],
+  [
+   "store.get_position_for_market",
+   [
+    "corr"
+   ],
+   {}
+  ],
+  [
+   "store.get_open_order_for_market",
+   [
+    "corr"
+   ],
+   {}
+  ],
+  [
+   "store.get_positions",
+   [],
+   {}
+  ],
+  [
+   "store.get_position_for_market",
+   [
+    "gross"
+   ],
+   {}
+  ],
+  [
+   "store.get_open_order_for_market",
+   [
+    "gross"
+   ],
+   {}
+  ],
+  [
+   "store.get_positions",
+   [],
+   {}
+  ],
+  [
+   "exec.place_limit_order",
+   {
+    "description": "gross bucket?",
+    "force_taker": false,
+    "improve_price_by": 0.005,
+    "market_id": "gross",
+    "market_prob": 0.3,
+    "side": "NO",
+    "size": 20.0,
+    "strategy": "core",
+    "token_id": "gross-N"
+   }
+  ],
+  [
+   "store.get_position_for_market",
+   [
+    "corrtrim"
+   ],
+   {}
+  ],
+  [
+   "store.get_open_order_for_market",
+   [
+    "corrtrim"
+   ],
+   {}
+  ],
+  [
+   "store.get_positions",
+   [],
+   {}
+  ],
+  [
+   "exec.place_limit_order",
+   {
+    "description": "corrtrim bucket?",
+    "force_taker": false,
+    "improve_price_by": 0.005,
+    "market_id": "corrtrim",
+    "market_prob": 0.3,
+    "side": "NO",
+    "size": 20.0,
+    "strategy": "core",
+    "token_id": "corrtrim-N"
+   }
+  ],
+  [
+   "store.get_positions",
+   [],
+   {}
+  ],
+  [
+   "scan_exits",
+   "live",
+   [
+    [
+     "yesheld",
+     "YES",
+     40.0,
+     0.4,
+     100.0
+    ],
+    [
+     "grpheld",
+     "NO",
+     20.0,
+     0.2,
+     100.0
+    ]
+   ],
+   [
+    [
+     "corr",
+     0.3
+    ],
+    [
+     "corrtrim",
+     0.3
+    ],
+    [
+     "gross",
+     0.3
+    ],
+    [
+     "yesdeny",
+     0.3
+    ]
+   ],
+   [
+    [
+     "corr",
+     0.35
+    ],
+    [
+     "corrtrim",
+     0.35
+    ],
+    [
+     "gross",
+     0.35
+    ],
+    [
+     "yesdeny",
+     0.35
+    ]
+   ],
+   [
+    [
+     "corr",
+     0.7
+    ],
+    [
+     "corrtrim",
+     0.7
+    ],
+    [
+     "gross",
+     0.7
+    ],
+    [
+     "yesdeny",
+     0.7
+    ]
+   ],
+   [
+    "dal|<D2>",
+    "muc|<D2>",
+    "nyc|<D2>",
+    "sea|<D2>"
+   ]
+  ]
+ ],
+ "forecast_cache_keys": [
+  "atl|<D3>",
+  "aus|<D3>",
+  "bue|<D3>",
+  "chi|<D3>",
+  "dal|<D2>",
+  "dal|<D3>",
+  "den|<D3>",
+  "hkg|<D3>",
+  "hou|<D3>",
+  "lax|<D3>",
+  "lko|<D3>",
+  "lon|<D3>",
+  "mad|<D3>",
+  "mia|<D3>",
+  "muc|<D2>",
+  "muc|<D3>",
+  "nyc|<D2>",
+  "nyc|<D3>",
+  "sea|<D2>",
+  "sea|<D3>",
+  "sel|<D3>",
+  "sfo|<D3>",
+  "sha|<D3>",
+  "szn|<D3>",
+  "tor|<D3>",
+  "tyo|<D3>",
+  "war|<D3>",
+  "wlg|<D3>"
+ ],
+ "logs": [
+  "INFO weather_edge.persistence Persistence: <TMP>/cycle.db",
+  "INFO weather_edge.scheduler HORIZON FILTER: blocked <D0> (resolve < 36h)",
+  "INFO weather_edge.scheduler === Discovering Polymarket weather markets ===",
+  "INFO weather_edge.scheduler Market map updated: 4 token mappings",
+  "INFO weather_edge.scheduler PORTFOLIO EQUITY: $100.00 (used as bankroll for Kelly sizing)",
+  "INFO weather_edge.scheduler Active market groups: 4 city-date combos",
+  "INFO weather_edge.scheduler === New York (KLGA) on <D2>, 1 markets ===",
+  "INFO weather_edge.scheduler   nyc TREND: warming (0.40\u00b0C/cycle, stability=0.7) \u2192 conf \u00d71.10",
+  "INFO weather_edge.scheduler   nyc/temp_max_c: mean=21.0\u00b0C std=0.5 conf=90% (5 models)",
+  "INFO weather_edge.scheduler === Munich (EDDM) on <D2>, 1 markets ===",
+  "INFO weather_edge.scheduler   muc/temp_max_c: mean=21.0\u00b0C std=0.5 conf=90% (5 models)",
+  "INFO weather_edge.scheduler === Dallas (KDAL) on <D2>, 1 markets ===",
+  "INFO weather_edge.scheduler   dal/temp_max_c: mean=21.0\u00b0C std=0.5 conf=90% (5 models)",
+  "INFO weather_edge.scheduler === Seattle (KSEA) on <D2>, 1 markets ===",
+  "INFO weather_edge.scheduler   sea/temp_max_c: mean=21.0\u00b0C std=0.5 conf=90% (5 models)",
+  "INFO weather_edge.scheduler AI GATE: 4/4 signals cleared for execution",
+  "INFO weather_edge.scheduler Fetching order book prices for spread detection...",
+  "INFO weather_edge.scheduler Book price fetch complete, placing trades...",
+  "WARNING weather_edge.scheduler Failed to fetch live balance, will skip balance checks",
+  "INFO weather_edge.scheduler EXECUTION LOOP: 4 signals, live_executor=True, dry_run=False, usdc_floor_block=False, pos_count=2/50",
+  "WARNING weather_edge.scheduler YES EXPOSURE CAP: $40 / $35 max (35% NAV)",
+  "WARNING weather_edge.scheduler CORRELATION LIMIT: uk_europe group at $20 / $20 max (20%)",
+  "INFO weather_edge.scheduler CORRELATION TRIM: us_gulf group $150\u2192$20 (cap $20)",
+  "INFO weather_edge.scheduler LIVE: MAKER pending NO dal 29 shares @ 0.690, new-1 (bal=$0.00)",
+  "INFO weather_edge.scheduler CORRELATION TRIM: us_west group $30\u2192$20 (cap $20)",
+  "INFO weather_edge.scheduler LIVE: MAKER pending NO sea 29 shares @ 0.690, new-2 (bal=$0.00)",
+  "INFO weather_edge.scheduler   nyc (no markets): mean=21.0\u00b0C conf=90%",
+  "INFO weather_edge.scheduler   lon (no markets): mean=21.0\u00b0C conf=90%",
+  "INFO weather_edge.scheduler   dal (no markets): mean=21.0\u00b0C conf=90%",
+  "INFO weather_edge.scheduler   sea (no markets): mean=21.0\u00b0C conf=90%",
+  "INFO weather_edge.scheduler   atl (no markets): mean=21.0\u00b0C conf=90%",
+  "INFO weather_edge.scheduler   tor (no markets): mean=21.0\u00b0C conf=90%",
+  "INFO weather_edge.scheduler   bue (no markets): mean=21.0\u00b0C conf=90%",
+  "INFO weather_edge.scheduler   sel (no markets): mean=21.0\u00b0C conf=90%",
+  "INFO weather_edge.scheduler   chi (no markets): mean=21.0\u00b0C conf=90%",
+  "INFO weather_edge.scheduler   mia (no markets): mean=21.0\u00b0C conf=90%",
+  "INFO weather_edge.scheduler   lax (no markets): mean=21.0\u00b0C conf=90%",
+  "INFO weather_edge.scheduler   hou (no markets): mean=21.0\u00b0C conf=90%",
+  "INFO weather_edge.scheduler   den (no markets): mean=21.0\u00b0C conf=90%",
+  "INFO weather_edge.scheduler   sfo (no markets): mean=21.0\u00b0C conf=90%",
+  "INFO weather_edge.scheduler   sha (no markets): mean=21.0\u00b0C conf=90%",
+  "INFO weather_edge.scheduler   mad (no markets): mean=21.0\u00b0C conf=90%",
+  "INFO weather_edge.scheduler   tyo (no markets): mean=21.0\u00b0C conf=90%",
+  "INFO weather_edge.scheduler   hkg (no markets): mean=21.0\u00b0C conf=90%",
+  "INFO weather_edge.scheduler   muc (no markets): mean=21.0\u00b0C conf=90%",
+  "INFO weather_edge.scheduler   war (no markets): mean=21.0\u00b0C conf=90%",
+  "INFO weather_edge.scheduler   szn (no markets): mean=21.0\u00b0C conf=90%",
+  "INFO weather_edge.scheduler   aus (no markets): mean=21.0\u00b0C conf=90%",
+  "INFO weather_edge.scheduler   wlg (no markets): mean=21.0\u00b0C conf=90%",
+  "INFO weather_edge.scheduler   lko (no markets): mean=21.0\u00b0C conf=90%"
+ ],
+ "returned_signals": [
+  {
+   "city": "nyc",
+   "edge": 0.05,
+   "market_id": "yesdeny",
+   "market_prob": 0.3,
+   "net_edge": 0.04,
+   "side": "YES",
+   "size": 20.0,
+   "strategy": "core",
+   "tier": "high"
+  },
+  {
+   "city": "muc",
+   "edge": 0.05,
+   "market_id": "corr",
+   "market_prob": 0.3,
+   "net_edge": 0.04,
+   "side": "NO",
+   "size": 20.0,
+   "strategy": "core",
+   "tier": "high"
+  },
+  {
+   "city": "dal",
+   "edge": 0.05,
+   "market_id": "gross",
+   "market_prob": 0.3,
+   "net_edge": 0.04,
+   "side": "NO",
+   "size": 20.0,
+   "strategy": "core",
+   "tier": "high"
+  },
+  {
+   "city": "sea",
+   "edge": 0.05,
+   "market_id": "corrtrim",
+   "market_prob": 0.3,
+   "net_edge": 0.04,
+   "side": "NO",
+   "size": 20.0,
+   "strategy": "core",
+   "tier": "high"
+  }
+ ]
+}

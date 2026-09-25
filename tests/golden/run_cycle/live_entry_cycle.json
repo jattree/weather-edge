@@ -1,0 +1,3699 @@
+{
+ "city_volume": {
+  "atl": {
+   "liquidity": 100.0,
+   "markets": 2,
+   "volume_24h": 200.0
+  },
+  "dal": {
+   "liquidity": 100.0,
+   "markets": 2,
+   "volume_24h": 200.0
+  },
+  "den": {
+   "liquidity": 50.0,
+   "markets": 1,
+   "volume_24h": 100.0
+  },
+  "hou": {
+   "liquidity": 100.0,
+   "markets": 2,
+   "volume_24h": 200.0
+  },
+  "lax": {
+   "liquidity": 100.0,
+   "markets": 2,
+   "volume_24h": 200.0
+  },
+  "lon": {
+   "liquidity": 100.0,
+   "markets": 2,
+   "volume_24h": 200.0
+  },
+  "mia": {
+   "liquidity": 50.0,
+   "markets": 1,
+   "volume_24h": 100.0
+  },
+  "nyc": {
+   "liquidity": 100.0,
+   "markets": 2,
+   "volume_24h": 200.0
+  },
+  "sea": {
+   "liquidity": 100.0,
+   "markets": 2,
+   "volume_24h": 200.0
+  },
+  "sfo": {
+   "liquidity": 50.0,
+   "markets": 1,
+   "volume_24h": 100.0
+  },
+  "tor": {
+   "liquidity": 100.0,
+   "markets": 2,
+   "volume_24h": 200.0
+  }
+ },
+ "consensus_calls": [
+  [
+   "nyc",
+   "<D2>",
+   "temp_max_c",
+   5,
+   [
+    21.0
+   ]
+  ],
+  [
+   "nyc",
+   "<D3>",
+   "temp_max_c",
+   5,
+   [
+    21.0
+   ]
+  ],
+  [
+   "lon",
+   "<D2>",
+   "temp_max_c",
+   5,
+   [
+    21.0
+   ]
+  ],
+  [
+   "lon",
+   "<D3>",
+   "temp_max_c",
+   5,
+   [
+    21.0
+   ]
+  ],
+  [
+   "dal",
+   "<D2>",
+   "temp_max_c",
+   5,
+   [
+    21.0
+   ]
+  ],
+  [
+   "dal",
+   "<D3>",
+   "temp_max_c",
+   5,
+   [
+    21.0
+   ]
+  ],
+  [
+   "sea",
+   "<D2>",
+   "temp_max_c",
+   5,
+   [
+    21.0
+   ]
+  ],
+  [
+   "sea",
+   "<D3>",
+   "temp_max_c",
+   5,
+   [
+    21.0
+   ]
+  ],
+  [
+   "atl",
+   "<D2>",
+   "temp_max_c",
+   5,
+   [
+    21.0
+   ]
+  ],
+  [
+   "atl",
+   "<D3>",
+   "temp_max_c",
+   5,
+   [
+    21.0
+   ]
+  ],
+  [
+   "tor",
+   "<D2>",
+   "temp_max_c",
+   5,
+   [
+    21.0
+   ]
+  ],
+  [
+   "sfo",
+   "<D2>",
+   "temp_max_c",
+   5,
+   [
+    21.0
+   ]
+  ],
+  [
+   "tor",
+   "<D3>",
+   "temp_max_c",
+   5,
+   [
+    21.0
+   ]
+  ],
+  [
+   "mia",
+   "<D3>",
+   "temp_max_c",
+   5,
+   [
+    21.0
+   ]
+  ],
+  [
+   "lax",
+   "<D2>",
+   "temp_max_c",
+   5,
+   [
+    21.0
+   ]
+  ],
+  [
+   "lax",
+   "<D3>",
+   "temp_max_c",
+   5,
+   [
+    21.0
+   ]
+  ],
+  [
+   "hou",
+   "<D2>",
+   "temp_max_c",
+   5,
+   [
+    21.0
+   ]
+  ],
+  [
+   "hou",
+   "<D3>",
+   "temp_max_c",
+   5,
+   [
+    21.0
+   ]
+  ],
+  [
+   "den",
+   "<D2>",
+   "temp_max_c",
+   5,
+   [
+    21.0
+   ]
+  ],
+  [
+   "bue",
+   "<D3>",
+   "temp_max_c",
+   5,
+   null
+  ],
+  [
+   "sel",
+   "<D3>",
+   "temp_max_c",
+   5,
+   null
+  ],
+  [
+   "chi",
+   "<D3>",
+   "temp_max_c",
+   5,
+   null
+  ],
+  [
+   "den",
+   "<D3>",
+   "temp_max_c",
+   5,
+   null
+  ],
+  [
+   "sfo",
+   "<D3>",
+   "temp_max_c",
+   5,
+   null
+  ],
+  [
+   "sha",
+   "<D3>",
+   "temp_max_c",
+   5,
+   null
+  ],
+  [
+   "mad",
+   "<D3>",
+   "temp_max_c",
+   5,
+   null
+  ],
+  [
+   "tyo",
+   "<D3>",
+   "temp_max_c",
+   5,
+   null
+  ],
+  [
+   "hkg",
+   "<D3>",
+   "temp_max_c",
+   5,
+   null
+  ],
+  [
+   "muc",
+   "<D3>",
+   "temp_max_c",
+   5,
+   null
+  ],
+  [
+   "war",
+   "<D3>",
+   "temp_max_c",
+   5,
+   null
+  ],
+  [
+   "szn",
+   "<D3>",
+   "temp_max_c",
+   5,
+   null
+  ],
+  [
+   "aus",
+   "<D3>",
+   "temp_max_c",
+   5,
+   null
+  ],
+  [
+   "wlg",
+   "<D3>",
+   "temp_max_c",
+   5,
+   null
+  ],
+  [
+   "lko",
+   "<D3>",
+   "temp_max_c",
+   5,
+   null
+  ]
+ ],
+ "db": {
+  "ai_decisions": [
+   [
+    "claude",
+    "TRADE",
+    "bypass",
+    1.0,
+    null
+   ],
+   [
+    "claude",
+    "TRADE",
+    "hnone",
+    1.0,
+    null
+   ],
+   [
+    "claude",
+    "TRADE",
+    "hedge",
+    1.0,
+    null
+   ],
+   [
+    "claude",
+    "TRADE",
+    "hfail",
+    1.0,
+    null
+   ],
+   [
+    "claude",
+    "TRADE",
+    "tail",
+    1.0,
+    null
+   ],
+   [
+    "claude",
+    "TRADE",
+    "cool",
+    1.0,
+    null
+   ],
+   [
+    "claude",
+    "TRADE",
+    "small",
+    1.0,
+    null
+   ],
+   [
+    "claude",
+    "TRADE",
+    "notok",
+    1.0,
+    null
+   ],
+   [
+    "claude",
+    "TRADE",
+    "held",
+    1.0,
+    null
+   ],
+   [
+    "claude",
+    "TRADE",
+    "keep",
+    1.0,
+    null
+   ],
+   [
+    "claude",
+    "TRADE",
+    "repl",
+    1.0,
+    null
+   ],
+   [
+    "claude",
+    "TRADE",
+    "chase",
+    1.0,
+    null
+   ],
+   [
+    "claude",
+    "TRADE",
+    "cskip",
+    1.0,
+    null
+   ],
+   [
+    "claude",
+    "TRADE",
+    "chasey",
+    1.0,
+    null
+   ],
+   [
+    "claude",
+    "TRADE",
+    "cfail",
+    1.0,
+    null
+   ],
+   [
+    "claude",
+    "TRADE",
+    "rej",
+    1.0,
+    null
+   ],
+   [
+    "claude",
+    "TRADE",
+    "boom",
+    1.0,
+    null
+   ],
+   [
+    "claude",
+    "TRADE",
+    "bal",
+    1.0,
+    null
+   ],
+   [
+    "claude",
+    "TRADE",
+    "lowedge",
+    1.0,
+    null
+   ]
+  ],
+  "forecast_snapshots": [
+   [
+    "atl",
+    "<D2>",
+    5
+   ],
+   [
+    "atl",
+    "<D3>",
+    5
+   ],
+   [
+    "dal",
+    "<D2>",
+    5
+   ],
+   [
+    "dal",
+    "<D3>",
+    5
+   ],
+   [
+    "den",
+    "<D2>",
+    5
+   ],
+   [
+    "hou",
+    "<D2>",
+    5
+   ],
+   [
+    "hou",
+    "<D3>",
+    5
+   ],
+   [
+    "lax",
+    "<D2>",
+    5
+   ],
+   [
+    "lax",
+    "<D3>",
+    5
+   ],
+   [
+    "lon",
+    "<D2>",
+    5
+   ],
+   [
+    "lon",
+    "<D3>",
+    5
+   ],
+   [
+    "mia",
+    "<D3>",
+    5
+   ],
+   [
+    "nyc",
+    "<D2>",
+    5
+   ],
+   [
+    "nyc",
+    "<D3>",
+    5
+   ],
+   [
+    "sea",
+    "<D2>",
+    5
+   ],
+   [
+    "sea",
+    "<D3>",
+    5
+   ],
+   [
+    "sfo",
+    "<D2>",
+    5
+   ],
+   [
+    "tor",
+    "<D2>",
+    5
+   ],
+   [
+    "tor",
+    "<D3>",
+    5
+   ]
+  ],
+  "live_trades": [
+   [
+    "o-cfail",
+    "cfail",
+    "NO",
+    "open"
+   ],
+   [
+    "o-chase",
+    "chase",
+    "YES",
+    "cancelled"
+   ],
+   [
+    "o-chasey",
+    "chasey",
+    "YES",
+    "cancelled"
+   ],
+   [
+    "o-cskip",
+    "cskip",
+    "YES",
+    "open"
+   ],
+   [
+    "o-keep",
+    "keep",
+    "YES",
+    "open"
+   ],
+   [
+    "o-repl",
+    "repl",
+    "YES",
+    "cancelled"
+   ],
+   [
+    "sold-bypass",
+    "bypass",
+    "SELL",
+    "filled"
+   ],
+   [
+    "sold-cool",
+    "cool",
+    "SELL",
+    "filled"
+   ]
+  ],
+  "positions": [
+   [
+    "tok-held",
+    "held",
+    30.0
+   ],
+   [
+    "tok-stale",
+    "gone",
+    0.0
+   ],
+   [
+    "tok-yes-big",
+    "yesbig",
+    1000.0
+   ]
+  ]
+ },
+ "decision_history": [],
+ "edge_calls": [
+  {
+   "bankroll": 1000.0,
+   "city_id": "nyc",
+   "consensus_id": null,
+   "description": "cool bucket?",
+   "hours_ok": true,
+   "market_id": "cool",
+   "market_prob": 0.2,
+   "min_edge_no": 0.03,
+   "min_edge_yes": 0.06,
+   "model_confidence": 0.9900000000000001,
+   "model_prob": 0.35,
+   "spread": 0.03,
+   "target_date": "<D2>"
+  },
+  {
+   "bankroll": 1000.0,
+   "city_id": "nyc",
+   "consensus_id": null,
+   "description": "bypass bucket?",
+   "hours_ok": true,
+   "market_id": "bypass",
+   "market_prob": 0.2,
+   "min_edge_no": 0.03,
+   "min_edge_yes": 0.06,
+   "model_confidence": 0.9900000000000001,
+   "model_prob": 0.35,
+   "spread": 0.03,
+   "target_date": "<D3>"
+  },
+  {
+   "bankroll": 1000.0,
+   "city_id": "lon",
+   "consensus_id": null,
+   "description": "small bucket?",
+   "hours_ok": true,
+   "market_id": "small",
+   "market_prob": 0.3,
+   "min_edge_no": 0.03,
+   "min_edge_yes": 0.06,
+   "model_confidence": 0.9,
+   "model_prob": 0.35,
+   "spread": 0.03,
+   "target_date": "<D2>"
+  },
+  {
+   "bankroll": 1000.0,
+   "city_id": "lon",
+   "consensus_id": null,
+   "description": "bal bucket?",
+   "hours_ok": true,
+   "market_id": "bal",
+   "market_prob": 0.5,
+   "min_edge_no": 0.03,
+   "min_edge_yes": 0.06,
+   "model_confidence": 0.9,
+   "model_prob": 0.35,
+   "spread": 0.03,
+   "target_date": "<D3>"
+  },
+  {
+   "bankroll": 1000.0,
+   "city_id": "dal",
+   "consensus_id": null,
+   "description": "lowedge bucket?",
+   "hours_ok": true,
+   "market_id": "lowedge",
+   "market_prob": 0.3,
+   "min_edge_no": 0.03,
+   "min_edge_yes": 0.06,
+   "model_confidence": 0.9,
+   "model_prob": 0.35,
+   "spread": 0.03,
+   "target_date": "<D2>"
+  },
+  {
+   "bankroll": 1000.0,
+   "city_id": "dal",
+   "consensus_id": null,
+   "description": "notok bucket?",
+   "hours_ok": true,
+   "market_id": "notok",
+   "market_prob": 0.3,
+   "min_edge_no": 0.03,
+   "min_edge_yes": 0.06,
+   "model_confidence": 0.9,
+   "model_prob": 0.35,
+   "spread": 0.03,
+   "target_date": "<D3>"
+  },
+  {
+   "bankroll": 1000.0,
+   "city_id": "sea",
+   "consensus_id": null,
+   "description": "held bucket?",
+   "hours_ok": true,
+   "market_id": "held",
+   "market_prob": 0.3,
+   "min_edge_no": 0.03,
+   "min_edge_yes": 0.06,
+   "model_confidence": 0.9,
+   "model_prob": 0.35,
+   "spread": 0.03,
+   "target_date": "<D2>"
+  },
+  {
+   "bankroll": 1000.0,
+   "city_id": "sea",
+   "consensus_id": null,
+   "description": "keep bucket?",
+   "hours_ok": true,
+   "market_id": "keep",
+   "market_prob": 0.205,
+   "min_edge_no": 0.03,
+   "min_edge_yes": 0.06,
+   "model_confidence": 0.9,
+   "model_prob": 0.35,
+   "spread": 0.03,
+   "target_date": "<D3>"
+  },
+  {
+   "bankroll": 1000.0,
+   "city_id": "atl",
+   "consensus_id": null,
+   "description": "repl bucket?",
+   "hours_ok": true,
+   "market_id": "repl",
+   "market_prob": 0.3,
+   "min_edge_no": 0.03,
+   "min_edge_yes": 0.06,
+   "model_confidence": 0.9,
+   "model_prob": 0.35,
+   "spread": 0.03,
+   "target_date": "<D2>"
+  },
+  {
+   "bankroll": 1000.0,
+   "city_id": "atl",
+   "consensus_id": null,
+   "description": "chase bucket?",
+   "hours_ok": true,
+   "market_id": "chase",
+   "market_prob": 0.3,
+   "min_edge_no": 0.03,
+   "min_edge_yes": 0.06,
+   "model_confidence": 0.9,
+   "model_prob": 0.35,
+   "spread": 0.03,
+   "target_date": "<D3>"
+  },
+  {
+   "bankroll": 1000.0,
+   "city_id": "tor",
+   "consensus_id": null,
+   "description": "cskip bucket?",
+   "hours_ok": true,
+   "market_id": "cskip",
+   "market_prob": 0.205,
+   "min_edge_no": 0.03,
+   "min_edge_yes": 0.06,
+   "model_confidence": 0.9,
+   "model_prob": 0.35,
+   "spread": 0.03,
+   "target_date": "<D2>"
+  },
+  {
+   "bankroll": 1000.0,
+   "city_id": "sfo",
+   "consensus_id": null,
+   "description": "chasey bucket?",
+   "hours_ok": true,
+   "market_id": "chasey",
+   "market_prob": 0.3,
+   "min_edge_no": 0.03,
+   "min_edge_yes": 0.06,
+   "model_confidence": 0.9,
+   "model_prob": 0.35,
+   "spread": 0.03,
+   "target_date": "<D2>"
+  },
+  {
+   "bankroll": 1000.0,
+   "city_id": "tor",
+   "consensus_id": null,
+   "description": "cfail bucket?",
+   "hours_ok": true,
+   "market_id": "cfail",
+   "market_prob": 0.45,
+   "min_edge_no": 0.03,
+   "min_edge_yes": 0.06,
+   "model_confidence": 0.9,
+   "model_prob": 0.35,
+   "spread": 0.03,
+   "target_date": "<D3>"
+  },
+  {
+   "bankroll": 1000.0,
+   "city_id": "mia",
+   "consensus_id": null,
+   "description": "rej bucket?",
+   "hours_ok": true,
+   "market_id": "rej",
+   "market_prob": 0.3,
+   "min_edge_no": 0.03,
+   "min_edge_yes": 0.06,
+   "model_confidence": 0.9,
+   "model_prob": 0.35,
+   "spread": 0.03,
+   "target_date": "<D3>"
+  },
+  {
+   "bankroll": 1000.0,
+   "city_id": "lax",
+   "consensus_id": null,
+   "description": "boom bucket?",
+   "hours_ok": true,
+   "market_id": "boom",
+   "market_prob": 0.3,
+   "min_edge_no": 0.03,
+   "min_edge_yes": 0.06,
+   "model_confidence": 0.9,
+   "model_prob": 0.35,
+   "spread": 0.03,
+   "target_date": "<D2>"
+  },
+  {
+   "bankroll": 1000.0,
+   "city_id": "lax",
+   "consensus_id": null,
+   "description": "hedge bucket?",
+   "hours_ok": true,
+   "market_id": "hedge",
+   "market_prob": 0.3,
+   "min_edge_no": 0.03,
+   "min_edge_yes": 0.06,
+   "model_confidence": 0.9,
+   "model_prob": 0.35,
+   "spread": 0.03,
+   "target_date": "<D3>"
+  },
+  {
+   "bankroll": 1000.0,
+   "city_id": "hou",
+   "consensus_id": null,
+   "description": "hfail bucket?",
+   "hours_ok": true,
+   "market_id": "hfail",
+   "market_prob": 0.3,
+   "min_edge_no": 0.03,
+   "min_edge_yes": 0.06,
+   "model_confidence": 0.9,
+   "model_prob": 0.35,
+   "spread": 0.03,
+   "target_date": "<D2>"
+  },
+  {
+   "bankroll": 1000.0,
+   "city_id": "hou",
+   "consensus_id": null,
+   "description": "hnone bucket?",
+   "hours_ok": true,
+   "market_id": "hnone",
+   "market_prob": 0.3,
+   "min_edge_no": 0.03,
+   "min_edge_yes": 0.06,
+   "model_confidence": 0.9,
+   "model_prob": 0.35,
+   "spread": 0.03,
+   "target_date": "<D3>"
+  },
+  {
+   "bankroll": 1000.0,
+   "city_id": "den",
+   "consensus_id": null,
+   "description": "tail bucket?",
+   "hours_ok": true,
+   "market_id": "tail",
+   "market_prob": 0.04,
+   "min_edge_no": 0.03,
+   "min_edge_yes": 0.06,
+   "model_confidence": 0.9,
+   "model_prob": 0.35,
+   "spread": 0.03,
+   "target_date": "<D2>"
+  }
+ ],
+ "events": [
+  [
+   "resolve_open_trades"
+  ],
+  [
+   "discover"
+  ],
+  [
+   "sync_market_map",
+   19
+  ],
+  [
+   "sync_portfolio"
+  ],
+  [
+   "fetch_polymarket_state",
+   "0xWALLET"
+  ],
+  [
+   "store.rebuild_positions"
+  ],
+  [
+   "store.get_portfolio_summary",
+   [],
+   {}
+  ],
+  [
+   "gribstream",
+   [
+    "atl",
+    "dal",
+    "den",
+    "hou",
+    "lax",
+    "lon",
+    "nyc",
+    "sea",
+    "sfo",
+    "tor"
+   ],
+   "<D2>"
+  ],
+  [
+   "gribstream",
+   [
+    "atl",
+    "dal",
+    "hou",
+    "lax",
+    "lon",
+    "mia",
+    "nyc",
+    "sea",
+    "tor"
+   ],
+   "<D3>"
+  ],
+  [
+   "store.save_forecast_snapshot",
+   [
+    "nyc",
+    "<D2>",
+    {
+     "model0": 20.0,
+     "model1": 20.25,
+     "model2": 20.5,
+     "model3": 20.75,
+     "model4": 21.0
+    }
+   ],
+   {}
+  ],
+  [
+   "store.save_forecast_snapshot",
+   [
+    "nyc",
+    "<D3>",
+    {
+     "model0": 20.0,
+     "model1": 20.25,
+     "model2": 20.5,
+     "model3": 20.75,
+     "model4": 21.0
+    }
+   ],
+   {}
+  ],
+  [
+   "store.save_forecast_snapshot",
+   [
+    "lon",
+    "<D2>",
+    {
+     "model0": 20.0,
+     "model1": 20.25,
+     "model2": 20.5,
+     "model3": 20.75,
+     "model4": 21.0
+    }
+   ],
+   {}
+  ],
+  [
+   "store.save_forecast_snapshot",
+   [
+    "lon",
+    "<D3>",
+    {
+     "model0": 20.0,
+     "model1": 20.25,
+     "model2": 20.5,
+     "model3": 20.75,
+     "model4": 21.0
+    }
+   ],
+   {}
+  ],
+  [
+   "store.save_forecast_snapshot",
+   [
+    "dal",
+    "<D2>",
+    {
+     "model0": 20.0,
+     "model1": 20.25,
+     "model2": 20.5,
+     "model3": 20.75,
+     "model4": 21.0
+    }
+   ],
+   {}
+  ],
+  [
+   "store.save_forecast_snapshot",
+   [
+    "dal",
+    "<D3>",
+    {
+     "model0": 20.0,
+     "model1": 20.25,
+     "model2": 20.5,
+     "model3": 20.75,
+     "model4": 21.0
+    }
+   ],
+   {}
+  ],
+  [
+   "store.save_forecast_snapshot",
+   [
+    "sea",
+    "<D2>",
+    {
+     "model0": 20.0,
+     "model1": 20.25,
+     "model2": 20.5,
+     "model3": 20.75,
+     "model4": 21.0
+    }
+   ],
+   {}
+  ],
+  [
+   "store.save_forecast_snapshot",
+   [
+    "sea",
+    "<D3>",
+    {
+     "model0": 20.0,
+     "model1": 20.25,
+     "model2": 20.5,
+     "model3": 20.75,
+     "model4": 21.0
+    }
+   ],
+   {}
+  ],
+  [
+   "store.save_forecast_snapshot",
+   [
+    "atl",
+    "<D2>",
+    {
+     "model0": 20.0,
+     "model1": 20.25,
+     "model2": 20.5,
+     "model3": 20.75,
+     "model4": 21.0
+    }
+   ],
+   {}
+  ],
+  [
+   "store.save_forecast_snapshot",
+   [
+    "atl",
+    "<D3>",
+    {
+     "model0": 20.0,
+     "model1": 20.25,
+     "model2": 20.5,
+     "model3": 20.75,
+     "model4": 21.0
+    }
+   ],
+   {}
+  ],
+  [
+   "store.save_forecast_snapshot",
+   [
+    "tor",
+    "<D2>",
+    {
+     "model0": 20.0,
+     "model1": 20.25,
+     "model2": 20.5,
+     "model3": 20.75,
+     "model4": 21.0
+    }
+   ],
+   {}
+  ],
+  [
+   "store.save_forecast_snapshot",
+   [
+    "sfo",
+    "<D2>",
+    {
+     "model0": 20.0,
+     "model1": 20.25,
+     "model2": 20.5,
+     "model3": 20.75,
+     "model4": 21.0
+    }
+   ],
+   {}
+  ],
+  [
+   "store.save_forecast_snapshot",
+   [
+    "tor",
+    "<D3>",
+    {
+     "model0": 20.0,
+     "model1": 20.25,
+     "model2": 20.5,
+     "model3": 20.75,
+     "model4": 21.0
+    }
+   ],
+   {}
+  ],
+  [
+   "store.save_forecast_snapshot",
+   [
+    "mia",
+    "<D3>",
+    {
+     "model0": 20.0,
+     "model1": 20.25,
+     "model2": 20.5,
+     "model3": 20.75,
+     "model4": 21.0
+    }
+   ],
+   {}
+  ],
+  [
+   "store.save_forecast_snapshot",
+   [
+    "lax",
+    "<D2>",
+    {
+     "model0": 20.0,
+     "model1": 20.25,
+     "model2": 20.5,
+     "model3": 20.75,
+     "model4": 21.0
+    }
+   ],
+   {}
+  ],
+  [
+   "store.save_forecast_snapshot",
+   [
+    "lax",
+    "<D3>",
+    {
+     "model0": 20.0,
+     "model1": 20.25,
+     "model2": 20.5,
+     "model3": 20.75,
+     "model4": 21.0
+    }
+   ],
+   {}
+  ],
+  [
+   "store.save_forecast_snapshot",
+   [
+    "hou",
+    "<D2>",
+    {
+     "model0": 20.0,
+     "model1": 20.25,
+     "model2": 20.5,
+     "model3": 20.75,
+     "model4": 21.0
+    }
+   ],
+   {}
+  ],
+  [
+   "store.save_forecast_snapshot",
+   [
+    "hou",
+    "<D3>",
+    {
+     "model0": 20.0,
+     "model1": 20.25,
+     "model2": 20.5,
+     "model3": 20.75,
+     "model4": 21.0
+    }
+   ],
+   {}
+  ],
+  [
+   "store.save_forecast_snapshot",
+   [
+    "den",
+    "<D2>",
+    {
+     "model0": 20.0,
+     "model1": 20.25,
+     "model2": 20.5,
+     "model3": 20.75,
+     "model4": 21.0
+    }
+   ],
+   {}
+  ],
+  [
+   "claude",
+   "bypass",
+   20.5,
+   0.5
+  ],
+  [
+   "store.save_ai_decision",
+   [],
+   {
+    "city_id": "nyc",
+    "confidence_adj": 1.0,
+    "decision": "TRADE",
+    "dissent_strength": null,
+    "market_id": "bypass",
+    "source": "claude"
+   }
+  ],
+  [
+   "gemini",
+   "bypass"
+  ],
+  [
+   "claude",
+   "hnone",
+   20.5,
+   0.5
+  ],
+  [
+   "store.save_ai_decision",
+   [],
+   {
+    "city_id": "hou",
+    "confidence_adj": 1.0,
+    "decision": "TRADE",
+    "dissent_strength": null,
+    "market_id": "hnone",
+    "source": "claude"
+   }
+  ],
+  [
+   "gemini",
+   "hnone"
+  ],
+  [
+   "claude",
+   "hedge",
+   20.5,
+   0.5
+  ],
+  [
+   "store.save_ai_decision",
+   [],
+   {
+    "city_id": "lax",
+    "confidence_adj": 1.0,
+    "decision": "TRADE",
+    "dissent_strength": null,
+    "market_id": "hedge",
+    "source": "claude"
+   }
+  ],
+  [
+   "gemini",
+   "hedge"
+  ],
+  [
+   "claude",
+   "hfail",
+   20.5,
+   0.5
+  ],
+  [
+   "store.save_ai_decision",
+   [],
+   {
+    "city_id": "hou",
+    "confidence_adj": 1.0,
+    "decision": "TRADE",
+    "dissent_strength": null,
+    "market_id": "hfail",
+    "source": "claude"
+   }
+  ],
+  [
+   "gemini",
+   "hfail"
+  ],
+  [
+   "claude",
+   "tail",
+   20.5,
+   0.5
+  ],
+  [
+   "store.save_ai_decision",
+   [],
+   {
+    "city_id": "den",
+    "confidence_adj": 1.0,
+    "decision": "TRADE",
+    "dissent_strength": null,
+    "market_id": "tail",
+    "source": "claude"
+   }
+  ],
+  [
+   "gemini",
+   "tail"
+  ],
+  [
+   "claude",
+   "cool",
+   20.5,
+   0.5
+  ],
+  [
+   "store.save_ai_decision",
+   [],
+   {
+    "city_id": "nyc",
+    "confidence_adj": 1.0,
+    "decision": "TRADE",
+    "dissent_strength": null,
+    "market_id": "cool",
+    "source": "claude"
+   }
+  ],
+  [
+   "gemini",
+   "cool"
+  ],
+  [
+   "claude",
+   "small",
+   20.5,
+   0.5
+  ],
+  [
+   "store.save_ai_decision",
+   [],
+   {
+    "city_id": "lon",
+    "confidence_adj": 1.0,
+    "decision": "TRADE",
+    "dissent_strength": null,
+    "market_id": "small",
+    "source": "claude"
+   }
+  ],
+  [
+   "gemini",
+   "small"
+  ],
+  [
+   "claude",
+   "notok",
+   20.5,
+   0.5
+  ],
+  [
+   "store.save_ai_decision",
+   [],
+   {
+    "city_id": "dal",
+    "confidence_adj": 1.0,
+    "decision": "TRADE",
+    "dissent_strength": null,
+    "market_id": "notok",
+    "source": "claude"
+   }
+  ],
+  [
+   "gemini",
+   "notok"
+  ],
+  [
+   "claude",
+   "held",
+   20.5,
+   0.5
+  ],
+  [
+   "store.save_ai_decision",
+   [],
+   {
+    "city_id": "sea",
+    "confidence_adj": 1.0,
+    "decision": "TRADE",
+    "dissent_strength": null,
+    "market_id": "held",
+    "source": "claude"
+   }
+  ],
+  [
+   "gemini",
+   "held"
+  ],
+  [
+   "claude",
+   "keep",
+   20.5,
+   0.5
+  ],
+  [
+   "store.save_ai_decision",
+   [],
+   {
+    "city_id": "sea",
+    "confidence_adj": 1.0,
+    "decision": "TRADE",
+    "dissent_strength": null,
+    "market_id": "keep",
+    "source": "claude"
+   }
+  ],
+  [
+   "gemini",
+   "keep"
+  ],
+  [
+   "claude",
+   "repl",
+   20.5,
+   0.5
+  ],
+  [
+   "store.save_ai_decision",
+   [],
+   {
+    "city_id": "atl",
+    "confidence_adj": 1.0,
+    "decision": "TRADE",
+    "dissent_strength": null,
+    "market_id": "repl",
+    "source": "claude"
+   }
+  ],
+  [
+   "gemini",
+   "repl"
+  ],
+  [
+   "claude",
+   "chase",
+   20.5,
+   0.5
+  ],
+  [
+   "store.save_ai_decision",
+   [],
+   {
+    "city_id": "atl",
+    "confidence_adj": 1.0,
+    "decision": "TRADE",
+    "dissent_strength": null,
+    "market_id": "chase",
+    "source": "claude"
+   }
+  ],
+  [
+   "gemini",
+   "chase"
+  ],
+  [
+   "claude",
+   "cskip",
+   20.5,
+   0.5
+  ],
+  [
+   "store.save_ai_decision",
+   [],
+   {
+    "city_id": "tor",
+    "confidence_adj": 1.0,
+    "decision": "TRADE",
+    "dissent_strength": null,
+    "market_id": "cskip",
+    "source": "claude"
+   }
+  ],
+  [
+   "gemini",
+   "cskip"
+  ],
+  [
+   "claude",
+   "chasey",
+   20.5,
+   0.5
+  ],
+  [
+   "store.save_ai_decision",
+   [],
+   {
+    "city_id": "sfo",
+    "confidence_adj": 1.0,
+    "decision": "TRADE",
+    "dissent_strength": null,
+    "market_id": "chasey",
+    "source": "claude"
+   }
+  ],
+  [
+   "gemini",
+   "chasey"
+  ],
+  [
+   "claude",
+   "cfail",
+   20.5,
+   0.5
+  ],
+  [
+   "store.save_ai_decision",
+   [],
+   {
+    "city_id": "tor",
+    "confidence_adj": 1.0,
+    "decision": "TRADE",
+    "dissent_strength": null,
+    "market_id": "cfail",
+    "source": "claude"
+   }
+  ],
+  [
+   "gemini",
+   "cfail"
+  ],
+  [
+   "claude",
+   "rej",
+   20.5,
+   0.5
+  ],
+  [
+   "store.save_ai_decision",
+   [],
+   {
+    "city_id": "mia",
+    "confidence_adj": 1.0,
+    "decision": "TRADE",
+    "dissent_strength": null,
+    "market_id": "rej",
+    "source": "claude"
+   }
+  ],
+  [
+   "gemini",
+   "rej"
+  ],
+  [
+   "claude",
+   "boom",
+   20.5,
+   0.5
+  ],
+  [
+   "store.save_ai_decision",
+   [],
+   {
+    "city_id": "lax",
+    "confidence_adj": 1.0,
+    "decision": "TRADE",
+    "dissent_strength": null,
+    "market_id": "boom",
+    "source": "claude"
+   }
+  ],
+  [
+   "gemini",
+   "boom"
+  ],
+  [
+   "claude",
+   "bal",
+   20.5,
+   0.5
+  ],
+  [
+   "store.save_ai_decision",
+   [],
+   {
+    "city_id": "lon",
+    "confidence_adj": 1.0,
+    "decision": "TRADE",
+    "dissent_strength": null,
+    "market_id": "bal",
+    "source": "claude"
+   }
+  ],
+  [
+   "gemini",
+   "bal"
+  ],
+  [
+   "claude",
+   "lowedge",
+   20.5,
+   0.5
+  ],
+  [
+   "store.save_ai_decision",
+   [],
+   {
+    "city_id": "dal",
+    "confidence_adj": 1.0,
+    "decision": "TRADE",
+    "dissent_strength": null,
+    "market_id": "lowedge",
+    "source": "claude"
+   }
+  ],
+  [
+   "gemini",
+   "lowedge"
+  ],
+  [
+   "book",
+   "bypass"
+  ],
+  [
+   "book",
+   "hnone"
+  ],
+  [
+   "book",
+   "hedge"
+  ],
+  [
+   "book",
+   "hfail"
+  ],
+  [
+   "book",
+   "tail"
+  ],
+  [
+   "exec.check_balance"
+  ],
+  [
+   "http.get",
+   "https://data-api.polymarket.com/positions",
+   {
+    "sizeThreshold": 0,
+    "user": "0xwallet"
+   }
+  ],
+  [
+   "store.commit",
+   [],
+   {}
+  ],
+  [
+   "store.get_portfolio_summary",
+   [],
+   {}
+  ],
+  [
+   "paper.place_trade",
+   "cool",
+   [
+    1,
+    20.0,
+    0.1508
+   ]
+  ],
+  [
+   "paper.place_trade",
+   "bypass",
+   [
+    2,
+    20.0,
+    0.1508
+   ]
+  ],
+  [
+   "store.get_position_for_market",
+   [
+    "bypass"
+   ],
+   {}
+  ],
+  [
+   "store.get_open_order_for_market",
+   [
+    "bypass"
+   ],
+   {}
+  ],
+  [
+   "store.get_positions",
+   [],
+   {}
+  ],
+  [
+   "exec.place_limit_order",
+   {
+    "description": "bypass bucket?",
+    "force_taker": true,
+    "improve_price_by": 0.005,
+    "market_id": "bypass",
+    "market_prob": 0.2,
+    "side": "NO",
+    "size": 20.0,
+    "strategy": "core",
+    "token_id": "bypass-N"
+   }
+  ],
+  [
+   "paper.place_trade",
+   "small",
+   [
+    3,
+    3.0,
+    0.0306
+   ]
+  ],
+  [
+   "store.get_position_for_market",
+   [
+    "small"
+   ],
+   {}
+  ],
+  [
+   "store.get_open_order_for_market",
+   [
+    "small"
+   ],
+   {}
+  ],
+  [
+   "store.get_positions",
+   [],
+   {}
+  ],
+  [
+   "exec.place_limit_order",
+   {
+    "description": "small bucket?",
+    "force_taker": false,
+    "improve_price_by": 0.005,
+    "market_id": "small",
+    "market_prob": 0.3,
+    "side": "NO",
+    "size": 5.0,
+    "strategy": "core",
+    "token_id": "small-N"
+   }
+  ],
+  [
+   "paper.place_trade",
+   "notok",
+   [
+    4,
+    20.0,
+    0.2038
+   ]
+  ],
+  [
+   "paper.place_trade",
+   "held",
+   [
+    5,
+    20.0,
+    0.2038
+   ]
+  ],
+  [
+   "store.get_position_for_market",
+   [
+    "held"
+   ],
+   {}
+  ],
+  [
+   "paper.place_trade",
+   "keep",
+   [
+    6,
+    20.0,
+    0.1716
+   ]
+  ],
+  [
+   "store.get_position_for_market",
+   [
+    "keep"
+   ],
+   {}
+  ],
+  [
+   "store.get_open_order_for_market",
+   [
+    "keep"
+   ],
+   {}
+  ],
+  [
+   "paper.place_trade",
+   "repl",
+   [
+    7,
+    15.0,
+    0.1618
+   ]
+  ],
+  [
+   "store.get_position_for_market",
+   [
+    "repl"
+   ],
+   {}
+  ],
+  [
+   "store.get_open_order_for_market",
+   [
+    "repl"
+   ],
+   {}
+  ],
+  [
+   "exec.cancel_order",
+   "o-repl"
+  ],
+  [
+   "store.cancel_live_trade",
+   [
+    "o-repl"
+   ],
+   {}
+  ],
+  [
+   "store.get_positions",
+   [],
+   {}
+  ],
+  [
+   "store.get_positions",
+   [],
+   {}
+  ],
+  [
+   "exec.place_limit_order",
+   {
+    "description": "repl bucket?",
+    "force_taker": false,
+    "improve_price_by": 0.005,
+    "market_id": "repl",
+    "market_prob": 0.3,
+    "side": "YES",
+    "size": 11.0,
+    "strategy": "core",
+    "token_id": "repl-Y"
+   }
+  ],
+  [
+   "paper.place_trade",
+   "chase",
+   [
+    8,
+    20.0,
+    0.2038
+   ]
+  ],
+  [
+   "store.get_position_for_market",
+   [
+    "chase"
+   ],
+   {}
+  ],
+  [
+   "store.get_open_order_for_market",
+   [
+    "chase"
+   ],
+   {}
+  ],
+  [
+   "exec.cancel_order",
+   "o-chase"
+  ],
+  [
+   "store.cancel_live_trade",
+   [
+    "o-chase"
+   ],
+   {}
+  ],
+  [
+   "store.get_positions",
+   [],
+   {}
+  ],
+  [
+   "exec.place_limit_order",
+   {
+    "description": "chase bucket?",
+    "force_taker": false,
+    "improve_price_by": 0.005,
+    "market_id": "chase",
+    "market_prob": 0.835,
+    "side": "NO",
+    "size": 20.0,
+    "strategy": "core",
+    "token_id": "chase-N"
+   }
+  ],
+  [
+   "paper.place_trade",
+   "cskip",
+   [
+    9,
+    20.0,
+    0.1716
+   ]
+  ],
+  [
+   "store.get_position_for_market",
+   [
+    "cskip"
+   ],
+   {}
+  ],
+  [
+   "store.get_open_order_for_market",
+   [
+    "cskip"
+   ],
+   {}
+  ],
+  [
+   "paper.place_trade",
+   "chasey",
+   [
+    10,
+    20.0,
+    0.2158
+   ]
+  ],
+  [
+   "store.get_position_for_market",
+   [
+    "chasey"
+   ],
+   {}
+  ],
+  [
+   "store.get_open_order_for_market",
+   [
+    "chasey"
+   ],
+   {}
+  ],
+  [
+   "exec.cancel_order",
+   "o-chasey"
+  ],
+  [
+   "store.cancel_live_trade",
+   [
+    "o-chasey"
+   ],
+   {}
+  ],
+  [
+   "store.get_positions",
+   [],
+   {}
+  ],
+  [
+   "store.get_positions",
+   [],
+   {}
+  ],
+  [
+   "exec.place_limit_order",
+   {
+    "description": "chasey bucket?",
+    "force_taker": false,
+    "improve_price_by": 0.005,
+    "market_id": "chasey",
+    "market_prob": 0.265,
+    "side": "YES",
+    "size": 11.0,
+    "strategy": "core",
+    "token_id": "chasey-Y"
+   }
+  ],
+  [
+   "paper.place_trade",
+   "cfail",
+   [
+    11,
+    20.0,
+    0.2458
+   ]
+  ],
+  [
+   "store.get_position_for_market",
+   [
+    "cfail"
+   ],
+   {}
+  ],
+  [
+   "store.get_open_order_for_market",
+   [
+    "cfail"
+   ],
+   {}
+  ],
+  [
+   "exec.cancel_order",
+   "o-cfail"
+  ],
+  [
+   "store.get_positions",
+   [],
+   {}
+  ],
+  [
+   "exec.place_limit_order",
+   {
+    "description": "cfail bucket?",
+    "force_taker": false,
+    "improve_price_by": 0.005,
+    "market_id": "cfail",
+    "market_prob": 0.45,
+    "side": "NO",
+    "size": 20.0,
+    "strategy": "core",
+    "token_id": "cfail-N"
+   }
+  ],
+  [
+   "paper.place_trade",
+   "rej",
+   [
+    12,
+    20.0,
+    0.2038
+   ]
+  ],
+  [
+   "store.get_position_for_market",
+   [
+    "rej"
+   ],
+   {}
+  ],
+  [
+   "store.get_open_order_for_market",
+   [
+    "rej"
+   ],
+   {}
+  ],
+  [
+   "store.get_positions",
+   [],
+   {}
+  ],
+  [
+   "exec.place_limit_order",
+   {
+    "description": "rej bucket?",
+    "force_taker": false,
+    "improve_price_by": 0.005,
+    "market_id": "rej",
+    "market_prob": 0.3,
+    "side": "NO",
+    "size": 20.0,
+    "strategy": "core",
+    "token_id": "rej-N"
+   }
+  ],
+  [
+   "paper.place_trade",
+   "boom",
+   [
+    13,
+    20.0,
+    0.2038
+   ]
+  ],
+  [
+   "store.get_position_for_market",
+   [
+    "boom"
+   ],
+   {}
+  ],
+  [
+   "store.get_open_order_for_market",
+   [
+    "boom"
+   ],
+   {}
+  ],
+  [
+   "store.get_positions",
+   [],
+   {}
+  ],
+  [
+   "exec.place_limit_order",
+   {
+    "description": "boom bucket?",
+    "force_taker": false,
+    "improve_price_by": 0.005,
+    "market_id": "boom",
+    "market_prob": 0.3,
+    "side": "NO",
+    "size": 20.0,
+    "strategy": "core",
+    "token_id": "boom-N"
+   }
+  ],
+  [
+   "paper.place_trade",
+   "hedge",
+   [
+    14,
+    20.0,
+    0.2038
+   ]
+  ],
+  [
+   "paper.place_spread_trade",
+   "hedge",
+   "YES",
+   20.0,
+   15
+  ],
+  [
+   "store.get_position_for_market",
+   [
+    "hedge"
+   ],
+   {}
+  ],
+  [
+   "store.get_open_order_for_market",
+   [
+    "hedge"
+   ],
+   {}
+  ],
+  [
+   "store.get_positions",
+   [],
+   {}
+  ],
+  [
+   "exec.place_limit_order",
+   {
+    "description": "hedge bucket?",
+    "force_taker": true,
+    "improve_price_by": 0.005,
+    "market_id": "hedge",
+    "market_prob": 0.3,
+    "side": "NO",
+    "size": 20.0,
+    "strategy": "core",
+    "token_id": "hedge-N"
+   }
+  ],
+  [
+   "exec.place_limit_order",
+   {
+    "description": "[SPREAD] HEDGE YES @ 0.30 for lax hedge bucket?",
+    "force_taker": false,
+    "improve_price_by": 0.0,
+    "market_id": "hedge",
+    "market_prob": 0.3,
+    "side": "YES",
+    "size": 5.0,
+    "strategy": "spread",
+    "token_id": "hedge-Y"
+   }
+  ],
+  [
+   "paper.place_trade",
+   "hfail",
+   [
+    16,
+    20.0,
+    0.2038
+   ]
+  ],
+  [
+   "paper.place_spread_trade",
+   "hfail",
+   "YES",
+   20.0,
+   17
+  ],
+  [
+   "store.get_position_for_market",
+   [
+    "hfail"
+   ],
+   {}
+  ],
+  [
+   "store.get_open_order_for_market",
+   [
+    "hfail"
+   ],
+   {}
+  ],
+  [
+   "store.get_positions",
+   [],
+   {}
+  ],
+  [
+   "exec.place_limit_order",
+   {
+    "description": "hfail bucket?",
+    "force_taker": true,
+    "improve_price_by": 0.005,
+    "market_id": "hfail",
+    "market_prob": 0.3,
+    "side": "NO",
+    "size": 20.0,
+    "strategy": "core",
+    "token_id": "hfail-N"
+   }
+  ],
+  [
+   "exec.place_limit_order",
+   {
+    "description": "[SPREAD] HEDGE YES @ 0.30 for hou hfail bucket?",
+    "force_taker": false,
+    "improve_price_by": 0.0,
+    "market_id": "hfail",
+    "market_prob": 0.3,
+    "side": "YES",
+    "size": 5.0,
+    "strategy": "spread",
+    "token_id": "hfail-Y"
+   }
+  ],
+  [
+   "paper.place_trade",
+   "hnone",
+   [
+    18,
+    20.0,
+    0.2038
+   ]
+  ],
+  [
+   "store.get_position_for_market",
+   [
+    "hnone"
+   ],
+   {}
+  ],
+  [
+   "store.get_open_order_for_market",
+   [
+    "hnone"
+   ],
+   {}
+  ],
+  [
+   "store.get_positions",
+   [],
+   {}
+  ],
+  [
+   "exec.place_limit_order",
+   {
+    "description": "hnone bucket?",
+    "force_taker": true,
+    "improve_price_by": 0.005,
+    "market_id": "hnone",
+    "market_prob": 0.3,
+    "side": "NO",
+    "size": 20.0,
+    "strategy": "core",
+    "token_id": "hnone-N"
+   }
+  ],
+  [
+   "paper.place_trade",
+   "tail",
+   [
+    19,
+    20.0,
+    0.0244
+   ]
+  ],
+  [
+   "store.get_position_for_market",
+   [
+    "tail"
+   ],
+   {}
+  ],
+  [
+   "store.get_open_order_for_market",
+   [
+    "tail"
+   ],
+   {}
+  ],
+  [
+   "store.get_positions",
+   [],
+   {}
+  ],
+  [
+   "exec.place_limit_order",
+   {
+    "description": "tail bucket?",
+    "force_taker": true,
+    "improve_price_by": 0.005,
+    "market_id": "tail",
+    "market_prob": 0.04,
+    "side": "NO",
+    "size": 20.0,
+    "strategy": "tail",
+    "token_id": "tail-N"
+   }
+  ],
+  [
+   "scan_exits",
+   "paper",
+   [
+    [
+     "cool",
+     "NO",
+     20.0,
+     0.185,
+     0.0
+    ],
+    [
+     "bypass",
+     "NO",
+     20.0,
+     0.185,
+     0.0
+    ],
+    [
+     "small",
+     "NO",
+     3.0,
+     0.285,
+     0.0
+    ],
+    [
+     "notok",
+     "NO",
+     20.0,
+     0.285,
+     0.0
+    ],
+    [
+     "held",
+     "NO",
+     20.0,
+     0.285,
+     0.0
+    ],
+    [
+     "keep",
+     "YES",
+     20.0,
+     0.21999999999999997,
+     0.0
+    ],
+    [
+     "repl",
+     "YES",
+     15.0,
+     0.315,
+     0.0
+    ],
+    [
+     "chase",
+     "NO",
+     20.0,
+     0.285,
+     0.0
+    ],
+    [
+     "cskip",
+     "YES",
+     20.0,
+     0.21999999999999997,
+     0.0
+    ],
+    [
+     "chasey",
+     "YES",
+     20.0,
+     0.315,
+     0.0
+    ],
+    [
+     "cfail",
+     "NO",
+     20.0,
+     0.435,
+     0.0
+    ],
+    [
+     "rej",
+     "NO",
+     20.0,
+     0.285,
+     0.0
+    ],
+    [
+     "boom",
+     "NO",
+     20.0,
+     0.285,
+     0.0
+    ],
+    [
+     "hedge",
+     "NO",
+     20.0,
+     0.285,
+     0.0
+    ],
+    [
+     "hedge",
+     "YES",
+     20.0,
+     0.3,
+     0.0
+    ],
+    [
+     "hfail",
+     "NO",
+     20.0,
+     0.285,
+     0.0
+    ],
+    [
+     "hfail",
+     "YES",
+     20.0,
+     0.3,
+     0.0
+    ],
+    [
+     "hnone",
+     "NO",
+     20.0,
+     0.285,
+     0.0
+    ],
+    [
+     "tail",
+     "NO",
+     20.0,
+     0.025,
+     0.0
+    ]
+   ],
+   [
+    [
+     "bal",
+     0.5
+    ],
+    [
+     "boom",
+     0.3
+    ],
+    [
+     "bypass",
+     0.2
+    ],
+    [
+     "cfail",
+     0.45
+    ],
+    [
+     "chase",
+     0.3
+    ],
+    [
+     "chasey",
+     0.3
+    ],
+    [
+     "cool",
+     0.2
+    ],
+    [
+     "cskip",
+     0.205
+    ],
+    [
+     "hedge",
+     0.3
+    ],
+    [
+     "held",
+     0.3
+    ],
+    [
+     "hfail",
+     0.3
+    ],
+    [
+     "hnone",
+     0.3
+    ],
+    [
+     "keep",
+     0.205
+    ],
+    [
+     "lowedge",
+     0.3
+    ],
+    [
+     "notok",
+     0.3
+    ],
+    [
+     "rej",
+     0.3
+    ],
+    [
+     "repl",
+     0.3
+    ],
+    [
+     "small",
+     0.3
+    ],
+    [
+     "tail",
+     0.04
+    ]
+   ],
+   [
+    [
+     "bal",
+     0.35
+    ],
+    [
+     "boom",
+     0.35
+    ],
+    [
+     "bypass",
+     0.35
+    ],
+    [
+     "cfail",
+     0.35
+    ],
+    [
+     "chase",
+     0.35
+    ],
+    [
+     "chasey",
+     0.35
+    ],
+    [
+     "cool",
+     0.35
+    ],
+    [
+     "cskip",
+     0.35
+    ],
+    [
+     "hedge",
+     0.35
+    ],
+    [
+     "held",
+     0.35
+    ],
+    [
+     "hfail",
+     0.35
+    ],
+    [
+     "hnone",
+     0.35
+    ],
+    [
+     "keep",
+     0.35
+    ],
+    [
+     "lowedge",
+     0.35
+    ],
+    [
+     "notok",
+     0.35
+    ],
+    [
+     "rej",
+     0.35
+    ],
+    [
+     "repl",
+     0.35
+    ],
+    [
+     "small",
+     0.35
+    ],
+    [
+     "tail",
+     0.35
+    ]
+   ],
+   [
+    [
+     "bal",
+     0.5
+    ],
+    [
+     "boom",
+     0.7
+    ],
+    [
+     "bypass",
+     0.8
+    ],
+    [
+     "cfail",
+     0.55
+    ],
+    [
+     "chase",
+     0.7
+    ],
+    [
+     "chasey",
+     0.7
+    ],
+    [
+     "cool",
+     0.8
+    ],
+    [
+     "cskip",
+     0.795
+    ],
+    [
+     "hedge",
+     0.7
+    ],
+    [
+     "held",
+     0.7
+    ],
+    [
+     "hfail",
+     0.7
+    ],
+    [
+     "hnone",
+     0.7
+    ],
+    [
+     "keep",
+     0.795
+    ],
+    [
+     "lowedge",
+     0.7
+    ],
+    [
+     "notok",
+     0.7
+    ],
+    [
+     "rej",
+     0.7
+    ],
+    [
+     "repl",
+     0.7
+    ],
+    [
+     "small",
+     0.7
+    ],
+    [
+     "tail",
+     0.96
+    ]
+   ],
+   [
+    "atl|<D2>",
+    "atl|<D3>",
+    "dal|<D2>",
+    "dal|<D3>",
+    "den|<D2>",
+    "hou|<D2>",
+    "hou|<D3>",
+    "lax|<D2>",
+    "lax|<D3>",
+    "lon|<D2>",
+    "lon|<D3>",
+    "mia|<D3>",
+    "nyc|<D2>",
+    "nyc|<D3>",
+    "sea|<D2>",
+    "sea|<D3>",
+    "sfo|<D2>",
+    "tor|<D2>",
+    "tor|<D3>"
+   ]
+  ],
+  [
+   "store.get_positions",
+   [],
+   {}
+  ],
+  [
+   "scan_exits",
+   "live",
+   [
+    [
+     "yesbig",
+     "YES",
+     330.0,
+     0.33,
+     1000.0
+    ],
+    [
+     "held",
+     "YES",
+     9.0,
+     0.3,
+     30.0
+    ]
+   ],
+   [
+    [
+     "bal",
+     0.5
+    ],
+    [
+     "boom",
+     0.3
+    ],
+    [
+     "bypass",
+     0.2
+    ],
+    [
+     "cfail",
+     0.45
+    ],
+    [
+     "chase",
+     0.3
+    ],
+    [
+     "chasey",
+     0.3
+    ],
+    [
+     "cool",
+     0.2
+    ],
+    [
+     "cskip",
+     0.205
+    ],
+    [
+     "hedge",
+     0.3
+    ],
+    [
+     "held",
+     0.3
+    ],
+    [
+     "hfail",
+     0.3
+    ],
+    [
+     "hnone",
+     0.3
+    ],
+    [
+     "keep",
+     0.205
+    ],
+    [
+     "lowedge",
+     0.3
+    ],
+    [
+     "notok",
+     0.3
+    ],
+    [
+     "rej",
+     0.3
+    ],
+    [
+     "repl",
+     0.3
+    ],
+    [
+     "small",
+     0.3
+    ],
+    [
+     "tail",
+     0.04
+    ]
+   ],
+   [
+    [
+     "bal",
+     0.35
+    ],
+    [
+     "boom",
+     0.35
+    ],
+    [
+     "bypass",
+     0.35
+    ],
+    [
+     "cfail",
+     0.35
+    ],
+    [
+     "chase",
+     0.35
+    ],
+    [
+     "chasey",
+     0.35
+    ],
+    [
+     "cool",
+     0.35
+    ],
+    [
+     "cskip",
+     0.35
+    ],
+    [
+     "hedge",
+     0.35
+    ],
+    [
+     "held",
+     0.35
+    ],
+    [
+     "hfail",
+     0.35
+    ],
+    [
+     "hnone",
+     0.35
+    ],
+    [
+     "keep",
+     0.35
+    ],
+    [
+     "lowedge",
+     0.35
+    ],
+    [
+     "notok",
+     0.35
+    ],
+    [
+     "rej",
+     0.35
+    ],
+    [
+     "repl",
+     0.35
+    ],
+    [
+     "small",
+     0.35
+    ],
+    [
+     "tail",
+     0.35
+    ]
+   ],
+   [
+    [
+     "bal",
+     0.5
+    ],
+    [
+     "boom",
+     0.7
+    ],
+    [
+     "bypass",
+     0.8
+    ],
+    [
+     "cfail",
+     0.55
+    ],
+    [
+     "chase",
+     0.7
+    ],
+    [
+     "chasey",
+     0.7
+    ],
+    [
+     "cool",
+     0.8
+    ],
+    [
+     "cskip",
+     0.795
+    ],
+    [
+     "hedge",
+     0.7
+    ],
+    [
+     "held",
+     0.7
+    ],
+    [
+     "hfail",
+     0.7
+    ],
+    [
+     "hnone",
+     0.7
+    ],
+    [
+     "keep",
+     0.795
+    ],
+    [
+     "lowedge",
+     0.7
+    ],
+    [
+     "notok",
+     0.7
+    ],
+    [
+     "rej",
+     0.7
+    ],
+    [
+     "repl",
+     0.7
+    ],
+    [
+     "small",
+     0.7
+    ],
+    [
+     "tail",
+     0.96
+    ]
+   ],
+   [
+    "atl|<D2>",
+    "atl|<D3>",
+    "dal|<D2>",
+    "dal|<D3>",
+    "den|<D2>",
+    "hou|<D2>",
+    "hou|<D3>",
+    "lax|<D2>",
+    "lax|<D3>",
+    "lon|<D2>",
+    "lon|<D3>",
+    "mia|<D3>",
+    "nyc|<D2>",
+    "nyc|<D3>",
+    "sea|<D2>",
+    "sea|<D3>",
+    "sfo|<D2>",
+    "tor|<D2>",
+    "tor|<D3>"
+   ]
+  ]
+ ],
+ "forecast_cache_keys": [
+  "atl|<D2>",
+  "atl|<D3>",
+  "aus|<D3>",
+  "bue|<D3>",
+  "chi|<D3>",
+  "dal|<D2>",
+  "dal|<D3>",
+  "den|<D2>",
+  "den|<D3>",
+  "hkg|<D3>",
+  "hou|<D2>",
+  "hou|<D3>",
+  "lax|<D2>",
+  "lax|<D3>",
+  "lko|<D3>",
+  "lon|<D2>",
+  "lon|<D3>",
+  "mad|<D3>",
+  "mia|<D3>",
+  "muc|<D3>",
+  "nyc|<D2>",
+  "nyc|<D3>",
+  "sea|<D2>",
+  "sea|<D3>",
+  "sel|<D3>",
+  "sfo|<D2>",
+  "sfo|<D3>",
+  "sha|<D3>",
+  "szn|<D3>",
+  "tor|<D2>",
+  "tor|<D3>",
+  "tyo|<D3>",
+  "war|<D3>",
+  "wlg|<D3>"
+ ],
+ "logs": [
+  "INFO weather_edge.persistence Persistence: <TMP>/cycle.db",
+  "INFO weather_edge.scheduler HORIZON FILTER: blocked <D0> (resolve < 36h)",
+  "INFO weather_edge.scheduler === Discovering Polymarket weather markets ===",
+  "INFO weather_edge.scheduler Market map updated: 19 token mappings",
+  "INFO weather_edge.scheduler PORTFOLIO EQUITY: $1000.00 (used as bankroll for Kelly sizing)",
+  "INFO weather_edge.scheduler Active market groups: 19 city-date combos",
+  "INFO weather_edge.scheduler === New York (KLGA) on <D2>, 1 markets ===",
+  "INFO weather_edge.scheduler   nyc TREND: warming (0.40\u00b0C/cycle, stability=0.7) \u2192 conf \u00d71.10",
+  "INFO weather_edge.scheduler   nyc/temp_max_c: mean=21.0\u00b0C std=0.5 conf=90% (5 models)",
+  "INFO weather_edge.scheduler === New York (KLGA) on <D3>, 1 markets ===",
+  "INFO weather_edge.scheduler   nyc TREND: warming (0.40\u00b0C/cycle, stability=0.7) \u2192 conf \u00d71.10",
+  "INFO weather_edge.scheduler   nyc/temp_max_c: mean=21.0\u00b0C std=0.5 conf=90% (5 models)",
+  "INFO weather_edge.scheduler === London (EGLC) on <D2>, 1 markets ===",
+  "INFO weather_edge.scheduler   lon/temp_max_c: mean=21.0\u00b0C std=0.5 conf=90% (5 models)",
+  "INFO weather_edge.scheduler === London (EGLC) on <D3>, 1 markets ===",
+  "INFO weather_edge.scheduler   lon/temp_max_c: mean=21.0\u00b0C std=0.5 conf=90% (5 models)",
+  "INFO weather_edge.scheduler === Dallas (KDAL) on <D2>, 1 markets ===",
+  "INFO weather_edge.scheduler   dal/temp_max_c: mean=21.0\u00b0C std=0.5 conf=90% (5 models)",
+  "INFO weather_edge.scheduler === Dallas (KDAL) on <D3>, 1 markets ===",
+  "INFO weather_edge.scheduler   dal/temp_max_c: mean=21.0\u00b0C std=0.5 conf=90% (5 models)",
+  "INFO weather_edge.scheduler === Seattle (KSEA) on <D2>, 1 markets ===",
+  "INFO weather_edge.scheduler   sea/temp_max_c: mean=21.0\u00b0C std=0.5 conf=90% (5 models)",
+  "INFO weather_edge.scheduler === Seattle (KSEA) on <D3>, 1 markets ===",
+  "INFO weather_edge.scheduler   sea/temp_max_c: mean=21.0\u00b0C std=0.5 conf=90% (5 models)",
+  "INFO weather_edge.scheduler === Atlanta (KATL) on <D2>, 1 markets ===",
+  "INFO weather_edge.scheduler   atl/temp_max_c: mean=21.0\u00b0C std=0.5 conf=90% (5 models)",
+  "INFO weather_edge.scheduler === Atlanta (KATL) on <D3>, 1 markets ===",
+  "INFO weather_edge.scheduler   atl/temp_max_c: mean=21.0\u00b0C std=0.5 conf=90% (5 models)",
+  "INFO weather_edge.scheduler === Toronto (CYYZ) on <D2>, 1 markets ===",
+  "INFO weather_edge.scheduler   tor/temp_max_c: mean=21.0\u00b0C std=0.5 conf=90% (5 models)",
+  "INFO weather_edge.scheduler === San Francisco (KSFO) on <D2>, 1 markets ===",
+  "INFO weather_edge.scheduler   sfo/temp_max_c: mean=21.0\u00b0C std=0.5 conf=90% (5 models)",
+  "INFO weather_edge.scheduler === Toronto (CYYZ) on <D3>, 1 markets ===",
+  "INFO weather_edge.scheduler   tor/temp_max_c: mean=21.0\u00b0C std=0.5 conf=90% (5 models)",
+  "INFO weather_edge.scheduler === Miami (KMIA) on <D3>, 1 markets ===",
+  "INFO weather_edge.scheduler   mia/temp_max_c: mean=21.0\u00b0C std=0.5 conf=90% (5 models)",
+  "INFO weather_edge.scheduler === Los Angeles (KLAX) on <D2>, 1 markets ===",
+  "INFO weather_edge.scheduler   lax/temp_max_c: mean=21.0\u00b0C std=0.5 conf=90% (5 models)",
+  "INFO weather_edge.scheduler === Los Angeles (KLAX) on <D3>, 1 markets ===",
+  "INFO weather_edge.scheduler   lax/temp_max_c: mean=21.0\u00b0C std=0.5 conf=90% (5 models)",
+  "INFO weather_edge.scheduler === Houston (KHOU) on <D2>, 1 markets ===",
+  "INFO weather_edge.scheduler   hou/temp_max_c: mean=21.0\u00b0C std=0.5 conf=90% (5 models)",
+  "INFO weather_edge.scheduler === Houston (KHOU) on <D3>, 1 markets ===",
+  "INFO weather_edge.scheduler   hou/temp_max_c: mean=21.0\u00b0C std=0.5 conf=90% (5 models)",
+  "INFO weather_edge.scheduler === Denver (KBKF) on <D2>, 1 markets ===",
+  "INFO weather_edge.scheduler   den/temp_max_c: mean=21.0\u00b0C std=0.5 conf=90% (5 models)",
+  "INFO weather_edge.scheduler AI GATE: 19/19 signals cleared for execution",
+  "INFO weather_edge.scheduler Fetching order book prices for spread detection...",
+  "DEBUG weather_edge.scheduler Book fetch timeout/error for nyc: ",
+  "INFO weather_edge.scheduler SPREAD OPP: lax, YES_ask=0.310 NO_ask=0.660 total=0.970 profit=0.030/share",
+  "INFO weather_edge.scheduler SPREAD OPP: hou, YES_ask=0.310 NO_ask=0.660 total=0.970 profit=0.030/share",
+  "INFO weather_edge.scheduler Book price fetch complete, placing trades...",
+  "INFO weather_edge.scheduler USDC balance: $500.00",
+  "INFO weather_edge.scheduler EXECUTION LOOP: 19 signals, live_executor=True, dry_run=False, usdc_floor_block=False, pos_count=2/50",
+  "INFO weather_edge.trading.paper PAPER TRADE: NO nyc $20 @ 0.18 (+2\u00a2 spread, fee $0.15) | edge=5.0% conf=99% | [TOMORROW] cool bucket?",
+  "INFO weather_edge.scheduler EXIT COOLDOWN: nyc, exited <4h ago, edge=5.0% (need >12% to bypass)",
+  "INFO weather_edge.trading.paper PAPER TRADE: NO nyc $20 @ 0.18 (+2\u00a2 spread, fee $0.15) | edge=15.0% conf=99% | [TOMORROW] bypass bucket?",
+  "WARNING weather_edge.scheduler COOLDOWN BYPASS: nyc, massive edge 15.0% overrules 4h window",
+  "INFO weather_edge.scheduler TAKER ENTRY: nyc edge=15.0%, crossing spread",
+  "INFO weather_edge.scheduler LIVE: TAKER pending NO nyc 25 shares @ 0.800, new-1 (bal=$480.00)",
+  "INFO weather_edge.trading.paper PAPER TRADE: NO lon $3 @ 0.28 (+2\u00a2 spread, fee $0.03) | edge=5.0% conf=90% | [TOMORROW] small bucket?",
+  "INFO weather_edge.scheduler LIVE: MAKER pending NO lon 7 shares @ 0.690, new-2 (bal=$475.00)",
+  "INFO weather_edge.scheduler FEE GATE (paper only): lon bal bucket?, paper skipped, live maker order OK",
+  "INFO weather_edge.scheduler BALANCE LIMIT: lon needs $600 but exchange balance is $475.00, skipping",
+  "INFO weather_edge.scheduler FEE GATE (paper only): dal lowedge bucket?, paper skipped, live maker order OK",
+  "DEBUG weather_edge.scheduler LIVE SKIP: dal edge=0.015 size=$10 (need \u22652% edge)",
+  "INFO weather_edge.trading.paper PAPER TRADE: NO dal $20 @ 0.28 (+2\u00a2 spread, fee $0.20) | edge=5.0% conf=90% | [TOMORROW] notok bucket?",
+  "INFO weather_edge.trading.paper PAPER TRADE: NO sea $20 @ 0.28 (+2\u00a2 spread, fee $0.20) | edge=5.0% conf=90% | [TOMORROW] held bucket?",
+  "INFO weather_edge.scheduler POSITION EXISTS: sea already hold 30 shares ($9.00), skipping",
+  "INFO weather_edge.trading.paper PAPER TRADE: YES sea $20 @ 0.22 (+2\u00a2 spread, fee $0.17) | edge=5.0% conf=90% | [TOMORROW] keep bucket?",
+  "INFO weather_edge.scheduler LIVE KEEP: sea @ 0.200 (age=5m, drift=0.0000, filled=0)",
+  "INFO weather_edge.trading.paper PAPER TRADE: YES atl $15 @ 0.32 (+2\u00a2 spread, fee $0.16) | edge=5.0% conf=90% | [TOMORROW] repl bucket?",
+  "INFO weather_edge.scheduler LIVE REPLACE: atl cancelled o-repl (price 0.100\u21920.290, drift=0.190)",
+  "INFO weather_edge.scheduler YES EXPOSURE TRIM: $15\u2192$11 (cap $350)",
+  "INFO weather_edge.scheduler LIVE: MAKER pending YES atl 38 shares @ 0.290, new-3 (bal=$464.00)",
+  "INFO weather_edge.trading.paper PAPER TRADE: NO atl $20 @ 0.28 (+2\u00a2 spread, fee $0.20) | edge=5.0% conf=90% | [TOMORROW] chase bucket?",
+  "INFO weather_edge.scheduler PRICE CHASE: atl improving 0.150\u21920.160 after 120m unfilled",
+  "INFO weather_edge.scheduler LIVE: MAKER pending NO atl 125 shares @ 0.160, new-4 (bal=$444.00)",
+  "INFO weather_edge.trading.paper PAPER TRADE: YES tor $20 @ 0.22 (+2\u00a2 spread, fee $0.17) | edge=5.0% conf=90% | [TOMORROW] cskip bucket?",
+  "INFO weather_edge.scheduler PRICE CHASE SKIP: tor @ 0.20 already at mid cap 0.205, keeping order",
+  "INFO weather_edge.trading.paper PAPER TRADE: YES sfo $20 @ 0.32 (+2\u00a2 spread, fee $0.22) | edge=5.0% conf=90% | [TOMORROW] chasey bucket?",
+  "INFO weather_edge.scheduler PRICE CHASE: sfo improving 0.250\u21920.260 after 120m unfilled",
+  "INFO weather_edge.scheduler YES EXPOSURE TRIM: $20\u2192$11 (cap $350)",
+  "INFO weather_edge.scheduler LIVE: MAKER pending YES sfo 42 shares @ 0.260, new-5 (bal=$433.00)",
+  "INFO weather_edge.trading.paper PAPER TRADE: NO tor $20 @ 0.43 (+2\u00a2 spread, fee $0.25) | edge=5.0% conf=90% | [TOMORROW] cfail bucket?",
+  "WARNING weather_edge.scheduler Failed to cancel old order o-cfail: cancel boom o-cfail",
+  "INFO weather_edge.scheduler LIVE: MAKER pending NO tor 36 shares @ 0.550, new-6 (bal=$413.00)",
+  "INFO weather_edge.trading.paper PAPER TRADE: NO mia $20 @ 0.28 (+2\u00a2 spread, fee $0.20) | edge=5.0% conf=90% | [TOMORROW] rej bucket?",
+  "INFO weather_edge.trading.paper PAPER TRADE: NO lax $20 @ 0.28 (+2\u00a2 spread, fee $0.20) | edge=5.0% conf=90% | [TOMORROW] boom bucket?",
+  "ERROR weather_edge.scheduler LIVE ORDER FAILED: lax, clob exploded",
+  "INFO weather_edge.trading.paper PAPER TRADE: NO lax $20 @ 0.28 (+2\u00a2 spread, fee $0.20) | edge=9.0% conf=90% | [TOMORROW] hedge bucket?",
+  "INFO weather_edge.trading.market_maker SPREAD ORDER: YES lax 67 shares @ 0.30 ($20.00), hedges NO lax | guaranteed profit: $26.67",
+  "INFO weather_edge.trading.paper SPREAD TRADE: YES lax $20 @ 0.30 (fee $0.21) | est guaranteed=$26.67 | [SPREAD] HEDGE YES @ 0.30 for lax hedge bucket?",
+  "INFO weather_edge.scheduler TAKER ENTRY: lax edge=9.0%, crossing spread",
+  "INFO weather_edge.scheduler LIVE: TAKER pending NO lax 29 shares @ 0.690, new-8 (bal=$393.00)",
+  "INFO weather_edge.trading.market_maker SPREAD ORDER: YES lax 17 shares @ 0.30 ($5.00), hedges NO lax | guaranteed profit: $0.00",
+  "INFO weather_edge.scheduler LIVE SPREAD HEDGE: YES lax 17 shares @ 0.300, new-9",
+  "INFO weather_edge.trading.paper PAPER TRADE: NO hou $20 @ 0.28 (+2\u00a2 spread, fee $0.20) | edge=9.0% conf=90% | [TOMORROW] hfail bucket?",
+  "INFO weather_edge.trading.market_maker SPREAD ORDER: YES hou 67 shares @ 0.30 ($20.00), hedges NO hou | guaranteed profit: $26.67",
+  "INFO weather_edge.trading.paper SPREAD TRADE: YES hou $20 @ 0.30 (fee $0.21) | est guaranteed=$26.67 | [SPREAD] HEDGE YES @ 0.30 for hou hfail bucket?",
+  "INFO weather_edge.scheduler TAKER ENTRY: hou edge=9.0%, crossing spread",
+  "INFO weather_edge.scheduler LIVE: TAKER pending NO hou 29 shares @ 0.690, new-10 (bal=$373.00)",
+  "INFO weather_edge.trading.market_maker SPREAD ORDER: YES hou 17 shares @ 0.30 ($5.00), hedges NO hou | guaranteed profit: $0.00",
+  "ERROR weather_edge.scheduler LIVE SPREAD HEDGE FAILED: hou, hedge down",
+  "INFO weather_edge.trading.paper PAPER TRADE: NO hou $20 @ 0.28 (+2\u00a2 spread, fee $0.20) | edge=10.0% conf=90% | [TOMORROW] hnone bucket?",
+  "INFO weather_edge.scheduler TAKER ENTRY: hou edge=10.0%, crossing spread",
+  "INFO weather_edge.scheduler LIVE: TAKER pending NO hou 29 shares @ 0.690, new-11 (bal=$353.00)",
+  "INFO weather_edge.trading.paper PAPER TRADE: NO den $20 @ 0.03 (+2\u00a2 spread, fee $0.02) | edge=8.0% conf=90% | [PENNY] tail bucket?",
+  "INFO weather_edge.scheduler TAKER ENTRY: den edge=8.0%, crossing spread",
+  "INFO weather_edge.scheduler LIVE: TAKER pending NO den 21 shares @ 0.950, new-12 (bal=$333.00)",
+  "INFO weather_edge.scheduler SPREAD CAPTURE: 4 orders, est. guaranteed P&L=$53.34",
+  "INFO weather_edge.scheduler   bue (no markets): mean=21.0\u00b0C conf=90%",
+  "INFO weather_edge.scheduler   sel (no markets): mean=21.0\u00b0C conf=90%",
+  "INFO weather_edge.scheduler   chi (no markets): mean=21.0\u00b0C conf=90%",
+  "INFO weather_edge.scheduler   den (no markets): mean=21.0\u00b0C conf=90%",
+  "INFO weather_edge.scheduler   sfo (no markets): mean=21.0\u00b0C conf=90%",
+  "INFO weather_edge.scheduler   sha (no markets): mean=21.0\u00b0C conf=90%",
+  "INFO weather_edge.scheduler   mad (no markets): mean=21.0\u00b0C conf=90%",
+  "INFO weather_edge.scheduler   tyo (no markets): mean=21.0\u00b0C conf=90%",
+  "INFO weather_edge.scheduler   hkg (no markets): mean=21.0\u00b0C conf=90%",
+  "INFO weather_edge.scheduler   muc (no markets): mean=21.0\u00b0C conf=90%",
+  "INFO weather_edge.scheduler   war (no markets): mean=21.0\u00b0C conf=90%",
+  "INFO weather_edge.scheduler   szn (no markets): mean=21.0\u00b0C conf=90%",
+  "INFO weather_edge.scheduler   aus (no markets): mean=21.0\u00b0C conf=90%",
+  "INFO weather_edge.scheduler   wlg (no markets): mean=21.0\u00b0C conf=90%",
+  "INFO weather_edge.scheduler   lko (no markets): mean=21.0\u00b0C conf=90%"
+ ],
+ "paper_trades": [
+  {
+   "description": "[TOMORROW] cool bucket?",
+   "entry_price": 0.185,
+   "exit_price": null,
+   "fee_usd": 0.1508,
+   "market_id": "cool",
+   "pnl": null,
+   "side": "NO",
+   "size_usd": 20.0,
+   "status": "open",
+   "strategy": "core",
+   "trade_id": 1
+  },
+  {
+   "description": "[TOMORROW] bypass bucket?",
+   "entry_price": 0.185,
+   "exit_price": null,
+   "fee_usd": 0.1508,
+   "market_id": "bypass",
+   "pnl": null,
+   "side": "NO",
+   "size_usd": 20.0,
+   "status": "open",
+   "strategy": "core",
+   "trade_id": 2
+  },
+  {
+   "description": "[TOMORROW] small bucket?",
+   "entry_price": 0.285,
+   "exit_price": null,
+   "fee_usd": 0.0306,
+   "market_id": "small",
+   "pnl": null,
+   "side": "NO",
+   "size_usd": 3.0,
+   "status": "open",
+   "strategy": "core",
+   "trade_id": 3
+  },
+  {
+   "description": "[TOMORROW] notok bucket?",
+   "entry_price": 0.285,
+   "exit_price": null,
+   "fee_usd": 0.2038,
+   "market_id": "notok",
+   "pnl": null,
+   "side": "NO",
+   "size_usd": 20.0,
+   "status": "open",
+   "strategy": "core",
+   "trade_id": 4
+  },
+  {
+   "description": "[TOMORROW] held bucket?",
+   "entry_price": 0.285,
+   "exit_price": null,
+   "fee_usd": 0.2038,
+   "market_id": "held",
+   "pnl": null,
+   "side": "NO",
+   "size_usd": 20.0,
+   "status": "open",
+   "strategy": "core",
+   "trade_id": 5
+  },
+  {
+   "description": "[TOMORROW] keep bucket?",
+   "entry_price": 0.21999999999999997,
+   "exit_price": null,
+   "fee_usd": 0.1716,
+   "market_id": "keep",
+   "pnl": null,
+   "side": "YES",
+   "size_usd": 20.0,
+   "status": "open",
+   "strategy": "core",
+   "trade_id": 6
+  },
+  {
+   "description": "[TOMORROW] repl bucket?",
+   "entry_price": 0.315,
+   "exit_price": null,
+   "fee_usd": 0.1618,
+   "market_id": "repl",
+   "pnl": null,
+   "side": "YES",
+   "size_usd": 15.0,
+   "status": "open",
+   "strategy": "core",
+   "trade_id": 7
+  },
+  {
+   "description": "[TOMORROW] chase bucket?",
+   "entry_price": 0.285,
+   "exit_price": null,
+   "fee_usd": 0.2038,
+   "market_id": "chase",
+   "pnl": null,
+   "side": "NO",
+   "size_usd": 20.0,
+   "status": "open",
+   "strategy": "core",
+   "trade_id": 8
+  },
+  {
+   "description": "[TOMORROW] cskip bucket?",
+   "entry_price": 0.21999999999999997,
+   "exit_price": null,
+   "fee_usd": 0.1716,
+   "market_id": "cskip",
+   "pnl": null,
+   "side": "YES",
+   "size_usd": 20.0,
+   "status": "open",
+   "strategy": "core",
+   "trade_id": 9
+  },
+  {
+   "description": "[TOMORROW] chasey bucket?",
+   "entry_price": 0.315,
+   "exit_price": null,
+   "fee_usd": 0.2158,
+   "market_id": "chasey",
+   "pnl": null,
+   "side": "YES",
+   "size_usd": 20.0,
+   "status": "open",
+   "strategy": "core",
+   "trade_id": 10
+  },
+  {
+   "description": "[TOMORROW] cfail bucket?",
+   "entry_price": 0.435,
+   "exit_price": null,
+   "fee_usd": 0.2458,
+   "market_id": "cfail",
+   "pnl": null,
+   "side": "NO",
+   "size_usd": 20.0,
+   "status": "open",
+   "strategy": "core",
+   "trade_id": 11
+  },
+  {
+   "description": "[TOMORROW] rej bucket?",
+   "entry_price": 0.285,
+   "exit_price": null,
+   "fee_usd": 0.2038,
+   "market_id": "rej",
+   "pnl": null,
+   "side": "NO",
+   "size_usd": 20.0,
+   "status": "open",
+   "strategy": "core",
+   "trade_id": 12
+  },
+  {
+   "description": "[TOMORROW] boom bucket?",
+   "entry_price": 0.285,
+   "exit_price": null,
+   "fee_usd": 0.2038,
+   "market_id": "boom",
+   "pnl": null,
+   "side": "NO",
+   "size_usd": 20.0,
+   "status": "open",
+   "strategy": "core",
+   "trade_id": 13
+  },
+  {
+   "description": "[TOMORROW] hedge bucket?",
+   "entry_price": 0.285,
+   "exit_price": null,
+   "fee_usd": 0.2038,
+   "market_id": "hedge",
+   "pnl": null,
+   "side": "NO",
+   "size_usd": 20.0,
+   "status": "open",
+   "strategy": "core",
+   "trade_id": 14
+  },
+  {
+   "description": "[SPREAD] HEDGE YES @ 0.30 for lax hedge bucket?",
+   "entry_price": 0.3,
+   "exit_price": null,
+   "fee_usd": 0.21,
+   "market_id": "hedge",
+   "pnl": null,
+   "side": "YES",
+   "size_usd": 20.0,
+   "status": "open",
+   "strategy": "spread",
+   "trade_id": 15
+  },
+  {
+   "description": "[TOMORROW] hfail bucket?",
+   "entry_price": 0.285,
+   "exit_price": null,
+   "fee_usd": 0.2038,
+   "market_id": "hfail",
+   "pnl": null,
+   "side": "NO",
+   "size_usd": 20.0,
+   "status": "open",
+   "strategy": "core",
+   "trade_id": 16
+  },
+  {
+   "description": "[SPREAD] HEDGE YES @ 0.30 for hou hfail bucket?",
+   "entry_price": 0.3,
+   "exit_price": null,
+   "fee_usd": 0.21,
+   "market_id": "hfail",
+   "pnl": null,
+   "side": "YES",
+   "size_usd": 20.0,
+   "status": "open",
+   "strategy": "spread",
+   "trade_id": 17
+  },
+  {
+   "description": "[TOMORROW] hnone bucket?",
+   "entry_price": 0.285,
+   "exit_price": null,
+   "fee_usd": 0.2038,
+   "market_id": "hnone",
+   "pnl": null,
+   "side": "NO",
+   "size_usd": 20.0,
+   "status": "open",
+   "strategy": "core",
+   "trade_id": 18
+  },
+  {
+   "description": "[PENNY] tail bucket?",
+   "entry_price": 0.025,
+   "exit_price": null,
+   "fee_usd": 0.0244,
+   "market_id": "tail",
+   "pnl": null,
+   "side": "NO",
+   "size_usd": 20.0,
+   "status": "open",
+   "strategy": "penny",
+   "trade_id": 19
+  }
+ ],
+ "returned_signals": [
+  {
+   "city": "nyc",
+   "edge": 0.05,
+   "market_id": "cool",
+   "market_prob": 0.2,
+   "net_edge": 0.04,
+   "side": "NO",
+   "size": 20.0,
+   "strategy": "core",
+   "tier": "high"
+  },
+  {
+   "city": "nyc",
+   "edge": 0.15,
+   "market_id": "bypass",
+   "market_prob": 0.2,
+   "net_edge": 0.14,
+   "side": "NO",
+   "size": 20.0,
+   "strategy": "core",
+   "tier": "high"
+  },
+  {
+   "city": "lon",
+   "edge": 0.05,
+   "market_id": "small",
+   "market_prob": 0.3,
+   "net_edge": 0.04,
+   "side": "NO",
+   "size": 5.0,
+   "strategy": "core",
+   "tier": "high"
+  },
+  {
+   "city": "lon",
+   "edge": 0.025,
+   "market_id": "bal",
+   "market_prob": 0.5,
+   "net_edge": 0.015,
+   "side": "NO",
+   "size": 600.0,
+   "strategy": "core",
+   "tier": "high"
+  },
+  {
+   "city": "dal",
+   "edge": 0.015,
+   "market_id": "lowedge",
+   "market_prob": 0.3,
+   "net_edge": 0.005,
+   "side": "NO",
+   "size": 10.0,
+   "strategy": "core",
+   "tier": "high"
+  },
+  {
+   "city": "dal",
+   "edge": 0.05,
+   "market_id": "notok",
+   "market_prob": 0.3,
+   "net_edge": 0.04,
+   "side": "NO",
+   "size": 20.0,
+   "strategy": "core",
+   "tier": "high"
+  },
+  {
+   "city": "sea",
+   "edge": 0.05,
+   "market_id": "held",
+   "market_prob": 0.3,
+   "net_edge": 0.04,
+   "side": "NO",
+   "size": 20.0,
+   "strategy": "core",
+   "tier": "high"
+  },
+  {
+   "city": "sea",
+   "edge": 0.05,
+   "market_id": "keep",
+   "market_prob": 0.205,
+   "net_edge": 0.04,
+   "side": "YES",
+   "size": 20.0,
+   "strategy": "core",
+   "tier": "high"
+  },
+  {
+   "city": "atl",
+   "edge": 0.05,
+   "market_id": "repl",
+   "market_prob": 0.3,
+   "net_edge": 0.04,
+   "side": "YES",
+   "size": 11.0,
+   "strategy": "core",
+   "tier": "high"
+  },
+  {
+   "city": "atl",
+   "edge": 0.05,
+   "market_id": "chase",
+   "market_prob": 0.835,
+   "net_edge": 0.04,
+   "side": "NO",
+   "size": 20.0,
+   "strategy": "core",
+   "tier": "high"
+  },
+  {
+   "city": "tor",
+   "edge": 0.05,
+   "market_id": "cskip",
+   "market_prob": 0.205,
+   "net_edge": 0.04,
+   "side": "YES",
+   "size": 20.0,
+   "strategy": "core",
+   "tier": "high"
+  },
+  {
+   "city": "sfo",
+   "edge": 0.05,
+   "market_id": "chasey",
+   "market_prob": 0.265,
+   "net_edge": 0.04,
+   "side": "YES",
+   "size": 11.0,
+   "strategy": "core",
+   "tier": "high"
+  },
+  {
+   "city": "tor",
+   "edge": 0.05,
+   "market_id": "cfail",
+   "market_prob": 0.45,
+   "net_edge": 0.04,
+   "side": "NO",
+   "size": 20.0,
+   "strategy": "core",
+   "tier": "high"
+  },
+  {
+   "city": "mia",
+   "edge": 0.05,
+   "market_id": "rej",
+   "market_prob": 0.3,
+   "net_edge": 0.04,
+   "side": "NO",
+   "size": 20.0,
+   "strategy": "core",
+   "tier": "high"
+  },
+  {
+   "city": "lax",
+   "edge": 0.05,
+   "market_id": "boom",
+   "market_prob": 0.3,
+   "net_edge": 0.04,
+   "side": "NO",
+   "size": 20.0,
+   "strategy": "core",
+   "tier": "high"
+  },
+  {
+   "city": "lax",
+   "edge": 0.09,
+   "market_id": "hedge",
+   "market_prob": 0.3,
+   "net_edge": 0.08,
+   "side": "NO",
+   "size": 20.0,
+   "strategy": "core",
+   "tier": "high"
+  },
+  {
+   "city": "hou",
+   "edge": 0.09,
+   "market_id": "hfail",
+   "market_prob": 0.3,
+   "net_edge": 0.08,
+   "side": "NO",
+   "size": 20.0,
+   "strategy": "core",
+   "tier": "high"
+  },
+  {
+   "city": "hou",
+   "edge": 0.1,
+   "market_id": "hnone",
+   "market_prob": 0.3,
+   "net_edge": 0.09,
+   "side": "NO",
+   "size": 20.0,
+   "strategy": "core",
+   "tier": "high"
+  },
+  {
+   "city": "den",
+   "edge": 0.08,
+   "market_id": "tail",
+   "market_prob": 0.04,
+   "net_edge": 0.07,
+   "side": "NO",
+   "size": 20.0,
+   "strategy": "tail",
+   "tier": "high"
+  }
+ ]
+}

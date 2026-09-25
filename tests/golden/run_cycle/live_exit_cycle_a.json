@@ -1,0 +1,1212 @@
+{
+ "city_volume": {
+  "atl": {
+   "liquidity": 50.0,
+   "markets": 1,
+   "volume_24h": 100.0
+  },
+  "chi": {
+   "liquidity": 50.0,
+   "markets": 1,
+   "volume_24h": 100.0
+  },
+  "dal": {
+   "liquidity": 50.0,
+   "markets": 1,
+   "volume_24h": 100.0
+  },
+  "lax": {
+   "liquidity": 50.0,
+   "markets": 1,
+   "volume_24h": 100.0
+  },
+  "lon": {
+   "liquidity": 50.0,
+   "markets": 1,
+   "volume_24h": 100.0
+  },
+  "mia": {
+   "liquidity": 50.0,
+   "markets": 1,
+   "volume_24h": 100.0
+  },
+  "nyc": {
+   "liquidity": 50.0,
+   "markets": 1,
+   "volume_24h": 100.0
+  },
+  "sea": {
+   "liquidity": 50.0,
+   "markets": 1,
+   "volume_24h": 100.0
+  },
+  "tor": {
+   "liquidity": 50.0,
+   "markets": 1,
+   "volume_24h": 100.0
+  }
+ },
+ "consensus_calls": [
+  [
+   "nyc",
+   "<D2>",
+   "temp_max_c",
+   5,
+   [
+    21.0
+   ]
+  ],
+  [
+   "lon",
+   "<D2>",
+   "temp_max_c",
+   5,
+   [
+    21.0
+   ]
+  ],
+  [
+   "dal",
+   "<D2>",
+   "temp_max_c",
+   5,
+   [
+    21.0
+   ]
+  ],
+  [
+   "sea",
+   "<D2>",
+   "temp_max_c",
+   5,
+   [
+    21.0
+   ]
+  ],
+  [
+   "atl",
+   "<D2>",
+   "temp_max_c",
+   5,
+   [
+    21.0
+   ]
+  ],
+  [
+   "tor",
+   "<D2>",
+   "temp_max_c",
+   5,
+   [
+    21.0
+   ]
+  ],
+  [
+   "chi",
+   "<D2>",
+   "temp_max_c",
+   5,
+   [
+    21.0
+   ]
+  ],
+  [
+   "mia",
+   "<D2>",
+   "temp_max_c",
+   5,
+   [
+    21.0
+   ]
+  ],
+  [
+   "lax",
+   "<D2>",
+   "temp_max_c",
+   5,
+   [
+    21.0
+   ]
+  ],
+  [
+   "nyc",
+   "<D3>",
+   "temp_max_c",
+   5,
+   null
+  ],
+  [
+   "lon",
+   "<D3>",
+   "temp_max_c",
+   5,
+   null
+  ],
+  [
+   "dal",
+   "<D3>",
+   "temp_max_c",
+   5,
+   null
+  ],
+  [
+   "sea",
+   "<D3>",
+   "temp_max_c",
+   5,
+   null
+  ],
+  [
+   "atl",
+   "<D3>",
+   "temp_max_c",
+   5,
+   null
+  ],
+  [
+   "tor",
+   "<D3>",
+   "temp_max_c",
+   5,
+   null
+  ],
+  [
+   "bue",
+   "<D3>",
+   "temp_max_c",
+   5,
+   null
+  ],
+  [
+   "sel",
+   "<D3>",
+   "temp_max_c",
+   5,
+   null
+  ],
+  [
+   "chi",
+   "<D3>",
+   "temp_max_c",
+   5,
+   null
+  ],
+  [
+   "mia",
+   "<D3>",
+   "temp_max_c",
+   5,
+   null
+  ],
+  [
+   "lax",
+   "<D3>",
+   "temp_max_c",
+   5,
+   null
+  ],
+  [
+   "hou",
+   "<D3>",
+   "temp_max_c",
+   5,
+   null
+  ],
+  [
+   "den",
+   "<D3>",
+   "temp_max_c",
+   5,
+   null
+  ],
+  [
+   "sfo",
+   "<D3>",
+   "temp_max_c",
+   5,
+   null
+  ],
+  [
+   "sha",
+   "<D3>",
+   "temp_max_c",
+   5,
+   null
+  ],
+  [
+   "mad",
+   "<D3>",
+   "temp_max_c",
+   5,
+   null
+  ],
+  [
+   "tyo",
+   "<D3>",
+   "temp_max_c",
+   5,
+   null
+  ],
+  [
+   "hkg",
+   "<D3>",
+   "temp_max_c",
+   5,
+   null
+  ],
+  [
+   "muc",
+   "<D3>",
+   "temp_max_c",
+   5,
+   null
+  ],
+  [
+   "war",
+   "<D3>",
+   "temp_max_c",
+   5,
+   null
+  ],
+  [
+   "szn",
+   "<D3>",
+   "temp_max_c",
+   5,
+   null
+  ],
+  [
+   "aus",
+   "<D3>",
+   "temp_max_c",
+   5,
+   null
+  ],
+  [
+   "wlg",
+   "<D3>",
+   "temp_max_c",
+   5,
+   null
+  ],
+  [
+   "lko",
+   "<D3>",
+   "temp_max_c",
+   5,
+   null
+  ]
+ ],
+ "db": {
+  "ai_decisions": [],
+  "forecast_snapshots": [
+   [
+    "atl",
+    "<D2>",
+    5
+   ],
+   [
+    "chi",
+    "<D2>",
+    5
+   ],
+   [
+    "dal",
+    "<D2>",
+    5
+   ],
+   [
+    "lax",
+    "<D2>",
+    5
+   ],
+   [
+    "lon",
+    "<D2>",
+    5
+   ],
+   [
+    "mia",
+    "<D2>",
+    5
+   ],
+   [
+    "nyc",
+    "<D2>",
+    5
+   ],
+   [
+    "sea",
+    "<D2>",
+    5
+   ],
+   [
+    "tor",
+    "<D2>",
+    5
+   ]
+  ],
+  "live_trades": [
+   [
+    "buy-no",
+    "p-no",
+    "NO",
+    "open"
+   ],
+   [
+    "buy-yes",
+    "p-yes",
+    "YES",
+    "cancelled"
+   ],
+   [
+    "sell-half",
+    "p-half",
+    "SELL",
+    "open"
+   ],
+   [
+    "sell-keep",
+    "p-keep",
+    "SELL",
+    "open"
+   ],
+   [
+    "sell-repl",
+    "p-repl",
+    "SELL",
+    "open"
+   ],
+   [
+    "trimmed",
+    "p-trim",
+    "SELL",
+    "filled"
+   ]
+  ],
+  "positions": [
+   [
+    "a-fail",
+    "p-fail",
+    9.0
+   ],
+   [
+    "a-half",
+    "p-half",
+    30.0
+   ],
+   [
+    "a-hold",
+    "p-hold",
+    8.0
+   ],
+   [
+    "a-keep",
+    "p-keep",
+    10.0
+   ],
+   [
+    "a-no",
+    "p-no",
+    21.0
+   ],
+   [
+    "a-repl",
+    "p-repl",
+    12.0
+   ],
+   [
+    "a-small",
+    "p-small",
+    3.0
+   ],
+   [
+    "a-trim",
+    "p-trim",
+    40.0
+   ],
+   [
+    "a-yes",
+    "p-yes",
+    20.0
+   ]
+  ]
+ },
+ "decision_history": [
+  {
+   "adjustment": -0.05,
+   "city": "LON",
+   "decision": "EXIT",
+   "rationale": "claude exit view",
+   "risk_factors": [
+    "gemini exit view"
+   ],
+   "signal": "[EXIT CHECK] sell_half: held",
+   "source": "exit_monitor"
+  },
+  {
+   "adjustment": -0.05,
+   "city": "NYC",
+   "decision": "EXIT",
+   "rationale": "claude exit view",
+   "risk_factors": [
+    "gemini exit view"
+   ],
+   "signal": "[EXIT CHECK] edge_inversion: held",
+   "source": "exit_monitor"
+  }
+ ],
+ "edge_calls": [],
+ "events": [
+  [
+   "resolve_open_trades"
+  ],
+  [
+   "discover"
+  ],
+  [
+   "sync_market_map",
+   9
+  ],
+  [
+   "sync_portfolio"
+  ],
+  [
+   "fetch_polymarket_state",
+   "0xWALLET"
+  ],
+  [
+   "store.rebuild_positions"
+  ],
+  [
+   "store.get_portfolio_summary",
+   [],
+   {}
+  ],
+  [
+   "gribstream",
+   [
+    "atl",
+    "chi",
+    "dal",
+    "lax",
+    "lon",
+    "mia",
+    "nyc",
+    "sea",
+    "tor"
+   ],
+   "<D2>"
+  ],
+  [
+   "store.save_forecast_snapshot",
+   [
+    "nyc",
+    "<D2>",
+    {
+     "model0": 20.0,
+     "model1": 20.25,
+     "model2": 20.5,
+     "model3": 20.75,
+     "model4": 21.0
+    }
+   ],
+   {}
+  ],
+  [
+   "store.save_forecast_snapshot",
+   [
+    "lon",
+    "<D2>",
+    {
+     "model0": 20.0,
+     "model1": 20.25,
+     "model2": 20.5,
+     "model3": 20.75,
+     "model4": 21.0
+    }
+   ],
+   {}
+  ],
+  [
+   "store.save_forecast_snapshot",
+   [
+    "dal",
+    "<D2>",
+    {
+     "model0": 20.0,
+     "model1": 20.25,
+     "model2": 20.5,
+     "model3": 20.75,
+     "model4": 21.0
+    }
+   ],
+   {}
+  ],
+  [
+   "store.save_forecast_snapshot",
+   [
+    "sea",
+    "<D2>",
+    {
+     "model0": 20.0,
+     "model1": 20.25,
+     "model2": 20.5,
+     "model3": 20.75,
+     "model4": 21.0
+    }
+   ],
+   {}
+  ],
+  [
+   "store.save_forecast_snapshot",
+   [
+    "atl",
+    "<D2>",
+    {
+     "model0": 20.0,
+     "model1": 20.25,
+     "model2": 20.5,
+     "model3": 20.75,
+     "model4": 21.0
+    }
+   ],
+   {}
+  ],
+  [
+   "store.save_forecast_snapshot",
+   [
+    "tor",
+    "<D2>",
+    {
+     "model0": 20.0,
+     "model1": 20.25,
+     "model2": 20.5,
+     "model3": 20.75,
+     "model4": 21.0
+    }
+   ],
+   {}
+  ],
+  [
+   "store.save_forecast_snapshot",
+   [
+    "chi",
+    "<D2>",
+    {
+     "model0": 20.0,
+     "model1": 20.25,
+     "model2": 20.5,
+     "model3": 20.75,
+     "model4": 21.0
+    }
+   ],
+   {}
+  ],
+  [
+   "store.save_forecast_snapshot",
+   [
+    "mia",
+    "<D2>",
+    {
+     "model0": 20.0,
+     "model1": 20.25,
+     "model2": 20.5,
+     "model3": 20.75,
+     "model4": 21.0
+    }
+   ],
+   {}
+  ],
+  [
+   "store.save_forecast_snapshot",
+   [
+    "lax",
+    "<D2>",
+    {
+     "model0": 20.0,
+     "model1": 20.25,
+     "model2": 20.5,
+     "model3": 20.75,
+     "model4": 21.0
+    }
+   ],
+   {}
+  ],
+  [
+   "exec.check_balance"
+  ],
+  [
+   "http.get",
+   "https://data-api.polymarket.com/positions",
+   {
+    "sizeThreshold": 0,
+    "user": "0xwallet"
+   }
+  ],
+  [
+   "store.get_portfolio_summary",
+   [],
+   {}
+  ],
+  [
+   "scan_exits",
+   "paper",
+   [
+    [
+     "p-yes",
+     "YES",
+     10.0,
+     0.3,
+     0.0
+    ]
+   ],
+   [
+    [
+     "p-fail",
+     0.4
+    ],
+    [
+     "p-half",
+     0.4
+    ],
+    [
+     "p-hold",
+     0.4
+    ],
+    [
+     "p-keep",
+     0.4
+    ],
+    [
+     "p-no",
+     0.4
+    ],
+    [
+     "p-repl",
+     0.4
+    ],
+    [
+     "p-small",
+     0.4
+    ],
+    [
+     "p-trim",
+     0.4
+    ],
+    [
+     "p-yes",
+     0.4
+    ]
+   ],
+   [],
+   [
+    [
+     "p-fail",
+     0.6
+    ],
+    [
+     "p-half",
+     0.6
+    ],
+    [
+     "p-hold",
+     0.6
+    ],
+    [
+     "p-keep",
+     0.6
+    ],
+    [
+     "p-no",
+     0.6
+    ],
+    [
+     "p-repl",
+     0.6
+    ],
+    [
+     "p-small",
+     0.6
+    ],
+    [
+     "p-trim",
+     0.6
+    ],
+    [
+     "p-yes",
+     0.6
+    ]
+   ],
+   [
+    "atl|<D2>",
+    "chi|<D2>",
+    "dal|<D2>",
+    "lax|<D2>",
+    "lon|<D2>",
+    "mia|<D2>",
+    "nyc|<D2>",
+    "sea|<D2>",
+    "tor|<D2>"
+   ]
+  ],
+  [
+   "ai_review_exit",
+   "p-yes",
+   [
+    [
+     "model0",
+     20.0
+    ],
+    [
+     "model1",
+     20.25
+    ],
+    [
+     "model2",
+     20.5
+    ],
+    [
+     "model3",
+     20.75
+    ],
+    [
+     "model4",
+     21.0
+    ]
+   ],
+   20.5,
+   0.5
+  ],
+  [
+   "paper.close_position",
+   "p-yes",
+   0.4
+  ],
+  [
+   "store.get_positions",
+   [],
+   {}
+  ],
+  [
+   "scan_exits",
+   "live",
+   [
+    [
+     "p-trim",
+     "NO",
+     20.0,
+     0.5,
+     40.0
+    ],
+    [
+     "p-no",
+     "NO",
+     11.55,
+     0.55,
+     21.0
+    ],
+    [
+     "p-half",
+     "YES",
+     6.1,
+     0.2,
+     30.0
+    ],
+    [
+     "p-yes",
+     "YES",
+     6.0,
+     0.3,
+     20.0
+    ],
+    [
+     "p-repl",
+     "NO",
+     5.4,
+     0.45,
+     12.0
+    ],
+    [
+     "p-fail",
+     "NO",
+     5.39,
+     0.6,
+     9.0
+    ],
+    [
+     "p-keep",
+     "YES",
+     3.5,
+     0.35,
+     10.0
+    ],
+    [
+     "p-hold",
+     "YES",
+     2.0,
+     0.25,
+     8.0
+    ]
+   ],
+   [
+    [
+     "p-fail",
+     0.4
+    ],
+    [
+     "p-half",
+     0.4
+    ],
+    [
+     "p-hold",
+     0.4
+    ],
+    [
+     "p-keep",
+     0.4
+    ],
+    [
+     "p-no",
+     0.4
+    ],
+    [
+     "p-repl",
+     0.4
+    ],
+    [
+     "p-small",
+     0.4
+    ],
+    [
+     "p-trim",
+     0.4
+    ],
+    [
+     "p-yes",
+     0.4
+    ]
+   ],
+   [],
+   [
+    [
+     "p-fail",
+     0.6
+    ],
+    [
+     "p-half",
+     0.6
+    ],
+    [
+     "p-hold",
+     0.6
+    ],
+    [
+     "p-keep",
+     0.6
+    ],
+    [
+     "p-no",
+     0.6
+    ],
+    [
+     "p-repl",
+     0.6
+    ],
+    [
+     "p-small",
+     0.6
+    ],
+    [
+     "p-trim",
+     0.6
+    ],
+    [
+     "p-yes",
+     0.6
+    ]
+   ],
+   [
+    "atl|<D2>",
+    "chi|<D2>",
+    "dal|<D2>",
+    "lax|<D2>",
+    "lon|<D2>",
+    "mia|<D2>",
+    "nyc|<D2>",
+    "sea|<D2>",
+    "tor|<D2>"
+   ]
+  ],
+  [
+   "ai_review_exit",
+   "p-yes",
+   [
+    [
+     "model0",
+     20.0
+    ],
+    [
+     "model1",
+     20.25
+    ],
+    [
+     "model2",
+     20.5
+    ],
+    [
+     "model3",
+     20.75
+    ],
+    [
+     "model4",
+     21.0
+    ]
+   ],
+   20.5,
+   0.5
+  ],
+  [
+   "store.get_open_order_for_market",
+   [
+    "p-yes"
+   ],
+   {}
+  ],
+  [
+   "exec.cancel_order",
+   "buy-yes"
+  ],
+  [
+   "store.cancel_live_trade",
+   [
+    "buy-yes"
+   ],
+   {}
+  ],
+  [
+   "store.get_open_order_for_market",
+   [
+    "p-yes"
+   ],
+   {
+    "side": "SELL"
+   }
+  ],
+  [
+   "store.get_position_for_market",
+   [
+    "p-yes"
+   ],
+   {}
+  ],
+  [
+   "exec.place_sell_order",
+   {
+    "city_id": "nyc",
+    "description": "EXIT: edge_inversion",
+    "force_taker": true,
+    "market_id": "p-yes",
+    "price": 0.38,
+    "reference_price": null,
+    "shares": 20.0,
+    "token_id": "a-yes"
+   }
+  ],
+  [
+   "ai_review_exit",
+   "p-no",
+   [
+    [
+     "model0",
+     20.0
+    ],
+    [
+     "model1",
+     20.25
+    ],
+    [
+     "model2",
+     20.5
+    ],
+    [
+     "model3",
+     20.75
+    ],
+    [
+     "model4",
+     21.0
+    ]
+   ],
+   20.5,
+   0.5
+  ],
+  [
+   "store.get_open_order_for_market",
+   [
+    "p-no"
+   ],
+   {
+    "side": "SELL"
+   }
+  ],
+  [
+   "store.get_open_order_for_market",
+   [
+    "p-no"
+   ],
+   {}
+  ],
+  [
+   "exec.cancel_order",
+   "buy-no"
+  ],
+  [
+   "store.get_open_order_for_market",
+   [
+    "p-no"
+   ],
+   {
+    "side": "SELL"
+   }
+  ],
+  [
+   "store.get_position_for_market",
+   [
+    "p-no"
+   ],
+   {}
+  ],
+  [
+   "exec.place_sell_order",
+   {
+    "city_id": "lon",
+    "description": "SELL_HALF: sell_half",
+    "force_taker": false,
+    "market_id": "p-no",
+    "price": 0.4,
+    "reference_price": null,
+    "shares": 10.0,
+    "token_id": "a-no"
+   }
+  ],
+  [
+   "ai_review_exit",
+   "p-half",
+   [
+    [
+     "model0",
+     20.0
+    ],
+    [
+     "model1",
+     20.25
+    ],
+    [
+     "model2",
+     20.5
+    ],
+    [
+     "model3",
+     20.75
+    ],
+    [
+     "model4",
+     21.0
+    ]
+   ],
+   20.5,
+   0.5
+  ],
+  [
+   "store.get_open_order_for_market",
+   [
+    "p-half"
+   ],
+   {
+    "side": "SELL"
+   }
+  ]
+ ],
+ "forecast_cache_keys": [
+  "atl|<D2>",
+  "atl|<D3>",
+  "aus|<D3>",
+  "bue|<D3>",
+  "chi|<D2>",
+  "chi|<D3>",
+  "dal|<D2>",
+  "dal|<D3>",
+  "den|<D3>",
+  "hkg|<D3>",
+  "hou|<D3>",
+  "lax|<D2>",
+  "lax|<D3>",
+  "lko|<D3>",
+  "lon|<D2>",
+  "lon|<D3>",
+  "mad|<D3>",
+  "mia|<D2>",
+  "mia|<D3>",
+  "muc|<D3>",
+  "nyc|<D2>",
+  "nyc|<D3>",
+  "sea|<D2>",
+  "sea|<D3>",
+  "sel|<D3>",
+  "sfo|<D3>",
+  "sha|<D3>",
+  "szn|<D3>",
+  "tor|<D2>",
+  "tor|<D3>",
+  "tyo|<D3>",
+  "war|<D3>",
+  "wlg|<D3>"
+ ],
+ "logs": [
+  "INFO weather_edge.persistence Persistence: <TMP>/cycle.db",
+  "INFO weather_edge.scheduler HORIZON FILTER: blocked <D0> (resolve < 36h)",
+  "INFO weather_edge.scheduler === Discovering Polymarket weather markets ===",
+  "INFO weather_edge.scheduler Market map updated: 9 token mappings",
+  "INFO weather_edge.scheduler PORTFOLIO EQUITY: $1000.00 (used as bankroll for Kelly sizing)",
+  "INFO weather_edge.scheduler Active market groups: 9 city-date combos",
+  "INFO weather_edge.scheduler === New York (KLGA) on <D2>, 1 markets ===",
+  "INFO weather_edge.scheduler === London (EGLC) on <D2>, 1 markets ===",
+  "INFO weather_edge.scheduler === Dallas (KDAL) on <D2>, 1 markets ===",
+  "INFO weather_edge.scheduler === Seattle (KSEA) on <D2>, 1 markets ===",
+  "INFO weather_edge.scheduler === Atlanta (KATL) on <D2>, 1 markets ===",
+  "INFO weather_edge.scheduler === Toronto (CYYZ) on <D2>, 1 markets ===",
+  "INFO weather_edge.scheduler === Chicago (KORD) on <D2>, 1 markets ===",
+  "INFO weather_edge.scheduler === Miami (KMIA) on <D2>, 1 markets ===",
+  "INFO weather_edge.scheduler === Los Angeles (KLAX) on <D2>, 1 markets ===",
+  "INFO weather_edge.scheduler Fetching order book prices for spread detection...",
+  "INFO weather_edge.scheduler Book price fetch complete, placing trades...",
+  "INFO weather_edge.scheduler USDC balance: $500.00",
+  "INFO weather_edge.scheduler EXECUTION LOOP: 0 signals, live_executor=True, dry_run=False, usdc_floor_block=False, pos_count=9/50",
+  "INFO weather_edge.scheduler PAPER EXIT MONITOR: 1 candidates",
+  "WARNING weather_edge.scheduler PAPER EXIT: YES nyc $10, edge_inversion",
+  "INFO weather_edge.trading.paper EARLY EXIT (conservative): YES nyc @ 0.300 -> 0.351 (mid was 0.400) P&L=$1.58 [won]",
+  "INFO weather_edge.scheduler LIVE EXIT MONITOR: 4 candidates",
+  "INFO weather_edge.scheduler EXIT: cancelled open BUY order buy-yes for nyc",
+  "WARNING weather_edge.scheduler LIVE EXIT: nyc YES 20 shares @ 0.380, sell-1",
+  "WARNING weather_edge.scheduler Failed to cancel BUY order buy-no: cancel boom buy-no",
+  "WARNING weather_edge.scheduler LIVE EXIT: lon NO 10 shares @ 0.400, sell-2",
+  "INFO weather_edge.scheduler SELL_HALF SKIP: dal has open sell order"
+ ],
+ "paper_trades": [
+  {
+   "description": "[TOMORROW] p-yes old",
+   "entry_price": 0.3,
+   "exit_price": 0.3515,
+   "fee_usd": 0.0,
+   "market_id": "p-yes",
+   "pnl": 1.58,
+   "side": "YES",
+   "size_usd": 10.0,
+   "status": "won",
+   "strategy": "core",
+   "trade_id": 900
+  }
+ ],
+ "returned_signals": []
+}
