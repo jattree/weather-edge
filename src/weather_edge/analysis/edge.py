@@ -204,8 +204,10 @@ def calculate_edge(
         spread_ok = edge > 0 and (half_spread <= 0.4 * edge)
 
         # Use differential thresholds if provided, fallback to standard otherwise
-        m_edge_yes = min_edge_yes or 0.05
-        m_edge_no = min_edge_no or 0.03
+        # ``is None`` (not ``or``): an explicit 0.0 threshold is a real choice
+        # and must not silently become the default.
+        m_edge_yes = 0.05 if min_edge_yes is None else min_edge_yes
+        m_edge_no = 0.03 if min_edge_no is None else min_edge_no
 
         is_high = (
             (side == TradeSide.YES and net_edge >= m_edge_yes)

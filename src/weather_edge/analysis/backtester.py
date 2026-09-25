@@ -138,15 +138,56 @@ def _bucket_label(lo: float | None, hi: float | None, unit: str) -> str:
     return f"{lo}-{hi}{unit}"
 
 
-def _find_bucket(value: float, buckets: list[tuple[float | None, float | None]]) -> int:
+def _resolver_bucket(lo: float | None, hi: float | None, unit: str):
+    """The backtest bucket [lo, hi) as the resolver's BucketInfo.
+
+    Backtest bucket edges are whole displayed degrees, so "< hi" on the rounded
+    value is the resolver's inclusive "(hi-1) or below".
+    """
+    from weather_edge.analysis.resolver import BucketInfo
+    unit_name = "fahrenheit" if unit == "F" else "celsius"
+    if lo is None:
+        return BucketInfo(None, hi - 1, unit_name)
+    if hi is None:
+        return BucketInfo(lo, None, unit_name)
+    return BucketInfo(lo, hi, unit_name, exclusive_upper=True)
+
+
+def _find_bucket_resolved(
+    actual_c: float,
+    buckets: list[tuple[float | None, float | None]],
+    unit: str,
+    *,
+    is_hkg: bool = False,
+) -> int:
+    """Bucket index the live resolver would settle ``actual_c`` (°C) into.
+
+    Uses resolver.actual_falls_in_bucket, i.e. round-half-up in the market's
+    display unit (floor for HK Observatory), so backtest hits are scored with
+    the same semantics as live resolution. Comparing the unrounded value
+    against [lo, hi) mis-scored readings like 79.6°F (displays 80) as the
+    70-80 bucket.
+    """
+    from weather_edge.analysis.resolver import actual_falls_in_bucket
     for i, (lo, hi) in enumerate(buckets):
-        if lo is None and value < hi:
-            return i
-        if hi is None and value >= lo:
-            return i
-        if lo is not None and hi is not None and lo <= value < hi:
+        if actual_falls_in_bucket(actual_c, _resolver_bucket(lo, hi, unit), is_hkg=is_hkg):
             return i
     return len(buckets) - 1
+
+
+def _display_band(
+    lo: float | None, hi: float | None, *, is_hkg: bool = False,
+) -> tuple[float | None, float | None]:
+    """Continuous display-unit interval whose resolved value lands in [lo, hi).
+
+    Round-half-up: displayed integer in [lo, hi-1] <=> continuous [lo-0.5, hi-0.5).
+    HK Observatory (floor): [lo, hi).
+    """
+    off = 0.0 if is_hkg else 0.5
+    return (
+        lo - off if lo is not None else None,
+        hi - off if hi is not None else None,
+    )
 
 
 def _weighted_mean(city_id: City, values: list[float]) -> float:
@@ -329,17 +370,18 @@ async def _backtest_city(
         if use_fahrenheit:
             mu = _c_to_f(predicted_c)
             sigma = std_c * 9.0 / 5.0
-            actual_display = _c_to_f(actual_c)
         else:
             mu = predicted_c
             sigma = std_c
-            actual_display = actual_c
 
-        pred_bucket_idx = _find_bucket(mu, buckets)
-        actual_bucket_idx = _find_bucket(actual_display, buckets)
+        # Score with the resolver's semantics (round-half-up in the display
+        # unit, floor for HKO) for both the prediction and the outcome.
+        is_hkg = city_id == City.HKG
+        pred_bucket_idx = _find_bucket_resolved(predicted_c, buckets, unit, is_hkg=is_hkg)
+        actual_bucket_idx = _find_bucket_resolved(actual_c, buckets, unit, is_hkg=is_hkg)
         lo, hi = buckets[pred_bucket_idx]
 
-        model_prob = _bucket_probability(mu, sigma, lo, hi)
+        model_prob = _bucket_probability(mu, sigma, *_display_band(lo, hi, is_hkg=is_hkg))
         won = pred_bucket_idx == actual_bucket_idx
 
         # Illustrative P&L under explicit costs. Entry price defaults to the
