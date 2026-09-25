@@ -1424,6 +1424,167 @@ def _filter_signals(all_signals: list[Signal]) -> list[Signal]:
     return []
 
 
+async def _fetch_book_for_signal(ctx: CycleContext, signal: Signal, fetch_book_prices) -> None:
+    """Record real order-book asks for one signal's market in ``ctx.market_prices``."""
+    m = ctx.market_by_id.get(signal.market_id)
+    if m and m.token_id_yes and m.token_id_no:
+        try:
+            book = await asyncio.wait_for(fetch_book_prices(m), timeout=10.0)
+        except (asyncio.TimeoutError, Exception) as e:
+            logger.debug("Book fetch timeout/error for %s: %s", signal.city_id, e)
+            return
+        if book:
+            ctx.market_prices[signal.market_id] = {
+                "yes_price": book.get("yes_ask") or m.yes_price,
+                "no_price": book.get("no_ask") or (1.0 - m.yes_price),
+                "bid": book.get("yes_bid") or (m.yes_price - 0.01),
+                "ask": book.get("yes_ask") or (m.yes_price + 0.01),
+                "spread_profitable": book.get("profitable", False),
+            }
+            if book.get("profitable"):
+                logger.info(
+                    "SPREAD OPP: %s, YES_ask=%.3f NO_ask=%.3f total=%.3f profit=%.3f/share",
+                    signal.city_id, book["yes_ask"], book["no_ask"],
+                    book["spread_cost"], book["spread_profit"],
+                )
+
+
+async def _fetch_book_prices(ctx: CycleContext, fetch_book_prices) -> None:
+    """Fetch book prices for the top 5 signals only (each = 2 CLOB API calls)."""
+    logger.info("Fetching order book prices for spread detection...")
+    top_signals = sorted(
+        ctx.executable_signals, key=lambda s: abs(s.edge), reverse=True,
+    )[:5]
+    for signal in top_signals:
+        await _fetch_book_for_signal(ctx, signal, fetch_book_prices)
+    logger.info("Book price fetch complete, placing trades...")
+
+
+async def _fetch_live_balance(ctx: CycleContext) -> float | None:
+    """Fetch the live USDC balance once before the order loop (None if unknown)."""
+    _live_balance: float | None = None
+    if ctx.is_live:
+        try:
+            _live_balance = await ctx.live_executor.check_balance()
+            logger.info("USDC balance: $%.2f", _live_balance or 0)
+        except Exception:
+            logger.warning("Failed to fetch live balance, will skip balance checks")
+    return _live_balance
+
+
+def _usdc_floor_blocks(ctx: CycleContext) -> bool:
+    """SWING BOT: USDC floor.
+
+    Don't place ANY new live orders if balance is below $20. Prevents
+    deploying dust into marginal trades. Capital comes back via
+    resolution/redemption, then we re-enter on high-conviction 48h+ signals.
+    HAIL MARY disables the floor ($1 tickets down to the last dollar).
+    """
+    usdc_floor = 0.0 if settings.hail_mary_mode else 20.0
+    _usdc_floor_block = bool(
+        ctx.is_live
+        and ctx.live_balance is not None
+        and ctx.live_balance < usdc_floor
+    )
+    if _usdc_floor_block:
+        logger.warning(
+            "USDC FLOOR: $%.2f < $%.0f minimum, blocking all new live entries",
+            ctx.live_balance, usdc_floor,
+        )
+    return _usdc_floor_block
+
+
+async def _clean_resolved_positions(store, live_executor) -> None:
+    """Zero DB positions the exchange no longer reports as held.
+
+    rebuild_positions() re-creates them from fills every cycle, so this must
+    run every time before the position count is read.
+    """
+    import httpx as _httpx
+    _wallet = (live_executor.wallet_address or "").lower()
+    async with _httpx.AsyncClient() as _hc:
+        _pr = await _hc.get(
+            "https://data-api.polymarket.com/positions",
+            params={"user": _wallet, "sizeThreshold": 0},
+            timeout=15.0,
+        )
+        if _pr.status_code == 200:
+            _active_cids = {
+                p.get("conditionId")
+                for p in _pr.json()
+                if float(p.get("size", 0)) > 0
+            }
+            _db_pos = store.conn.execute(
+                "SELECT condition_id FROM positions WHERE total_shares > 0"
+            ).fetchall()
+            _cleaned = 0
+            for _row in _db_pos:
+                if _row["condition_id"] not in _active_cids:
+                    store.conn.execute(
+                        "UPDATE positions SET total_shares = 0 WHERE condition_id = ?",
+                        (_row["condition_id"],),
+                    )
+                    _cleaned += 1
+            if _cleaned:
+                store.commit()
+
+
+async def _count_active_positions(ctx: CycleContext) -> int:
+    """Live positions currently held, after cleaning resolved ones (0 when not live)."""
+    store = ctx.store
+    _active_position_count = 0
+    if store and ctx.is_live:
+        try:
+            await _clean_resolved_positions(store, ctx.live_executor)
+
+            _active_position_count = store.get_portfolio_summary().get("position_count", 0)
+            if _active_position_count >= ctx.max_positions:
+                logger.warning(
+                    "POSITION CAP: %d/%d active positions, blocking new live entries",
+                    _active_position_count, ctx.max_positions,
+                )
+        except Exception:
+            _active_position_count = store.get_portfolio_summary().get("position_count", 0)
+    return _active_position_count
+
+
+async def _prepare_execution(ctx: CycleContext) -> None:
+    """Stage 5: book prices, live balance, USDC floor and position cap."""
+    # Place trades for all signals + generate spread capture orders
+    from weather_edge.fetchers.polymarket import fetch_book_prices
+    from weather_edge.trading.market_maker import MarketMaker
+    ctx.market_maker = MarketMaker()
+
+    # Build market prices dict using real order book asks (not midpoints)
+    # Per Gemini: spread only exists if YES_ask + NO_ask < 1.00
+    ctx.market_prices = {}
+    ctx.market_by_id = {m.market_id: m for m in ctx.markets}
+    await _fetch_book_prices(ctx, fetch_book_prices)
+
+    ctx.live_balance = await _fetch_live_balance(ctx)
+    ctx.usdc_floor_block = _usdc_floor_blocks(ctx)
+
+    # --- SWING BOT: Position cap ---
+    # 50 allows new entries alongside existing positions; most existing
+    # positions are small/penny bets that resolve naturally. Effective
+    # concentration is managed by the min size + USDC floor. HAIL MARY
+    # removes the cap for the penny basket.
+    ctx.max_positions = 999 if settings.hail_mary_mode else 50
+    ctx.active_position_count = await _count_active_positions(ctx)
+
+    live_executor = ctx.live_executor
+    logger.info(
+        "EXECUTION LOOP: %d signals, live_executor=%s, dry_run=%s, "
+        "usdc_floor_block=%s, pos_count=%d/%d",
+        len(ctx.executable_signals),
+        bool(live_executor),
+        live_executor.dry_run if live_executor else "N/A",
+        ctx.usdc_floor_block,
+        ctx.active_position_count,
+        ctx.max_positions,
+    )
+
+
 async def run_cycle(
     paper_trader: PaperTrader | None,
     target_dates: list[date] | None = None,
@@ -1479,129 +1640,15 @@ async def run_cycle(
     city_volume = ctx.city_volume
     executable_signals = ctx.executable_signals
 
-    # Place trades for all signals + generate spread capture orders
-    from weather_edge.fetchers.polymarket import fetch_book_prices
-    from weather_edge.trading.market_maker import MarketMaker
-    market_maker = MarketMaker()
+    await _prepare_execution(ctx)
 
-    # Build market prices dict using real order book asks (not midpoints)
-    # Per Gemini: spread only exists if YES_ask + NO_ask < 1.00
-    market_prices: dict[str, dict] = {}
-    market_by_id = {m.market_id: m for m in markets}
-
-    # Fetch book prices for top 5 signals only (each = 2 CLOB API calls)
-    logger.info("Fetching order book prices for spread detection...")
-    top_signals = sorted(executable_signals, key=lambda s: abs(s.edge), reverse=True)[:5]
-    for signal in top_signals:
-        m = market_by_id.get(signal.market_id)
-        if m and m.token_id_yes and m.token_id_no:
-            try:
-                book = await asyncio.wait_for(fetch_book_prices(m), timeout=10.0)
-            except (asyncio.TimeoutError, Exception) as e:
-                logger.debug("Book fetch timeout/error for %s: %s", signal.city_id, e)
-                continue
-            if book:
-                market_prices[signal.market_id] = {
-                    "yes_price": book.get("yes_ask") or m.yes_price,
-                    "no_price": book.get("no_ask") or (1.0 - m.yes_price),
-                    "bid": book.get("yes_bid") or (m.yes_price - 0.01),
-                    "ask": book.get("yes_ask") or (m.yes_price + 0.01),
-                    "spread_profitable": book.get("profitable", False),
-                }
-                if book.get("profitable"):
-                    logger.info(
-                        "SPREAD OPP: %s, YES_ask=%.3f NO_ask=%.3f total=%.3f profit=%.3f/share",
-                        signal.city_id, book["yes_ask"], book["no_ask"],
-                        book["spread_cost"], book["spread_profit"],
-                    )
-    logger.info("Book price fetch complete, placing trades...")
-
-    # Fetch live balance from exchange once before order loop
-    _live_balance: float | None = None
-    if live_executor and not live_executor.dry_run:
-        try:
-            _live_balance = await live_executor.check_balance()
-            logger.info("USDC balance: $%.2f", _live_balance or 0)
-        except Exception:
-            logger.warning("Failed to fetch live balance, will skip balance checks")
-
-    # --- SWING BOT: USDC floor ---
-    # Don't place ANY new live orders if balance is below $20. Prevents
-    # deploying dust into marginal trades. Capital comes back via
-    # resolution/redemption, then we re-enter on high-conviction 48h+ signals.
-    # HAIL MARY disables the floor ($1 tickets down to the last dollar).
-    usdc_floor = 0.0 if settings.hail_mary_mode else 20.0
-    _usdc_floor_block = bool(
-        live_executor
-        and not live_executor.dry_run
-        and _live_balance is not None
-        and _live_balance < usdc_floor
-    )
-    if _usdc_floor_block:
-        logger.warning(
-            "USDC FLOOR: $%.2f < $%.0f minimum, blocking all new live entries",
-            _live_balance, usdc_floor,
-        )
-
-    # --- SWING BOT: Position cap ---
-    # 50 allows new entries alongside existing positions; most existing
-    # positions are small/penny bets that resolve naturally. Effective
-    # concentration is managed by the min size + USDC floor. HAIL MARY
-    # removes the cap for the penny basket.
-    max_positions = 999 if settings.hail_mary_mode else 50
-    _active_position_count = 0
-    if store and live_executor and not live_executor.dry_run:
-        try:
-            # Clean resolved positions before counting. rebuild_positions()
-            # re-creates them from fills every cycle, so we must clean every
-            # time before reading the count.
-            import httpx as _httpx
-            _wallet = (live_executor.wallet_address or "").lower()
-            async with _httpx.AsyncClient() as _hc:
-                _pr = await _hc.get(
-                    "https://data-api.polymarket.com/positions",
-                    params={"user": _wallet, "sizeThreshold": 0},
-                    timeout=15.0,
-                )
-                if _pr.status_code == 200:
-                    _active_cids = {
-                        p.get("conditionId")
-                        for p in _pr.json()
-                        if float(p.get("size", 0)) > 0
-                    }
-                    _db_pos = store.conn.execute(
-                        "SELECT condition_id FROM positions WHERE total_shares > 0"
-                    ).fetchall()
-                    _cleaned = 0
-                    for _row in _db_pos:
-                        if _row["condition_id"] not in _active_cids:
-                            store.conn.execute(
-                                "UPDATE positions SET total_shares = 0 WHERE condition_id = ?",
-                                (_row["condition_id"],),
-                            )
-                            _cleaned += 1
-                    if _cleaned:
-                        store.commit()
-
-            _active_position_count = store.get_portfolio_summary().get("position_count", 0)
-            if _active_position_count >= max_positions:
-                logger.warning(
-                    "POSITION CAP: %d/%d active positions, blocking new live entries",
-                    _active_position_count, max_positions,
-                )
-        except Exception:
-            _active_position_count = store.get_portfolio_summary().get("position_count", 0)
-
-    logger.info(
-        "EXECUTION LOOP: %d signals, live_executor=%s, dry_run=%s, "
-        "usdc_floor_block=%s, pos_count=%d/%d",
-        len(executable_signals),
-        bool(live_executor),
-        live_executor.dry_run if live_executor else "N/A",
-        _usdc_floor_block,
-        _active_position_count,
-        max_positions,
-    )
+    market_maker = ctx.market_maker
+    market_prices = ctx.market_prices
+    market_by_id = ctx.market_by_id
+    _live_balance = ctx.live_balance
+    _usdc_floor_block = ctx.usdc_floor_block
+    max_positions = ctx.max_positions
+    _active_position_count = ctx.active_position_count
     for signal in executable_signals:
         # A zero/negative size means some layer (Kelly, Claude, Gemini) sized
         # the trade away. Never trade it, and never let the live min-size
