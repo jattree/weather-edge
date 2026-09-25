@@ -2537,6 +2537,39 @@ async def _monitor_exits(ctx: CycleContext) -> None:
         logger.error("EXIT MONITOR CRASHED, check traceback", exc_info=True)
 
 
+def _monitoring_date(target_dates: list[date]) -> date:
+    """The one date monitored for cities without markets ("tomorrow" of the window)."""
+    if len(target_dates) > 1:
+        tomorrow = target_dates[1]
+    elif target_dates:
+        tomorrow = target_dates[0]
+    else:
+        tomorrow = date.today() + timedelta(days=1)
+    return tomorrow
+
+
+async def _refresh_monitoring_forecasts(ctx: CycleContext) -> None:
+    """Stage 8: also fetch forecasts for cities without active markets (monitoring).
+
+    But only for tomorrow (not all dates) to save API calls.
+    """
+    tomorrow = _monitoring_date(ctx.target_dates)
+    for city_id in City:
+        # The cache persists across cycles, so "not in cache" would freeze
+        # monitoring data after the first cycle; refetch unless fresh this cycle.
+        if (city_id, tomorrow) not in ctx.refreshed:
+            forecasts = await fetch_city_forecasts(city_id, tomorrow)
+            if forecasts:
+                ctx.forecast_cache[(city_id, tomorrow)] = forecasts
+                ctx.refreshed.add((city_id, tomorrow))
+                consensus = compute_consensus(city_id, str(tomorrow), "temp_max_c", forecasts)
+                if consensus:
+                    logger.info(
+                        "  %s (no markets): mean=%.1f°C conf=%.0f%%",
+                        city_id.value, consensus.weighted_mean, consensus.confidence * 100,
+                    )
+
+
 async def run_cycle(
     paper_trader: PaperTrader | None,
     target_dates: list[date] | None = None,
@@ -2569,10 +2602,8 @@ async def run_cycle(
         forecast_cache=forecast_cache,
     )
     await _discover_markets(ctx)
-
     await _fetch_ai_forecasts(ctx)
     await _compute_signals(ctx)
-
     ctx.all_signals = _filter_signals(ctx.all_signals)
 
     # === Claude + Gemini reasoning layer ===
@@ -2585,39 +2616,10 @@ async def run_cycle(
     await _prepare_execution(ctx)
     await _execute_signals(ctx)
     _log_spread_summary(ctx.market_maker)
-
     await _monitor_exits(ctx)
+    await _refresh_monitoring_forecasts(ctx)
 
-    target_dates = ctx.target_dates
-    all_signals = ctx.all_signals
-    _forecast_cache = ctx.forecast_cache
-    _refreshed_this_cycle = ctx.refreshed
-    city_volume = ctx.city_volume
-
-    # Also fetch forecasts for cities without active markets (monitoring)
-    # But only for tomorrow (not all dates) to save API calls
-    if len(target_dates) > 1:
-        tomorrow = target_dates[1]
-    elif target_dates:
-        tomorrow = target_dates[0]
-    else:
-        tomorrow = date.today() + timedelta(days=1)
-    for city_id in City:
-        # The cache persists across cycles, so "not in cache" would freeze
-        # monitoring data after the first cycle; refetch unless fresh this cycle.
-        if (city_id, tomorrow) not in _refreshed_this_cycle:
-            forecasts = await fetch_city_forecasts(city_id, tomorrow)
-            if forecasts:
-                _forecast_cache[(city_id, tomorrow)] = forecasts
-                _refreshed_this_cycle.add((city_id, tomorrow))
-                consensus = compute_consensus(city_id, str(tomorrow), "temp_max_c", forecasts)
-                if consensus:
-                    logger.info(
-                        "  %s (no markets): mean=%.1f°C conf=%.0f%%",
-                        city_id.value, consensus.weighted_mean, consensus.confidence * 100,
-                    )
-
-    return all_signals, _forecast_cache, city_volume
+    return ctx.all_signals, ctx.forecast_cache, ctx.city_volume
 
 
 async def run_loop(
