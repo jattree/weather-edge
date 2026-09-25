@@ -36,17 +36,24 @@ reviewable.
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev,dashboard]"     # add ,execution for the trading code
 python -m pytest -q                   # no network or API keys needed
-ruff check .                          # lint
+git config core.hooksPath .githooks   # enable the pre-commit checks
 ```
 
 The test suite needs no API keys or network access.
 
 ## Code style
 
-- `ruff` is the source of truth (line length 100, target py311). The tree is
-  not fully ruff-clean yet: `ruff check .` still reports pre-existing issues
-  that are being cleaned up separately. Run `ruff check` on the files you
-  touch and do not add new errors.
+- `ruff` is the source of truth (config in `pyproject.toml`: a correctness
+  rule set, line length 100, target py311). The tree is not yet clean against
+  the full rule set, so enforcement is a ratchet:
+  - The pre-commit hook (`.githooks/pre-commit`) reports ruff findings only on
+    the lines your commit touches, and runs the contract tests.
+  - CI blocks on the rules already at zero (`F`, `E4/E7/E9`, `I`, `UP`) and
+    reports the rest.
+  - Complexity: new functions must stay at McCabe complexity 10 or below, and
+    an existing function over 10 may not get more complex
+    (`.githooks/complexity-check.py`, same check locally and in CI). Reducing
+    one lowers its ceiling for good.
 - Match the surrounding code. Keep changes minimal and well scoped.
 
 ## High-scrutiny areas
