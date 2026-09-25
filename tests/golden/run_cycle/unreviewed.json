@@ -1,0 +1,576 @@
+{
+ "city_volume": {
+  "dal": {
+   "liquidity": 50.0,
+   "markets": 1,
+   "volume_24h": 100.0
+  },
+  "lon": {
+   "liquidity": 50.0,
+   "markets": 1,
+   "volume_24h": 100.0
+  },
+  "nyc": {
+   "liquidity": 50.0,
+   "markets": 1,
+   "volume_24h": 100.0
+  },
+  "sea": {
+   "liquidity": 50.0,
+   "markets": 1,
+   "volume_24h": 100.0
+  }
+ },
+ "consensus_calls": [
+  [
+   "nyc",
+   "<D2>",
+   "temp_max_c",
+   5,
+   [
+    21.0
+   ]
+  ],
+  [
+   "lon",
+   "<D2>",
+   "temp_max_c",
+   5,
+   [
+    21.0
+   ]
+  ],
+  [
+   "dal",
+   "<D2>",
+   "temp_max_c",
+   5,
+   [
+    21.0
+   ]
+  ],
+  [
+   "sea",
+   "<D2>",
+   "temp_max_c",
+   5,
+   [
+    21.0
+   ]
+  ],
+  [
+   "nyc",
+   "<D3>",
+   "temp_max_c",
+   5,
+   null
+  ],
+  [
+   "lon",
+   "<D3>",
+   "temp_max_c",
+   5,
+   null
+  ],
+  [
+   "dal",
+   "<D3>",
+   "temp_max_c",
+   5,
+   null
+  ],
+  [
+   "sea",
+   "<D3>",
+   "temp_max_c",
+   5,
+   null
+  ],
+  [
+   "atl",
+   "<D3>",
+   "temp_max_c",
+   5,
+   null
+  ],
+  [
+   "tor",
+   "<D3>",
+   "temp_max_c",
+   5,
+   null
+  ],
+  [
+   "bue",
+   "<D3>",
+   "temp_max_c",
+   5,
+   null
+  ],
+  [
+   "sel",
+   "<D3>",
+   "temp_max_c",
+   5,
+   null
+  ],
+  [
+   "chi",
+   "<D3>",
+   "temp_max_c",
+   5,
+   null
+  ],
+  [
+   "mia",
+   "<D3>",
+   "temp_max_c",
+   5,
+   null
+  ],
+  [
+   "lax",
+   "<D3>",
+   "temp_max_c",
+   5,
+   null
+  ],
+  [
+   "hou",
+   "<D3>",
+   "temp_max_c",
+   5,
+   null
+  ],
+  [
+   "den",
+   "<D3>",
+   "temp_max_c",
+   5,
+   null
+  ],
+  [
+   "sfo",
+   "<D3>",
+   "temp_max_c",
+   5,
+   null
+  ],
+  [
+   "sha",
+   "<D3>",
+   "temp_max_c",
+   5,
+   null
+  ],
+  [
+   "mad",
+   "<D3>",
+   "temp_max_c",
+   5,
+   null
+  ],
+  [
+   "tyo",
+   "<D3>",
+   "temp_max_c",
+   5,
+   null
+  ],
+  [
+   "hkg",
+   "<D3>",
+   "temp_max_c",
+   5,
+   null
+  ],
+  [
+   "muc",
+   "<D3>",
+   "temp_max_c",
+   5,
+   null
+  ],
+  [
+   "war",
+   "<D3>",
+   "temp_max_c",
+   5,
+   null
+  ],
+  [
+   "szn",
+   "<D3>",
+   "temp_max_c",
+   5,
+   null
+  ],
+  [
+   "aus",
+   "<D3>",
+   "temp_max_c",
+   5,
+   null
+  ],
+  [
+   "wlg",
+   "<D3>",
+   "temp_max_c",
+   5,
+   null
+  ],
+  [
+   "lko",
+   "<D3>",
+   "temp_max_c",
+   5,
+   null
+  ]
+ ],
+ "decision_history": [],
+ "edge_calls": [
+  {
+   "bankroll": 1000.0,
+   "city_id": "nyc",
+   "consensus_id": null,
+   "description": "zero bucket?",
+   "hours_ok": true,
+   "market_id": "zero",
+   "market_prob": 0.3,
+   "min_edge_no": 0.03,
+   "min_edge_yes": 0.06,
+   "model_confidence": 0.9900000000000001,
+   "model_prob": 0.35,
+   "spread": 0.03,
+   "target_date": "<D2>"
+  },
+  {
+   "bankroll": 1000.0,
+   "city_id": "lon",
+   "consensus_id": null,
+   "description": "fee bucket?",
+   "hours_ok": true,
+   "market_id": "fee",
+   "market_prob": 0.4,
+   "min_edge_no": 0.03,
+   "min_edge_yes": 0.06,
+   "model_confidence": 0.9,
+   "model_prob": 0.35,
+   "spread": 0.03,
+   "target_date": "<D2>"
+  },
+  {
+   "bankroll": 1000.0,
+   "city_id": "dal",
+   "consensus_id": null,
+   "description": "tail bucket?",
+   "hours_ok": true,
+   "market_id": "tail",
+   "market_prob": 0.04,
+   "min_edge_no": 0.03,
+   "min_edge_yes": 0.06,
+   "model_confidence": 0.9,
+   "model_prob": 0.35,
+   "spread": 0.03,
+   "target_date": "<D2>"
+  },
+  {
+   "bankroll": 1000.0,
+   "city_id": "sea",
+   "consensus_id": null,
+   "description": "untok bucket?",
+   "hours_ok": true,
+   "market_id": "untok",
+   "market_prob": 0.3,
+   "min_edge_no": 0.03,
+   "min_edge_yes": 0.06,
+   "model_confidence": 0.9,
+   "model_prob": 0.35,
+   "spread": 0.03,
+   "target_date": "<D2>"
+  }
+ ],
+ "events": [
+  [
+   "resolve_open_trades"
+  ],
+  [
+   "discover"
+  ],
+  [
+   "gribstream",
+   [
+    "dal",
+    "lon",
+    "nyc",
+    "sea"
+   ],
+   "<D2>"
+  ],
+  [
+   "book",
+   "zero"
+  ],
+  [
+   "book",
+   "tail"
+  ],
+  [
+   "book",
+   "fee"
+  ],
+  [
+   "paper.place_trade",
+   "tail",
+   [
+    1,
+    5.0,
+    0.013
+   ]
+  ],
+  [
+   "paper.place_trade",
+   "untok",
+   [
+    2,
+    20.0,
+    0.2158
+   ]
+  ],
+  [
+   "scan_exits",
+   "paper",
+   [
+    [
+     "tail",
+     "YES",
+     5.0,
+     0.055,
+     0.0
+    ],
+    [
+     "untok",
+     "YES",
+     20.0,
+     0.315,
+     0.0
+    ]
+   ],
+   [
+    [
+     "fee",
+     0.4
+    ],
+    [
+     "tail",
+     0.04
+    ],
+    [
+     "untok",
+     0.3
+    ],
+    [
+     "zero",
+     0.3
+    ]
+   ],
+   [
+    [
+     "fee",
+     0.35
+    ],
+    [
+     "tail",
+     0.35
+    ],
+    [
+     "untok",
+     0.35
+    ],
+    [
+     "zero",
+     0.35
+    ]
+   ],
+   [
+    [
+     "fee",
+     0.6
+    ],
+    [
+     "tail",
+     0.96
+    ],
+    [
+     "untok",
+     0.7
+    ],
+    [
+     "zero",
+     0.7
+    ]
+   ],
+   [
+    "dal|<D2>",
+    "lon|<D2>",
+    "nyc|<D2>",
+    "sea|<D2>"
+   ]
+  ]
+ ],
+ "forecast_cache_keys": [
+  "atl|<D3>",
+  "aus|<D3>",
+  "bue|<D3>",
+  "chi|<D3>",
+  "dal|<D2>",
+  "dal|<D3>",
+  "den|<D3>",
+  "hkg|<D3>",
+  "hou|<D3>",
+  "lax|<D3>",
+  "lko|<D3>",
+  "lon|<D2>",
+  "lon|<D3>",
+  "mad|<D3>",
+  "mia|<D3>",
+  "muc|<D3>",
+  "nyc|<D2>",
+  "nyc|<D3>",
+  "sea|<D2>",
+  "sea|<D3>",
+  "sel|<D3>",
+  "sfo|<D3>",
+  "sha|<D3>",
+  "szn|<D3>",
+  "tor|<D3>",
+  "tyo|<D3>",
+  "war|<D3>",
+  "wlg|<D3>"
+ ],
+ "logs": [
+  "INFO weather_edge.scheduler HORIZON FILTER: blocked <D0> (resolve < 36h)",
+  "INFO weather_edge.scheduler === Discovering Polymarket weather markets ===",
+  "INFO weather_edge.scheduler Active market groups: 4 city-date combos",
+  "INFO weather_edge.scheduler === New York (KLGA) on <D2>, 1 markets ===",
+  "INFO weather_edge.scheduler   nyc TREND: warming (0.40\u00b0C/cycle, stability=0.7) \u2192 conf \u00d71.10",
+  "INFO weather_edge.scheduler   nyc/temp_max_c: mean=21.0\u00b0C std=0.5 conf=90% (5 models)",
+  "INFO weather_edge.scheduler === London (EGLC) on <D2>, 1 markets ===",
+  "INFO weather_edge.scheduler   lon/temp_max_c: mean=21.0\u00b0C std=0.5 conf=90% (5 models)",
+  "INFO weather_edge.scheduler === Dallas (KDAL) on <D2>, 1 markets ===",
+  "INFO weather_edge.scheduler   dal/temp_max_c: mean=21.0\u00b0C std=0.5 conf=90% (5 models)",
+  "INFO weather_edge.scheduler === Seattle (KSEA) on <D2>, 1 markets ===",
+  "INFO weather_edge.scheduler   sea/temp_max_c: mean=21.0\u00b0C std=0.5 conf=90% (5 models)",
+  "WARNING weather_edge.scheduler UNREVIEWED TRADE (require_ai_review=False): nyc <D2> zero bucket?",
+  "WARNING weather_edge.scheduler UNREVIEWED TRADE (require_ai_review=False): lon <D2> fee bucket?",
+  "WARNING weather_edge.scheduler UNREVIEWED TRADE (require_ai_review=False): dal <D2> tail bucket?",
+  "WARNING weather_edge.scheduler UNREVIEWED TRADE (require_ai_review=False): sea <D2> untok bucket?",
+  "INFO weather_edge.scheduler AI GATE: 4/4 signals cleared for execution",
+  "INFO weather_edge.scheduler Fetching order book prices for spread detection...",
+  "INFO weather_edge.scheduler SPREAD OPP: dal, YES_ask=0.050 NO_ask=0.900 total=0.950 profit=0.050/share",
+  "INFO weather_edge.scheduler Book price fetch complete, placing trades...",
+  "INFO weather_edge.scheduler EXECUTION LOOP: 4 signals, live_executor=False, dry_run=N/A, usdc_floor_block=False, pos_count=0/50",
+  "INFO weather_edge.scheduler ZERO SIZE: nyc zero bucket? sized to $0.00, skipping",
+  "INFO weather_edge.scheduler CONTRACT [FEE_EATS_ALPHA]: Taker fee $0.12 eats 60% of projected alpha $0.20 (max allowed: 40%), skipping lon fee bucket?",
+  "INFO weather_edge.trading.paper PAPER TRADE: YES dal $5 @ 0.06 (+2\u00a2 spread, fee $0.01) | edge=3.0% conf=90% | [PENNY] tail bucket?",
+  "INFO weather_edge.trading.paper PAPER TRADE: YES sea $20 @ 0.32 (+2\u00a2 spread, fee $0.22) | edge=30.0% conf=90% | [TOMORROW] untok bucket?",
+  "INFO weather_edge.scheduler   nyc (no markets): mean=21.0\u00b0C conf=90%",
+  "INFO weather_edge.scheduler   lon (no markets): mean=21.0\u00b0C conf=90%",
+  "INFO weather_edge.scheduler   dal (no markets): mean=21.0\u00b0C conf=90%",
+  "INFO weather_edge.scheduler   sea (no markets): mean=21.0\u00b0C conf=90%",
+  "INFO weather_edge.scheduler   atl (no markets): mean=21.0\u00b0C conf=90%",
+  "INFO weather_edge.scheduler   tor (no markets): mean=21.0\u00b0C conf=90%",
+  "INFO weather_edge.scheduler   bue (no markets): mean=21.0\u00b0C conf=90%",
+  "INFO weather_edge.scheduler   sel (no markets): mean=21.0\u00b0C conf=90%",
+  "INFO weather_edge.scheduler   chi (no markets): mean=21.0\u00b0C conf=90%",
+  "INFO weather_edge.scheduler   mia (no markets): mean=21.0\u00b0C conf=90%",
+  "INFO weather_edge.scheduler   lax (no markets): mean=21.0\u00b0C conf=90%",
+  "INFO weather_edge.scheduler   hou (no markets): mean=21.0\u00b0C conf=90%",
+  "INFO weather_edge.scheduler   den (no markets): mean=21.0\u00b0C conf=90%",
+  "INFO weather_edge.scheduler   sfo (no markets): mean=21.0\u00b0C conf=90%",
+  "INFO weather_edge.scheduler   sha (no markets): mean=21.0\u00b0C conf=90%",
+  "INFO weather_edge.scheduler   mad (no markets): mean=21.0\u00b0C conf=90%",
+  "INFO weather_edge.scheduler   tyo (no markets): mean=21.0\u00b0C conf=90%",
+  "INFO weather_edge.scheduler   hkg (no markets): mean=21.0\u00b0C conf=90%",
+  "INFO weather_edge.scheduler   muc (no markets): mean=21.0\u00b0C conf=90%",
+  "INFO weather_edge.scheduler   war (no markets): mean=21.0\u00b0C conf=90%",
+  "INFO weather_edge.scheduler   szn (no markets): mean=21.0\u00b0C conf=90%",
+  "INFO weather_edge.scheduler   aus (no markets): mean=21.0\u00b0C conf=90%",
+  "INFO weather_edge.scheduler   wlg (no markets): mean=21.0\u00b0C conf=90%",
+  "INFO weather_edge.scheduler   lko (no markets): mean=21.0\u00b0C conf=90%"
+ ],
+ "paper_trades": [
+  {
+   "description": "[PENNY] tail bucket?",
+   "entry_price": 0.055,
+   "exit_price": null,
+   "fee_usd": 0.013,
+   "market_id": "tail",
+   "pnl": null,
+   "side": "YES",
+   "size_usd": 5.0,
+   "status": "open",
+   "strategy": "penny",
+   "trade_id": 1
+  },
+  {
+   "description": "[TOMORROW] untok bucket?",
+   "entry_price": 0.315,
+   "exit_price": null,
+   "fee_usd": 0.2158,
+   "market_id": "untok",
+   "pnl": null,
+   "side": "YES",
+   "size_usd": 20.0,
+   "status": "open",
+   "strategy": "core",
+   "trade_id": 2
+  }
+ ],
+ "returned_signals": [
+  {
+   "city": "nyc",
+   "edge": 0.1,
+   "market_id": "zero",
+   "market_prob": 0.3,
+   "net_edge": 0.09,
+   "side": "YES",
+   "size": 0.0,
+   "strategy": "core",
+   "tier": "high"
+  },
+  {
+   "city": "lon",
+   "edge": 0.02,
+   "market_id": "fee",
+   "market_prob": 0.4,
+   "net_edge": 0.01,
+   "side": "YES",
+   "size": 10.0,
+   "strategy": "core",
+   "tier": "high"
+  },
+  {
+   "city": "dal",
+   "edge": 0.03,
+   "market_id": "tail",
+   "market_prob": 0.04,
+   "net_edge": 0.02,
+   "side": "YES",
+   "size": 5.0,
+   "strategy": "tail",
+   "tier": "high"
+  },
+  {
+   "city": "sea",
+   "edge": 0.3,
+   "market_id": "untok",
+   "market_prob": 0.3,
+   "net_edge": 0.29,
+   "side": "YES",
+   "size": 20.0,
+   "strategy": "core",
+   "tier": "high"
+  }
+ ]
+}
