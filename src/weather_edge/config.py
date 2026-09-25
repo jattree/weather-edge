@@ -23,7 +23,7 @@ class CityConfig:
     temp_unit: str = "fahrenheit"  # or "celsius"
 
 
-# All cities matching @TopTrader's dashboard + Polymarket weather markets
+# All cities with active Polymarket daily-high temperature markets
 CITIES: dict[City, CityConfig] = {
     City.LON: CityConfig(
         city_id=City.LON,
@@ -328,7 +328,6 @@ def get_model_weights(city_id: City) -> dict[WeatherModel, float]:
 class Settings(BaseSettings):
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
 
-    database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/weather_edge"
     bankroll: float = 2000.0
     min_edge: float = 0.05
     min_confidence: float = 0.6
@@ -342,9 +341,9 @@ class Settings(BaseSettings):
     # Post-Monday fee cliff: penny bets are fee-immune, core trades get hit 1.25%
     pool_today_pct: float = 0.35    # Same-day core trades (reduced, fee-penalised)
     pool_tomorrow_pct: float = 0.25  # Tomorrow conviction bets
-    pool_penny_pct: float = 0.40     # Penny sniping (TopTrader's profit engine, fee-immune)
+    pool_penny_pct: float = 0.40     # Penny sniping (a top trader's profit engine, fee-immune)
 
-    # Penny sweep constraints (TopTrader targets 0.1-3c, $15-25 per position)
+    # Penny sweep constraints (a top trader targeted 0.1-3c, $15-25 per position)
     penny_min_edge_multiplier: float = 3.0  # Model must say 3x market price
     penny_min_position: float = 10.0        # Min $10 per penny bet
     penny_max_position: float = 50.0        # Max $50 per penny bet (up from $20)
@@ -355,10 +354,13 @@ class Settings(BaseSettings):
     tail_no_min_edge: float = 0.03              # Minimum edge for a tail-no trade
 
     # Order splitting for penny bets (avoid moving thin markets)
-    penny_order_split_max_shares: int = 5   # Max shares per order (TopTrader uses 1-5)
+    penny_order_split_max_shares: int = 5   # Max shares per order (a top trader used 1-5)
 
     # API keys
     anthropic_api_key: str = ""  # Claude reasoning layer
+    claude_model: str = "claude-sonnet-5"  # Claude reasoning model id
+    # When True, no trade is placed on a signal without a successful AI review
+    require_ai_review: bool = True
     gemini_api_key: str = ""  # Gemini red team / dissent layer
     gribstream_api_key: str = ""  # GribStream AI models (GraphCast, AIFS)
     openmeteo_base_url: str = "https://api.open-meteo.com/v1/forecast"
@@ -373,6 +375,11 @@ class Settings(BaseSettings):
     polymarket_signature_type: int = 2  # 2=EOA, 1=proxy/Magic Link
     polymarket_relayer_api_key: str = ""  # Relayer API key for gasless proxy tx
     polymarket_relayer_url: str = "https://relayer-v2.polymarket.com"
+
+    # On-chain whale tracking (analysis/whale_tracker.py), dormant unless both set
+    polygonscan_api_key: str = ""  # Etherscan V2 key (covers Polygon, chainid=137)
+    # Comma-separated wallet addresses to watch, optionally labelled: "label=0xabc..,0xdef.."
+    whale_wallets: str = ""
 
     # Trading modes, can run both, either, or neither
     paper_mode: bool = True  # Run paper trading (simulated)
