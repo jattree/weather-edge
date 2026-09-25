@@ -2197,6 +2197,346 @@ def _log_spread_summary(market_maker) -> None:
         )
 
 
+@dataclass
+class _ExitMarks:
+    """Current market marks shared by the paper and live exit scans."""
+
+    market_prices: dict[str, float]
+    no_prices: dict[str, float]
+    market_dates: dict[str, date]
+    model_probs: dict[str, float]
+
+
+def _exit_marks(markets: list[MarketInfo], all_signals: list[Signal]) -> _ExitMarks:
+    """YES / NO prices, target dates and model probabilities for the exit scans."""
+    current_market_prices = {m.market_id: m.yes_price for m in markets}
+    # NO token's own price (Gamma outcomePrices[1]); exit_monitor falls
+    # back to 1-YES when missing.
+    current_no_prices = {
+        m.market_id: m.no_price for m in markets if getattr(m, "no_price", 0) > 0
+    }
+    # Target date per market, so exit reviews use the trade's own date
+    market_dates = {m.market_id: m.target_date for m in markets}
+    current_model_probs = {}
+    for signal in all_signals:
+        current_model_probs[signal.market_id] = signal.model_prob
+    return _ExitMarks(
+        market_prices=current_market_prices, no_prices=current_no_prices,
+        market_dates=market_dates, model_probs=current_model_probs,
+    )
+
+
+async def _review_exit_candidate(ctx: CycleContext, candidate, marks: _ExitMarks):
+    """Claude + Gemini review of one exit candidate, on its own date's forecasts."""
+    from weather_edge.analysis.exit_monitor import ai_review_exit
+
+    model_vals, c_mean, c_std = exit_model_context(
+        candidate.trade, ctx.forecast_cache, marks.market_dates,
+    )
+    return await ai_review_exit(
+        candidate, model_vals, c_mean, c_std,
+    )
+
+
+async def _scan_paper_exits(ctx: CycleContext, marks: _ExitMarks) -> None:
+    """PAPER EXIT SCANNING: review up to 3 candidates and close the EXITs."""
+    from weather_edge.analysis.exit_monitor import scan_for_exits_async
+
+    paper_trader = ctx.paper_trader
+    paper_candidates = await scan_for_exits_async(
+        paper_trader.open_trades,
+        marks.market_prices, marks.model_probs,
+        forecast_cache=ctx.forecast_cache,
+        no_prices=marks.no_prices,
+    )
+    if paper_candidates:
+        logger.info("PAPER EXIT MONITOR: %d candidates", len(paper_candidates))
+        for candidate in paper_candidates[:3]:
+            candidate = await _review_exit_candidate(ctx, candidate, marks)
+            if candidate.final_decision == "EXIT":
+                logger.warning(
+                    "PAPER EXIT: %s %s $%.0f, %s",
+                    candidate.trade.side,
+                    candidate.trade.city_id,
+                    candidate.trade.size_usd,
+                    candidate.reason,
+                )
+                paper_trader.close_position(
+                    candidate.trade,
+                    candidate.current_market_price,
+                )
+
+
+def _live_exit_positions(store) -> list:
+    """Live positions large enough to sell, from the positions table."""
+    from weather_edge.models.position import PRICE_BASIS_TOKEN, Position
+
+    positions = store.get_positions()
+    live_positions: list[Position] = []
+    for pos in positions:
+        shares = pos.get("total_shares", 0)
+        avg_price = pos.get("avg_price", 0)
+        if shares >= MIN_SELL_SHARES:
+            live_positions.append(Position(
+                market_id=pos.get("condition_id", ""),
+                city_id=pos.get("city_id", ""),
+                # positions.side is the fill side (BUY); the token
+                # held is the outcome. Normalised to YES/NO.
+                side=pos.get("outcome") or pos.get("side", ""),
+                size_usd=pos.get("cost_basis", 0),
+                # avg_price is what we paid for the held token
+                entry_price=avg_price,
+                price_basis=PRICE_BASIS_TOKEN,
+                total_shares=shares,
+                description=pos.get("description", ""),
+                source="live",
+            ))
+    return live_positions
+
+
+def _sell_half_done(store, market_id: str, city_id_str: str) -> bool:
+    """Sell-half guard: True (skip) if a sell is open or the position was already trimmed."""
+    existing = store.get_open_order_for_market(
+        market_id, side="SELL",
+    )
+    if existing:
+        logger.info(
+            "SELL_HALF SKIP: %s has open sell order",
+            city_id_str,
+        )
+        return True
+    past_trim = store.conn.execute(
+        "SELECT 1 FROM live_trades "
+        "WHERE market_id = ? "
+        "AND description LIKE 'SELL_HALF%' "
+        "LIMIT 1",
+        (market_id,),
+    ).fetchone()
+    if past_trim:
+        logger.info(
+            "SELL_HALF SKIP: %s already trimmed",
+            city_id_str,
+        )
+        return True
+    return False
+
+
+async def _cancel_open_buy(ctx: CycleContext, market_id: str, city_id_str: str) -> None:
+    """Cancel any open BUY order on a market we are exiting."""
+    store = ctx.store
+    open_buy = store.get_open_order_for_market(market_id)
+    if open_buy and open_buy.get("side") in ("YES", "NO"):
+        buy_id = open_buy["order_id"]
+        try:
+            await ctx.live_executor.cancel_order(buy_id)
+            store.cancel_live_trade(buy_id)
+            logger.info(
+                "EXIT: cancelled open BUY order %s for %s",
+                buy_id[:16], city_id_str,
+            )
+        except Exception as e:
+            logger.warning(
+                "Failed to cancel BUY order %s: %s",
+                buy_id[:16], e,
+            )
+
+
+async def _replace_existing_sell(
+    ctx: CycleContext, existing_sell: dict, sell_price: float, city_id_str: str,
+) -> bool:
+    """Replace an open sell only if the price drifted >1c. False = keep it (skip)."""
+    old_price = existing_sell.get("limit_price", 0)
+    new_price = _round_price(sell_price)
+    price_drift = abs(old_price - new_price)
+
+    if price_drift <= 0.01:
+        logger.info(
+            "LIVE SELL KEEP: %s @ %.3f "
+            "(drift=%.3f)",
+            city_id_str, old_price, price_drift,
+        )
+        return False
+    old_id = existing_sell["order_id"]
+    try:
+        await ctx.live_executor.cancel_order(old_id)
+        ctx.store.cancel_live_trade(old_id)
+        logger.info(
+            "LIVE SELL REPLACE: %s "
+            "cancelled %s (%.3f->%.3f)",
+            city_id_str, old_id[:16],
+            old_price, new_price,
+        )
+    except Exception as e:
+        logger.warning(
+            "Failed to cancel old "
+            "sell order %s: %s",
+            old_id[:16], e,
+        )
+    return True
+
+
+async def _place_exit_sell(
+    ctx: CycleContext, candidate, position: dict, asset_id: str, sell_price: float,
+) -> None:
+    """Sell the held token (half of it for sell_half); failures are logged."""
+    city_id_str = candidate.trade.city_id
+    market_id = candidate.trade.market_id
+    try:
+        urgent = candidate.urgency == "high"
+        sell_shares = position["total_shares"]
+        if candidate.reason == "sell_half":
+            sell_shares = max(
+                MIN_SELL_SHARES,
+                round(sell_shares / 2, 0),
+            )
+        exit_label = (
+            "SELL_HALF"
+            if candidate.reason == "sell_half"
+            else "EXIT"
+        )
+        # reference_price=None: the executor
+        # checks the limit against the token's
+        # live CLOB midpoint (an independent
+        # mark), not against itself.
+        sell_result = await ctx.live_executor.place_sell_order(
+            token_id=asset_id,
+            shares=sell_shares,
+            price=sell_price,
+            market_id=market_id,
+            city_id=city_id_str,
+            description=(
+                f"{exit_label}: {candidate.reason}"
+            ),
+            reference_price=None,
+            force_taker=urgent,
+        )
+        if sell_result and sell_result.status not in (
+            "rejected", "post_only_reject",
+        ):
+            logger.warning(
+                "LIVE EXIT: %s %s %.0f shares "
+                "@ %.3f, %s",
+                city_id_str, candidate.trade.side,
+                sell_shares,
+                sell_price,
+                sell_result.order_id,
+            )
+    except Exception as e:
+        logger.error(
+            "LIVE EXIT FAILED: %s, %s",
+            city_id_str, e,
+        )
+
+
+async def _execute_live_exit(ctx: CycleContext, candidate) -> bool:
+    """Act on a live EXIT decision. False = skipped (the decision is not recorded)."""
+    store = ctx.store
+    city_id_str = candidate.trade.city_id
+    market_id = candidate.trade.market_id
+
+    # Sell-half guard: skip if already trimmed
+    if candidate.reason == "sell_half" and _sell_half_done(store, market_id, city_id_str):
+        return False
+
+    # 1. Cancel any open BUY orders if exiting
+    await _cancel_open_buy(ctx, market_id, city_id_str)
+
+    # 2. Check for existing open SELL order
+    existing_sell = store.get_open_order_for_market(
+        market_id, side="SELL",
+    )
+
+    position = store.get_position_for_market(market_id)
+    if not (
+        position
+        and position.get("total_shares", 0) >= MIN_SELL_SHARES
+    ):
+        return True
+    asset_id = position.get("asset_id", "")
+    # Sell the held token at ITS OWN price. The
+    # candidate's current_market_price is always
+    # the YES price, selling a NO token there
+    # would dump it (or never fill).
+    sell_price = (
+        candidate.token_price
+        if candidate.token_price is not None
+        else candidate.current_market_price
+    )
+    if not asset_id:
+        return True
+    # Replace existing sell only if price drifted >1c
+    if existing_sell and not await _replace_existing_sell(
+        ctx, existing_sell, sell_price, city_id_str,
+    ):
+        return False
+    await _place_exit_sell(ctx, candidate, position, asset_id, sell_price)
+    return True
+
+
+def _record_exit_decision(candidate) -> None:
+    """Record an exit decision to the AI Decisions tab."""
+    from weather_edge.analysis.claude_reasoning import _decision_history
+    _decision_history.insert(0, {
+        "time": datetime.now(timezone.utc).strftime("%H:%M:%S"),
+        "city": candidate.trade.city_id.upper(),
+        "decision": "EXIT" if candidate.final_decision == "EXIT" else "HOLD",
+        "signal": (
+            f"[EXIT CHECK] {candidate.reason}: "
+            f"{candidate.trade.description[:40]}"
+        ),
+        "adjustment": round(candidate.current_edge, 2),
+        "rationale": candidate.claude_rationale or "No AI review",
+        "risk_factors": [candidate.gemini_rationale or ""],
+        "source": "exit_monitor",
+    })
+
+
+async def _scan_live_exits(ctx: CycleContext, marks: _ExitMarks) -> None:
+    """LIVE EXIT SCANNING from the positions table, independent of paper."""
+    from weather_edge.analysis.exit_monitor import scan_for_exits_async
+
+    live_positions = _live_exit_positions(ctx.store)
+    if live_positions:
+        live_candidates = await scan_for_exits_async(
+            live_positions,
+            marks.market_prices, marks.model_probs,
+            forecast_cache=ctx.forecast_cache,
+            no_prices=marks.no_prices,
+        )
+        if live_candidates:
+            logger.info("LIVE EXIT MONITOR: %d candidates", len(live_candidates))
+            for candidate in live_candidates[:3]:
+                candidate = await _review_exit_candidate(ctx, candidate, marks)
+                if (
+                    candidate.final_decision == "EXIT"
+                    and not await _execute_live_exit(ctx, candidate)
+                ):
+                    continue
+                _record_exit_decision(candidate)
+
+
+async def _monitor_exits(ctx: CycleContext) -> None:
+    """Stage 7: early exit monitor. Paper and live scan independently."""
+    try:
+        marks = _exit_marks(ctx.markets, ctx.all_signals)
+
+        # --- PAPER EXIT SCANNING ---
+        if ctx.paper_trader:
+            await _scan_paper_exits(ctx, marks)
+
+        # --- LIVE EXIT SCANNING (from positions table, independent of paper) ---
+        # HAIL MARY disables it: penny lottery tickets must hold to resolution,
+        # and selling at -7% edge wastes the spread cost on a $1 position.
+        if (
+            not settings.hail_mary_mode
+            and ctx.is_live
+            and ctx.store
+        ):
+            await _scan_live_exits(ctx, marks)
+    except Exception:
+        logger.error("EXIT MONITOR CRASHED, check traceback", exc_info=True)
+
+
 async def run_cycle(
     paper_trader: PaperTrader | None,
     target_dates: list[date] | None = None,
@@ -2246,268 +2586,13 @@ async def run_cycle(
     await _execute_signals(ctx)
     _log_spread_summary(ctx.market_maker)
 
-    store = ctx.store
+    await _monitor_exits(ctx)
+
     target_dates = ctx.target_dates
     all_signals = ctx.all_signals
     _forecast_cache = ctx.forecast_cache
     _refreshed_this_cycle = ctx.refreshed
-    markets = ctx.markets
     city_volume = ctx.city_volume
-
-    # === Early exit monitor ===
-    # Paper and live scan independently, either can run alone
-    try:
-        from weather_edge.analysis.exit_monitor import ai_review_exit, scan_for_exits_async
-        current_market_prices = {m.market_id: m.yes_price for m in markets}
-        # NO token's own price (Gamma outcomePrices[1]); exit_monitor falls
-        # back to 1-YES when missing.
-        current_no_prices = {
-            m.market_id: m.no_price for m in markets if getattr(m, "no_price", 0) > 0
-        }
-        # Target date per market, so exit reviews use the trade's own date
-        market_dates = {m.market_id: m.target_date for m in markets}
-        current_model_probs = {}
-        for signal in all_signals:
-            current_model_probs[signal.market_id] = signal.model_prob
-
-        # --- PAPER EXIT SCANNING ---
-        if paper_trader:
-            paper_candidates = await scan_for_exits_async(
-                paper_trader.open_trades,
-                current_market_prices, current_model_probs,
-                forecast_cache=_forecast_cache,
-                no_prices=current_no_prices,
-            )
-            if paper_candidates:
-                logger.info("PAPER EXIT MONITOR: %d candidates", len(paper_candidates))
-                for candidate in paper_candidates[:3]:
-                    model_vals, c_mean, c_std = exit_model_context(
-                        candidate.trade, _forecast_cache, market_dates,
-                    )
-                    candidate = await ai_review_exit(
-                        candidate, model_vals, c_mean, c_std,
-                    )
-                    if candidate.final_decision == "EXIT":
-                        logger.warning(
-                            "PAPER EXIT: %s %s $%.0f, %s",
-                            candidate.trade.side,
-                            candidate.trade.city_id,
-                            candidate.trade.size_usd,
-                            candidate.reason,
-                        )
-                        paper_trader.close_position(
-                            candidate.trade,
-                            candidate.current_market_price,
-                        )
-
-        # --- LIVE EXIT SCANNING (from positions table, independent of paper) ---
-        # HAIL MARY disables it: penny lottery tickets must hold to resolution,
-        # and selling at -7% edge wastes the spread cost on a $1 position.
-        if (
-            not settings.hail_mary_mode
-            and live_executor
-            and not live_executor.dry_run
-            and store
-        ):
-            from weather_edge.models.position import PRICE_BASIS_TOKEN, Position
-            positions = store.get_positions()
-            live_positions: list[Position] = []
-            for pos in positions:
-                shares = pos.get("total_shares", 0)
-                avg_price = pos.get("avg_price", 0)
-                if shares >= MIN_SELL_SHARES:
-                    live_positions.append(Position(
-                        market_id=pos.get("condition_id", ""),
-                        city_id=pos.get("city_id", ""),
-                        # positions.side is the fill side (BUY); the token
-                        # held is the outcome. Normalised to YES/NO.
-                        side=pos.get("outcome") or pos.get("side", ""),
-                        size_usd=pos.get("cost_basis", 0),
-                        # avg_price is what we paid for the held token
-                        entry_price=avg_price,
-                        price_basis=PRICE_BASIS_TOKEN,
-                        total_shares=shares,
-                        description=pos.get("description", ""),
-                        source="live",
-                    ))
-
-            if live_positions:
-                live_candidates = await scan_for_exits_async(
-                    live_positions,
-                    current_market_prices, current_model_probs,
-                    forecast_cache=_forecast_cache,
-                    no_prices=current_no_prices,
-                )
-                if live_candidates:
-                    logger.info("LIVE EXIT MONITOR: %d candidates", len(live_candidates))
-                    for candidate in live_candidates[:3]:
-                        model_vals, c_mean, c_std = exit_model_context(
-                            candidate.trade, _forecast_cache, market_dates,
-                        )
-                        candidate = await ai_review_exit(
-                            candidate, model_vals, c_mean, c_std,
-                        )
-                        if candidate.final_decision == "EXIT":
-                            city_id_str = candidate.trade.city_id
-                            market_id = candidate.trade.market_id
-
-                            # Sell-half guard: skip if already trimmed
-                            if candidate.reason == "sell_half":
-                                existing = store.get_open_order_for_market(
-                                    market_id, side="SELL",
-                                )
-                                if existing:
-                                    logger.info(
-                                        "SELL_HALF SKIP: %s has open sell order",
-                                        city_id_str,
-                                    )
-                                    continue
-                                past_trim = store.conn.execute(
-                                    "SELECT 1 FROM live_trades "
-                                    "WHERE market_id = ? "
-                                    "AND description LIKE 'SELL_HALF%' "
-                                    "LIMIT 1",
-                                    (market_id,),
-                                ).fetchone()
-                                if past_trim:
-                                    logger.info(
-                                        "SELL_HALF SKIP: %s already trimmed",
-                                        city_id_str,
-                                    )
-                                    continue
-
-                            # 1. Cancel any open BUY orders if exiting
-                            open_buy = store.get_open_order_for_market(market_id)
-                            if open_buy and open_buy.get("side") in ("YES", "NO"):
-                                buy_id = open_buy["order_id"]
-                                try:
-                                    await live_executor.cancel_order(buy_id)
-                                    store.cancel_live_trade(buy_id)
-                                    logger.info(
-                                        "EXIT: cancelled open BUY order %s for %s",
-                                        buy_id[:16], city_id_str,
-                                    )
-                                except Exception as e:
-                                    logger.warning(
-                                        "Failed to cancel BUY order %s: %s",
-                                        buy_id[:16], e,
-                                    )
-
-                            # 2. Check for existing open SELL order
-                            existing_sell = store.get_open_order_for_market(
-                                market_id, side="SELL",
-                            )
-
-                            position = store.get_position_for_market(market_id)
-                            if (
-                                position
-                                and position.get("total_shares", 0) >= MIN_SELL_SHARES
-                            ):
-                                asset_id = position.get("asset_id", "")
-                                # Sell the held token at ITS OWN price. The
-                                # candidate's current_market_price is always
-                                # the YES price, selling a NO token there
-                                # would dump it (or never fill).
-                                sell_price = (
-                                    candidate.token_price
-                                    if candidate.token_price is not None
-                                    else candidate.current_market_price
-                                )
-                                if asset_id:
-                                    # Replace existing sell only if price drifted >1c
-                                    if existing_sell:
-                                        old_price = existing_sell.get("limit_price", 0)
-                                        new_price = _round_price(sell_price)
-                                        price_drift = abs(old_price - new_price)
-
-                                        if price_drift <= 0.01:
-                                            logger.info(
-                                                "LIVE SELL KEEP: %s @ %.3f "
-                                                "(drift=%.3f)",
-                                                city_id_str, old_price, price_drift,
-                                            )
-                                            continue
-                                        else:
-                                            old_id = existing_sell["order_id"]
-                                            try:
-                                                await live_executor.cancel_order(old_id)
-                                                store.cancel_live_trade(old_id)
-                                                logger.info(
-                                                    "LIVE SELL REPLACE: %s "
-                                                    "cancelled %s (%.3f->%.3f)",
-                                                    city_id_str, old_id[:16],
-                                                    old_price, new_price,
-                                                )
-                                            except Exception as e:
-                                                logger.warning(
-                                                    "Failed to cancel old "
-                                                    "sell order %s: %s",
-                                                    old_id[:16], e,
-                                                )
-
-                                    try:
-                                        urgent = candidate.urgency == "high"
-                                        sell_shares = position["total_shares"]
-                                        if candidate.reason == "sell_half":
-                                            sell_shares = max(
-                                                MIN_SELL_SHARES,
-                                                round(sell_shares / 2, 0),
-                                            )
-                                        exit_label = (
-                                            "SELL_HALF"
-                                            if candidate.reason == "sell_half"
-                                            else "EXIT"
-                                        )
-                                        # reference_price=None: the executor
-                                        # checks the limit against the token's
-                                        # live CLOB midpoint (an independent
-                                        # mark), not against itself.
-                                        sell_result = await live_executor.place_sell_order(
-                                            token_id=asset_id,
-                                            shares=sell_shares,
-                                            price=sell_price,
-                                            market_id=market_id,
-                                            city_id=city_id_str,
-                                            description=(
-                                                f"{exit_label}: {candidate.reason}"
-                                            ),
-                                            reference_price=None,
-                                            force_taker=urgent,
-                                        )
-                                        if sell_result and sell_result.status not in (
-                                            "rejected", "post_only_reject",
-                                        ):
-                                            logger.warning(
-                                                "LIVE EXIT: %s %s %.0f shares "
-                                                "@ %.3f, %s",
-                                                city_id_str, candidate.trade.side,
-                                                sell_shares,
-                                                sell_price,
-                                                sell_result.order_id,
-                                            )
-                                    except Exception as e:
-                                        logger.error(
-                                            "LIVE EXIT FAILED: %s, %s",
-                                            city_id_str, e,
-                                        )
-
-                        # Record exit decision to AI Decisions tab
-                        from weather_edge.analysis.claude_reasoning import _decision_history
-                        _decision_history.insert(0, {
-                            "time": datetime.now(timezone.utc).strftime("%H:%M:%S"),
-                            "city": candidate.trade.city_id.upper(),
-                            "decision": "EXIT" if candidate.final_decision == "EXIT" else "HOLD",
-                            "signal": (
-                                f"[EXIT CHECK] {candidate.reason}: "
-                                f"{candidate.trade.description[:40]}"
-                            ),
-                            "adjustment": round(candidate.current_edge, 2),
-                            "rationale": candidate.claude_rationale or "No AI review",
-                            "risk_factors": [candidate.gemini_rationale or ""],
-                            "source": "exit_monitor",
-                        })
-    except Exception:
-        logger.error("EXIT MONITOR CRASHED, check traceback", exc_info=True)
 
     # Also fetch forecasts for cities without active markets (monitoring)
     # But only for tomorrow (not all dates) to save API calls
