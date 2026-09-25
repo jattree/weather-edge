@@ -185,16 +185,17 @@ class TestBuyPricingAndSizing:
 
 
 class TestBuyLive:
-    def test_success_maker(self, no_kill, fake_store, tracked, logs):
+    def test_success_force_taker(self, no_kill, fake_store, tracked, logs):
+        # A forced taker order crosses the spread and pays the fee, so the
+        # result must report a taker fill with no fee avoided.
         client = make_client()
         e = live_executor(client)
         sig = make_signal(market_prob=0.40, size=10.0)
         r = run(e.place_limit_order(sig, "tok", force_taker=True))
-        fee = round(ex.calculate_taker_fee(0.40, 10.0), 4)
         assert snap(r) == {
             "order_id": "0xabc", "market_id": "m1", "side": "YES",
             "size_usd": 10.0, "size_shares": 23.25, "limit_price": 0.43,
-            "status": "pending", "is_maker": True, "taker_fee_avoided": fee,
+            "status": "pending", "is_maker": False, "taker_fee_avoided": 0.0,
             "filled_price": None, "filled_at": None, "tx_hash": None,
             "reject_reason": "",
             "raw_response": {"success": True, "errorMsg": "", "orderID": "0xabc",
@@ -211,7 +212,7 @@ class TestBuyLive:
         }]
         assert logs()[-1] == ("INFO",
             "LIVE ORDER PLACED: YES nyc 23 shares @ 0.430 ($10.00) | order_id=0xabc | "
-            f"post_only=True | taker_fee_avoided=${ex.calculate_taker_fee(0.40, 10.0):.2f}")
+            "post_only=False | taker_fee_avoided=$0.00")
 
     def test_success_post_only(self, no_kill, fake_store, tracked):
         client = make_client()
@@ -238,7 +239,8 @@ class TestBuyLive:
         assert tracked == ["0xabc"]
         crit = [m for lvl, m in logs() if lvl == "CRITICAL"]
         assert crit == ["GHOST TRADE: order 0xabc placed on exchange but DB write "
-                        "failed after 3 retries, disk gone. Manual reconciliation needed."]
+                        "failed (retries exhausted or non-retryable error), disk gone. "
+                        "Manual reconciliation needed."]
 
     @pytest.mark.usefixtures("no_kill")
     @pytest.mark.parametrize(("exc_name", "label"), [

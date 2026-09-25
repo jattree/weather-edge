@@ -42,7 +42,6 @@ async def main(argv=None):
     import httpx
 
     from weather_edge.config import settings
-    from weather_edge.persistence import PersistentStore
     from weather_edge.trading.executor import TradeExecutor, script_dry_run
 
     dry_run = script_dry_run(args.execute)
@@ -68,8 +67,6 @@ async def main(argv=None):
         timeout=15.0,
     )
     positions = r.json()
-
-    store = PersistentStore()
 
     sellable, too_small, zero_size = plan_dust(positions)
 
@@ -98,7 +95,6 @@ async def main(argv=None):
     for title, size, mv in too_small:
         logger.info("  %.1f shares ($%.2f), %s", size, mv, title)
 
-    store.close()
 
 
 def plan_dust(positions) -> tuple[list[dict], list[tuple], list[str]]:

@@ -549,7 +549,8 @@ class TradeExecutor:
             await _persist_live_trade(
                 f"persist_trade:{order_id[:16]}",
                 "GHOST TRADE: order %s placed on exchange but DB write "
-                "failed after 3 retries, %s. Manual reconciliation needed.",
+                "failed (retries exhausted or non-retryable error), %s. "
+                "Manual reconciliation needed.",
                 order_id=order_id,
                 market_id=signal.market_id,
                 token_id=token_id,
@@ -574,8 +575,8 @@ class TradeExecutor:
                 limit_price,
                 actual_usd,
                 order_id,
-                self.post_only,
-                taker_fee_avoided,
+                use_post_only,
+                0.0 if force_taker else taker_fee_avoided,
             )
 
             return OrderResult(
@@ -586,8 +587,9 @@ class TradeExecutor:
                 size_shares=shares,
                 limit_price=limit_price,
                 status="pending",
-                is_maker=self.post_only,
-                taker_fee_avoided=round(taker_fee_avoided, 4),
+                is_maker=use_post_only,
+                # A forced taker order pays the fee, so none was avoided.
+                taker_fee_avoided=0.0 if force_taker else round(taker_fee_avoided, 4),
                 raw_response=response,
             )
 
