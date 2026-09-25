@@ -147,7 +147,7 @@ async def main(argv=None):
                 price=sell_price,
                 market_id=pos["condition_id"],
                 city_id=pos["city_id"],
-                description="DUST DUMP: %s" % pos["title"][:40],
+                description="DUST DUMP: {}".format(pos["title"][:40]),
                 reference_price=pos["price"],
                 force_taker=True,
             )

@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 import math
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from weather_edge.analysis.model_timing import get_confidence_boost
 from weather_edge.config import settings
@@ -93,7 +93,7 @@ def calculate_edge(
     if bankroll is None:
         bankroll = settings.bankroll
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     # Clamp inputs to valid ranges
     model_prob = max(0.01, min(0.99, model_prob))

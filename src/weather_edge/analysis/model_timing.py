@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from weather_edge.models.enums import WeatherModel
 
@@ -85,7 +85,7 @@ def get_recent_model_updates(
     hasn't been fully absorbed yet.
     """
     if now is None:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
     recent: list[tuple[WeatherModel, int]] = []
 

@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from weather_edge.models.position import normalize_side
 
@@ -73,7 +73,7 @@ async def sync_portfolio(executor, store, market_lookup: dict | None = None) -> 
         # Convert epoch to ISO
         try:
             filled_at = datetime.fromtimestamp(
-                int(match_time), tz=timezone.utc,
+                int(match_time), tz=UTC,
             ).isoformat() if match_time else ""
         except (ValueError, TypeError):
             filled_at = match_time

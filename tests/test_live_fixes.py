@@ -10,6 +10,7 @@ import asyncio
 import sqlite3
 import sys
 import types
+from datetime import UTC
 from unittest.mock import MagicMock
 
 import pytest
@@ -145,9 +146,9 @@ def live_executor(client) -> ex.TradeExecutor:
 
 
 def make_signal(side="YES", market_prob=0.40, size=10.0, **kw) -> Signal:
-    from datetime import datetime, timezone
+    from datetime import datetime
     base = dict(
-        market_id="m1", consensus_id=None, computed_at=datetime.now(timezone.utc),
+        market_id="m1", consensus_id=None, computed_at=datetime.now(UTC),
         model_prob=0.6, model_confidence=0.8, market_prob=market_prob,
         edge=0.1, net_edge=0.1, edge_pct=0.2, kelly_fraction=0.1, half_kelly=0.05,
         recommended_side=TradeSide(side), recommended_size=size,

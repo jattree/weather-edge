@@ -22,7 +22,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 
 import httpx
 
@@ -126,7 +126,7 @@ def _is_near_availability_window(
     for models that are unlikely to have new data.
     """
     if now is None:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
     windows = MODEL_AVAILABILITY.get(model, [])
     if not windows:
@@ -163,7 +163,7 @@ class ModelSniper:
     @property
     def recent_events(self) -> list[SniperEvent]:
         """Events from the last hour."""
-        cutoff = datetime.now(timezone.utc) - timedelta(hours=1)
+        cutoff = datetime.now(UTC) - timedelta(hours=1)
         return [e for e in self._events if e.detected_at > cutoff]
 
     @property
@@ -214,7 +214,7 @@ class ModelSniper:
         return MetadataProbe(
             model=model,
             generationtime_ms=float(hash(data_hash) % 1000000),  # Store hash as number for compatibility
-            probed_at=datetime.now(timezone.utc),
+            probed_at=datetime.now(UTC),
             _data_hash=data_hash,
         )
 
@@ -269,7 +269,7 @@ class ModelSniper:
         return ModelSnapshot(
             model=model,
             temp_max_c=temps[0] if temps else None,
-            fetched_at=datetime.now(timezone.utc),
+            fetched_at=datetime.now(UTC),
             reference_time=gen_time,
         )
 
@@ -282,7 +282,7 @@ class ModelSniper:
 
         Returns list of snipe events (models with new data detected).
         """
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         tomorrow = date.today() + timedelta(days=1)
         events: list[SniperEvent] = []
         models_with_new_data: list[WeatherModel] = []
@@ -341,7 +341,7 @@ class ModelSniper:
                 # itself is the trigger, not just the temperature shift
                 event = SniperEvent(
                     model=model,
-                    detected_at=datetime.now(timezone.utc),
+                    detected_at=datetime.now(UTC),
                     old_temp_c=old.temp_max_c if old else None,
                     new_temp_c=snapshot.temp_max_c,
                     shift_c=shift_c,
@@ -424,7 +424,7 @@ class ModelSniper:
                 logger.exception("Sniper probe failed")
 
             # Adaptive interval: fast during model drop windows, slow otherwise
-            current_hour = datetime.now(timezone.utc).hour
+            current_hour = datetime.now(UTC).hour
             in_drop_window = current_hour in self.MODEL_DROP_HOURS
             interval = 30 if in_drop_window else poll_interval_seconds
 

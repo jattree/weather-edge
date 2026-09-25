@@ -136,7 +136,7 @@ def print_paper_trades(trader: PaperTrader) -> None:
     table.add_column("Description", max_width=40)
 
     for t in recent:
-        side_str = f"[green]YES[/]" if t.side == "YES" else f"[red]NO[/]"
+        side_str = "[green]YES[/]" if t.side == "YES" else "[red]NO[/]"
         status_str = {
             "open": "[yellow]OPEN[/]",
             "won": "[green]WON[/]",

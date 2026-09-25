@@ -467,8 +467,8 @@ async def resolve_open_trades(paper_trader: PaperTrader) -> int:
         try:
             city_enum = City(city_id)
             city_tz_name = CITIES[city_enum].timezone
-            from zoneinfo import ZoneInfo
             from datetime import datetime
+            from zoneinfo import ZoneInfo
             city_now = datetime.now(ZoneInfo(city_tz_name))
             city_today = city_now.date()
         except Exception:

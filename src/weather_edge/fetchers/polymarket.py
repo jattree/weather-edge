@@ -14,7 +14,7 @@ import logging
 import math
 import re
 from dataclasses import dataclass, field
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from typing import NamedTuple
 
 import httpx
@@ -549,7 +549,7 @@ def get_price_snapshot(market: MarketInfo) -> PriceSnapshot:
     """Convert a MarketInfo's embedded price to a PriceSnapshot."""
     return PriceSnapshot(
         market_id=market.market_id,
-        fetched_at=datetime.now(timezone.utc),
+        fetched_at=datetime.now(UTC),
         midpoint=market.yes_price,
         bid=None,
         ask=None,
@@ -566,7 +566,7 @@ async def fetch_market_price(
         from weather_edge.config import settings as _settings
         settings = _settings
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     async with httpx.AsyncClient() as client:
         try:
@@ -625,7 +625,7 @@ async def fetch_market_price(
     )
 
 
-async def fetch_book_prices(market: "MarketInfo") -> dict | None:
+async def fetch_book_prices(market: MarketInfo) -> dict | None:
     """Fetch top-of-book ask prices for both YES and NO sides of a market.
 
     Returns dict with yes_ask, no_ask, spread_cost (yes_ask + no_ask).

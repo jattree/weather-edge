@@ -4,7 +4,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
-from datetime import date
+from datetime import UTC, date
 from pathlib import Path
 
 from click.testing import CliRunner
@@ -76,10 +76,10 @@ def test_watch_passes_days_and_real_interval(monkeypatch):
 
 
 def test_default_days_always_scans_something():
-    from datetime import datetime, timedelta, timezone
+    from datetime import datetime, timedelta
 
     for hour in range(24):
-        now = datetime.combine(date.today(), datetime.min.time(), tzinfo=timezone.utc)
+        now = datetime.combine(date.today(), datetime.min.time(), tzinfo=UTC)
         now += timedelta(hours=hour)
         kept, _, _ = scheduler.filter_dates_by_horizon(
             scheduler.default_target_dates(now.date(), cli_mod.DEFAULT_DAYS), now, 36,

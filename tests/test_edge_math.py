@@ -11,7 +11,8 @@ from __future__ import annotations
 import pytest
 
 try:
-    from hypothesis import given, settings as h_settings, assume
+    from hypothesis import given
+    from hypothesis import settings as h_settings
     from hypothesis import strategies as st
 
     HAS_HYPOTHESIS = True
@@ -128,7 +129,7 @@ class TestEmosProperties:
     @h_settings(max_examples=100, deadline=None)
     def test_emos_inflation_widens_distribution(self, raw_std):
         """EMOS-inflated std_dev must be >= raw std_dev for temperature variables."""
-        from weather_edge.analysis.consensus import SPREAD_INFLATION_FACTOR, EMOS_VARIANCE_FLOOR_C
+        from weather_edge.analysis.consensus import EMOS_VARIANCE_FLOOR_C, SPREAD_INFLATION_FACTOR
 
         inflated = max(EMOS_VARIANCE_FLOOR_C, raw_std * SPREAD_INFLATION_FACTOR)
         assert inflated >= raw_std
@@ -139,7 +140,7 @@ class TestEmosProperties:
     @h_settings(max_examples=100)
     def test_emos_variance_floor_enforced(self, raw_std):
         """EMOS std_dev never drops below variance floor for temperature."""
-        from weather_edge.analysis.consensus import SPREAD_INFLATION_FACTOR, EMOS_VARIANCE_FLOOR_C
+        from weather_edge.analysis.consensus import EMOS_VARIANCE_FLOOR_C, SPREAD_INFLATION_FACTOR
 
         inflated = max(EMOS_VARIANCE_FLOOR_C, raw_std * SPREAD_INFLATION_FACTOR)
         assert inflated >= EMOS_VARIANCE_FLOOR_C

@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import httpx
 
@@ -71,7 +71,7 @@ async def fetch_enso_state() -> ENSOState:
     """
     global _cached_enso, _cache_expiry
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     if _cached_enso and _cache_expiry and now < _cache_expiry:
         return _cached_enso
 

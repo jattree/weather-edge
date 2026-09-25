@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from weather_edge.analysis.edge import Signal
 from weather_edge.models.enums import SignalTier, TradeSide
@@ -63,7 +63,7 @@ def estimate_market_spread(market) -> float:
 
 
 
-def build_hedge_signal(parent: Signal, hedge: "SpreadOrder") -> Signal:
+def build_hedge_signal(parent: Signal, hedge: SpreadOrder) -> Signal:
     """Synthetic Signal for placing a live spread hedge via place_limit_order.
 
     ``Signal.market_prob`` is ALWAYS the YES probability; place_limit_order
@@ -78,7 +78,7 @@ def build_hedge_signal(parent: Signal, hedge: "SpreadOrder") -> Signal:
     return Signal(
         market_id=hedge.market_id,
         consensus_id=None,
-        computed_at=datetime.now(timezone.utc),
+        computed_at=datetime.now(UTC),
         model_prob=parent.model_prob,
         model_confidence=parent.model_confidence,
         market_prob=yes_prob,

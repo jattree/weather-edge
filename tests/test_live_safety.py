@@ -18,7 +18,6 @@ from weather_edge.models.enums import TradeStatus
 from weather_edge.models.position import Position
 from weather_edge.trading.paper import PaperTrade
 
-
 # ---------------------------------------------------------------------------
 # retry_sync: must retry N times, then raise
 # If this breaks, every API call becomes single-attempt again.

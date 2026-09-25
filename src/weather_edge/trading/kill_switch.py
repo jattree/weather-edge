@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from weather_edge import live_state
 from weather_edge.live_state import get_json, set_json, set_value
@@ -81,7 +81,7 @@ def activate_kill_switch(reason: str, triggered_by: str = "manual") -> dict:
     Returns:
         Kill switch state dict.
     """
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     # Set the flag (no TTL, must be explicitly cleared)
     set_value(KILL_SWITCH_KEY, "1")
 
@@ -125,7 +125,7 @@ def deactivate_kill_switch(cleared_by: str = "manual") -> dict:
         "triggered_by": "",
         "triggered_at": "",
         "cleared_by": cleared_by,
-        "cleared_at": datetime.now(timezone.utc).isoformat(),
+        "cleared_at": datetime.now(UTC).isoformat(),
     }
     set_json(KILL_SWITCH_META_KEY, meta)
 

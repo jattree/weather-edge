@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import sqlite3
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -23,7 +23,7 @@ def _fresh_risk_state(monkeypatch):
 
 def make_signal(side="YES", market_prob=0.40, size=20.0, **kw) -> Signal:
     base = dict(
-        market_id="m1", consensus_id=None, computed_at=datetime.now(timezone.utc),
+        market_id="m1", consensus_id=None, computed_at=datetime.now(UTC),
         model_prob=0.6, model_confidence=0.9, market_prob=market_prob,
         edge=0.2, net_edge=0.2, edge_pct=0.5, kelly_fraction=0.1, half_kelly=0.05,
         recommended_side=TradeSide(side), recommended_size=size,
@@ -74,7 +74,7 @@ class TestFeePersistence:
         conn.execute(
             "INSERT INTO paper_trades (session_id, market_id, city_id, side, size_usd, "
             "entry_price, placed_at) VALUES (1, 'm', 'nyc', 'YES', 10, 0.4, ?)",
-            (datetime.now(timezone.utc).isoformat(),),
+            (datetime.now(UTC).isoformat(),),
         )
         conn.commit()
         conn.close()

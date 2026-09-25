@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 logger = logging.getLogger(__name__)
 
@@ -111,7 +111,7 @@ def record_service_call(
         response_time_ms: Response time in milliseconds (optional).
         extra: Additional metadata to store (e.g. {"markets_discovered": 42}).
     """
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     data = {
         "last_call": now,
         "last_success": now if success else _health_store.get(service_name, {}).get("last_success"),
@@ -222,7 +222,7 @@ def get_service_status() -> dict:
     Returns a dict with service statuses, key presence, and metrics.
     Each service has: name, endpoint, status, last_call, last_success, key_present, metrics.
     """
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     services = []
 
     for svc_id, svc_def in SERVICE_DEFS.items():
@@ -341,7 +341,7 @@ def _compute_freshness(last_success_iso: str, now: datetime) -> str:
     try:
         last = datetime.fromisoformat(last_success_iso)
         if last.tzinfo is None:
-            last = last.replace(tzinfo=timezone.utc)
+            last = last.replace(tzinfo=UTC)
         delta = (now - last).total_seconds()
         if delta < 2100:  # 35 minutes (one cycle + buffer)
             return "green"

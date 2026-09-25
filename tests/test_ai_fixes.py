@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import ast
 import logging
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -29,7 +29,7 @@ def make_signal(market_id="m1", city="nyc", target=None, size=20.0, edge=0.10,
                 side=TradeSide.YES, tier=SignalTier.HIGH) -> Signal:
     target = target or (date.today() + timedelta(days=2))
     return Signal(
-        market_id=market_id, consensus_id=None, computed_at=datetime.now(timezone.utc),
+        market_id=market_id, consensus_id=None, computed_at=datetime.now(UTC),
         model_prob=0.30, market_prob=0.20, model_confidence=0.9,
         edge=edge, net_edge=edge - 0.01, edge_pct=0.5, kelly_fraction=0.1, half_kelly=0.05,
         recommended_side=side, recommended_size=size, confidence_tier=tier,
@@ -39,7 +39,7 @@ def make_signal(market_id="m1", city="nyc", target=None, size=20.0, edge=0.10,
 
 
 def fake_forecasts(temps=(20.0, 20.5, 21.0, 19.5, 20.2), fetched_at=None):
-    fetched_at = fetched_at or datetime.now(timezone.utc)
+    fetched_at = fetched_at or datetime.now(UTC)
     return [
         SimpleNamespace(model_name=f"model{i}", temp_max_c=t, fetched_at=fetched_at)
         for i, t in enumerate(temps)
@@ -507,7 +507,7 @@ def test_evict_stale_forecasts():
 
 
 def test_filter_dates_by_horizon_late_utc_day():
-    now = datetime(2026, 9, 25, 13, 0, tzinfo=timezone.utc)
+    now = datetime(2026, 9, 25, 13, 0, tzinfo=UTC)
     d0 = date(2026, 9, 25)
     kept, blocked, h = scheduler.filter_dates_by_horizon(
         [d0, d0 + timedelta(days=1), d0 + timedelta(days=2)], now, 36,
@@ -631,7 +631,7 @@ async def test_run_cycle_stale_fallback_uses_passed_cache(monkeypatch, offline_c
 async def test_run_cycle_rejects_too_old_stale_cache(monkeypatch, offline_cycle, caplog):
     patch_reviews(monkeypatch)
     offline_cycle["fetch_ok"] = False
-    old = datetime.now(timezone.utc) - timedelta(hours=30)
+    old = datetime.now(UTC) - timedelta(hours=30)
     cache = {(City.NYC, d): fake_forecasts(fetched_at=old) for d in offline_cycle["dates"]}
     caplog.set_level(logging.WARNING, logger="weather_edge.scheduler")
     signals, _, _ = await scheduler.run_cycle(

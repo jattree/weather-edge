@@ -10,7 +10,7 @@ import json
 import logging
 import sqlite3
 import sys
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 import pytest
@@ -327,7 +327,7 @@ class TestYearRollover:
         trade = PaperTrade(
             market_id="m", description="Will it be 30°F or below on December 31?",
         )
-        trade.placed_at = datetime(2026, 12, 30, 15, tzinfo=timezone.utc)
+        trade.placed_at = datetime(2026, 12, 30, 15, tzinfo=UTC)
         assert _extract_target_date_from_trade(trade) == date(2026, 12, 31)
 
 
@@ -405,7 +405,7 @@ class TestBacktesterResolverSemantics:
 # ---------------------------------------------------------------------------
 
 def _forecasts(values):
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     return [
         ForecastResult(
             city_id="nyc", model_name=name, target_date=date(2026, 3, 27),

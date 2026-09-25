@@ -4,7 +4,7 @@ from __future__ import annotations
 import dataclasses
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from weather_edge.analysis.contracts import validate_pool_budget, validate_reserve_pot
 from weather_edge.analysis.edge import Signal
@@ -385,7 +385,7 @@ class PaperTrader:
 
     def resolve_trade(self, trade: PaperTrade, outcome_yes: bool) -> None:
         """Resolve a paper trade based on market outcome."""
-        trade.resolved_at = datetime.now(timezone.utc)
+        trade.resolved_at = datetime.now(UTC)
 
         # Spread legs resolve exactly like any binary position. At resolution
         # a merged YES+NO pair and two independently redeemed legs pay the
@@ -496,7 +496,7 @@ class PaperTrader:
         # Realise the exit, win OR loss. A stop-loss must be allowed to book a
         # loss; refusing to (the old behaviour) made paper P&L fictitiously
         # win-only on early exits.
-        trade.resolved_at = datetime.now(timezone.utc)
+        trade.resolved_at = datetime.now(UTC)
         trade.exit_price = exit_price if trade.side == "YES" else (1.0 - exit_no_bid)
         trade.pnl = round(pnl, 2)
         trade.status = TradeStatus.WON if pnl > 0 else TradeStatus.LOST

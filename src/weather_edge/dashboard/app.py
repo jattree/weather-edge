@@ -6,7 +6,7 @@ import json
 import logging
 import sys
 import time
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 
 # Ensure all loggers output to stdout so systemd/journald captures them
 logging.basicConfig(
@@ -215,7 +215,7 @@ def _compute_resolution_time(trade) -> tuple[str | None, str]:
         # Fallback: assume UTC + 2h buffer
         resolution_dt = datetime(
             target_date.year, target_date.month, target_date.day,
-            2, 0, 0, tzinfo=timezone.utc,
+            2, 0, 0, tzinfo=UTC,
         ) + timedelta(days=1)
     else:
         tz = zoneinfo.ZoneInfo(tz_name)
@@ -224,9 +224,9 @@ def _compute_resolution_time(trade) -> tuple[str | None, str]:
             target_date.year, target_date.month, target_date.day,
             0, 0, 0, tzinfo=tz,
         ) + timedelta(days=1, hours=2)
-        resolution_dt = local_midnight.astimezone(timezone.utc)
+        resolution_dt = local_midnight.astimezone(UTC)
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     delta = resolution_dt - now
 
     resolves_at = resolution_dt.isoformat()
@@ -484,7 +484,7 @@ async def _run_dashboard_cycle_inner(run_ai: bool = True) -> None:
             len(paper_trader.trades) if settings.paper_mode else 0,
         ),
         "cycle_count": paper_trader.store.increment_cycle(),
-        "last_update": datetime.now(timezone.utc).isoformat(),
+        "last_update": datetime.now(UTC).isoformat(),
         "weather_alerts": [],
         "correlation_matrix": correlation_data,
         "execution_analytics": exec_analytics,
@@ -616,7 +616,7 @@ async def _run_dashboard_cycle_inner(run_ai: bool = True) -> None:
                 if date_match and status == "open":
                     try:
                         from dateutil.parser import parse as _parse_date
-                        now = datetime.now(timezone.utc)
+                        now = datetime.now(UTC)
                         target_date = _parse_date(date_match.group(1) + f" {now.year}").date()
                         if (now.date() - target_date).days > 180:
                             target_date = _parse_date(date_match.group(1) + f" {now.year + 1}").date()
@@ -632,14 +632,14 @@ async def _run_dashboard_cycle_inner(run_ai: bool = True) -> None:
                                         target_date.year, target_date.month, target_date.day,
                                         0, 0, 0, tzinfo=tz,
                                     ) + timedelta(days=1, hours=2)
-                                    resolution_dt = local_midnight.astimezone(timezone.utc)
+                                    resolution_dt = local_midnight.astimezone(UTC)
                                     break
 
                         # Fallback to UTC+2h if no timezone match
                         if resolution_dt is None:
                             resolution_dt = datetime(
                                 target_date.year, target_date.month, target_date.day,
-                                2, 0, 0, tzinfo=timezone.utc,
+                                2, 0, 0, tzinfo=UTC,
                             ) + timedelta(days=1)
 
                         delta = resolution_dt - now
@@ -660,7 +660,7 @@ async def _run_dashboard_cycle_inner(run_ai: bool = True) -> None:
                 time_str = ""
                 if entry_ts:
                     try:
-                        time_str = datetime.fromtimestamp(entry_ts, tz=timezone.utc).strftime("%H:%M:%S")
+                        time_str = datetime.fromtimestamp(entry_ts, tz=UTC).strftime("%H:%M:%S")
                     except Exception:
                         pass
 
@@ -778,7 +778,7 @@ async def daily_report_loop() -> None:
     """Save a daily report at midnight UTC."""
     from weather_edge.analysis.daily_report import save_daily_report
     while True:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         # Next midnight UTC
         tomorrow = (now + timedelta(days=1)).replace(
             hour=0, minute=0, second=5, microsecond=0
@@ -1177,7 +1177,7 @@ async def api_kill_switch():
     global trading_active
     trading_active = False
 
-    from weather_edge.trading.kill_switch import kill_and_cancel, get_kill_switch_state
+    from weather_edge.trading.kill_switch import get_kill_switch_state, kill_and_cancel
 
     # Get live executor if it exists
     executor = globals().get("live_executor")

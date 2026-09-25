@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 
 import httpx
 
@@ -142,7 +142,7 @@ async def fetch_model_forecast(
         logger.warning("Gave up on %s/%s after rate-limit retries", city_id.value, model_id)
         return None
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     # Parse hourly data, Open-Meteo returns arrays keyed by variable name
     hourly = data.get("hourly", {})
@@ -204,7 +204,7 @@ async def fetch_city_forecasts(
     models = get_models_for_city(city_id)
     city = CITIES[city_id]
     model_ids = [OPENMETEO_MODEL_IDS[m] for m in models]
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     base_url = settings.effective_openmeteo_url
     params = {

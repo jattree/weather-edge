@@ -158,8 +158,8 @@ class CircuitBreakerState:
         if drawdown >= profile.drawdown_kill_pct and not self.is_killed:
             self.is_killed = True
             self.kill_reason = (
-                "Drawdown %.1f%% from peak $%.0f (threshold %.0f%%)"
-                % (drawdown * 100, self.high_water_mark, profile.drawdown_kill_pct * 100)
+                f"Drawdown {drawdown * 100:.1f}% from peak ${self.high_water_mark:.0f} "
+                f"(threshold {profile.drawdown_kill_pct * 100:.0f}%)"
             )
             logger.warning("CIRCUIT BREAKER KILL: %s", self.kill_reason)
 
@@ -309,16 +309,16 @@ def check_correlation_limit(
         return (
             False,
             0.0,
-            "CORRELATION LIMIT: %s group at $%.0f / $%.0f max (%.0f%%)"
-            % (group, group_exposure, max_group, profile.max_group_exposure_pct * 100),
+            f"CORRELATION LIMIT: {group} group at ${group_exposure:.0f} / "
+            f"${max_group:.0f} max ({profile.max_group_exposure_pct * 100:.0f}%)",
         )
 
     if size_usd > remaining:
         return (
             True,
             remaining,
-            "CORRELATION TRIM: %s group $%.0f→$%.0f (cap $%.0f)"
-            % (group, size_usd, remaining, max_group),
+            f"CORRELATION TRIM: {group} group ${size_usd:.0f}→${remaining:.0f} (cap "
+            f"${max_group:.0f})",
         )
 
     return (True, size_usd, "")
@@ -349,16 +349,15 @@ def check_yes_exposure_limit(
         return (
             False,
             0.0,
-            "YES EXPOSURE CAP: $%.0f / $%.0f max (%.0f%% NAV)"
-            % (yes_exposure, max_yes, profile.max_yes_exposure_pct * 100),
+            f"YES EXPOSURE CAP: ${yes_exposure:.0f} / ${max_yes:.0f} max "
+            f"({profile.max_yes_exposure_pct * 100:.0f}% NAV)",
         )
 
     if size_usd > remaining:
         return (
             True,
             remaining,
-            "YES EXPOSURE TRIM: $%.0f→$%.0f (cap $%.0f)"
-            % (size_usd, remaining, max_yes),
+            f"YES EXPOSURE TRIM: ${size_usd:.0f}→${remaining:.0f} (cap ${max_yes:.0f})",
         )
 
     return (True, size_usd, "")
@@ -382,16 +381,15 @@ def check_gross_exposure(
         return (
             False,
             0.0,
-            "GROSS EXPOSURE CAP: $%.0f / $%.0f max (%.1fx NAV)"
-            % (total_at_risk, max_exposure, profile.max_gross_exposure_multiple),
+            f"GROSS EXPOSURE CAP: ${total_at_risk:.0f} / ${max_exposure:.0f} max "
+            f"({profile.max_gross_exposure_multiple:.1f}x NAV)",
         )
 
     if size_usd > remaining:
         return (
             True,
             remaining,
-            "GROSS EXPOSURE TRIM: $%.0f→$%.0f (cap $%.0f)"
-            % (size_usd, remaining, max_exposure),
+            f"GROSS EXPOSURE TRIM: ${size_usd:.0f}→${remaining:.0f} (cap ${max_exposure:.0f})",
         )
 
     return (True, size_usd, "")

@@ -7,7 +7,7 @@ from __future__ import annotations
 import asyncio
 import sys
 import types
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from types import SimpleNamespace
 
 import pytest
@@ -177,7 +177,7 @@ def test_sniper_probe_uses_city_timezone(monkeypatch, fake_client):
 # ---------------------------------------------------------------------------
 
 def test_hours_to_local_end_of_day():
-    now = datetime(2026, 9, 25, 12, 0, tzinfo=timezone.utc)
+    now = datetime(2026, 9, 25, 12, 0, tzinfo=UTC)
     d = date(2026, 9, 26)
     # UTC midnight after d is 36h away; local ends differ by the UTC offset.
     assert scheduler.hours_to_local_end_of_day(City.TYO, d, now) == pytest.approx(27.0)  # UTC+9

@@ -12,7 +12,6 @@ from weather_edge.analysis.resolver import (
     parse_bucket_from_description,
 )
 
-
 # ---------------------------------------------------------------------------
 # parse_bucket_from_description
 # ---------------------------------------------------------------------------

@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import httpx
 
@@ -129,7 +129,7 @@ class WhaleTracker:
             try:
                 block = int(tx.get("blockNumber", 0))
                 timestamp = datetime.fromtimestamp(
-                    int(tx.get("timeStamp", 0)), tz=timezone.utc
+                    int(tx.get("timeStamp", 0)), tz=UTC
                 )
                 token_id = tx.get("tokenID", "")
                 amount = float(tx.get("tokenValue", 0))

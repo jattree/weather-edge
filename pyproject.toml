@@ -58,6 +58,8 @@ where = ["src"]
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+# Agent worktrees and the local knowledge base are not project source.
+extend-exclude = [".claude", "llmwiki"]
 
 [tool.ruff.lint]
 # Correctness and bug-pattern rules, not a formatter and not "ALL".

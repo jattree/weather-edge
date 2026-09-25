@@ -6,7 +6,7 @@ objects for the exit monitor and any other system-agnostic consumer.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from weather_edge.models.enums import TradeStatus
 
@@ -53,7 +53,7 @@ class Position:
     entry_price: float = 0.0   # Average entry price per share (see price_basis)
     description: str = ""
     status: TradeStatus = TradeStatus.OPEN
-    placed_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    placed_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     total_shares: float = 0.0  # Number of shares held (size_usd / entry_price)
     source: str = ""           # "paper" or "live"
     strategy: str = "core"     # "core", "penny", "spread", "exit"

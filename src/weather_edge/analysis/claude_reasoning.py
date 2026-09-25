@@ -22,7 +22,7 @@ import os
 import re
 import time
 from dataclasses import dataclass
-from datetime import date
+from datetime import UTC, date
 
 import httpx
 
@@ -35,12 +35,12 @@ _decision_history: list[dict] = []
 MAX_DECISION_HISTORY = 200
 
 
-def record_decision(reasoning: "TradeReasoning") -> None:
+def record_decision(reasoning: TradeReasoning) -> None:
     """Record a Claude trade decision for the dashboard."""
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     entry = {
-        "time": datetime.now(timezone.utc).strftime("%H:%M:%S"),
+        "time": datetime.now(UTC).strftime("%H:%M:%S"),
         "city": (
             reasoning.signal.city_id.upper()
             if isinstance(reasoning.signal.city_id, str)

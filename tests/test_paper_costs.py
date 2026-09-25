@@ -8,7 +8,7 @@ fee on sale proceeds. Resolution stays fee-free (redemption is gasless).
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from weather_edge.analysis.edge import Signal
 from weather_edge.models.enums import SignalTier, TradeSide, TradeStatus
@@ -25,7 +25,7 @@ def _signal(
     return Signal(
         market_id="m1",
         consensus_id=None,
-        computed_at=datetime.now(timezone.utc),
+        computed_at=datetime.now(UTC),
         model_prob=0.60,
         model_confidence=0.9,
         market_prob=mid,

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +26,7 @@ def generate_daily_report(
     Returns:
         Report dict suitable for JSON storage and display.
     """
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     if report_date is None:
         report_date = now.strftime("%Y-%m-%d")
 

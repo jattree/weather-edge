@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 
 import httpx
 
@@ -73,7 +73,7 @@ async def fetch_ai_forecast(
     city = CITIES[city_id]
     start = datetime(
         target_date.year, target_date.month, target_date.day,
-        0, tzinfo=timezone.utc,
+        0, tzinfo=UTC,
     )
     end = start + timedelta(hours=23)
 
@@ -159,7 +159,7 @@ async def fetch_ai_forecast(
         target_date=target_date,
         temp_max_c=max(temps_c),
         temp_min_c=min(temps_c),
-        fetched_at=datetime.now(timezone.utc),
+        fetched_at=datetime.now(UTC),
         hourly_temps_c=temps_c,
     )
 
@@ -179,7 +179,7 @@ async def fetch_ai_forecasts_batch(
 
     start = datetime(
         target_date.year, target_date.month, target_date.day,
-        0, tzinfo=timezone.utc,
+        0, tzinfo=UTC,
     )
     end = start + timedelta(hours=23)
 
@@ -264,7 +264,7 @@ async def fetch_ai_forecasts_batch(
             except ValueError:
                 pass
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     results = {}
     for city_name, temps in city_temps.items():
         if temps:

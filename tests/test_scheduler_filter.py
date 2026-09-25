@@ -1,12 +1,12 @@
-import pytest
-from datetime import date
-from weather_edge.analysis.edge import Signal, SignalTier
-from weather_edge.models.enums import TradeSide, SignalTier
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+
+from weather_edge.analysis.edge import Signal
+from weather_edge.models.enums import SignalTier, TradeSide
+
 
 def test_one_signal_per_city_date_filter():
     """Verify that scheduler filters multiple signals to one per city-date."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     
     # Mock signals for Toronto on April 4
     s1 = Signal(

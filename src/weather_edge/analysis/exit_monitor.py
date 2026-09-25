@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from weather_edge.analysis.contracts import validate_penny_no_exit
 from weather_edge.models.position import Position, normalize_side
@@ -247,7 +247,7 @@ def scan_for_exits(
             is used (non-async callers only).
     """
     candidates: list[ExitCandidate] = []
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     for trade in open_trades:
         # Contract: never exit penny bets (hold to resolution)

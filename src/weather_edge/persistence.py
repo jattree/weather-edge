@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import logging
 import sqlite3
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from weather_edge.trading.paper import PaperTrade, PaperTrader, TradeStatus
@@ -223,7 +223,7 @@ class PersistentStore:
     def create_session(self, bankroll: float) -> int:
         cur = self.conn.execute(
             "INSERT INTO sessions (bankroll, started_at, status) VALUES (?, ?, 'active')",
-            (bankroll, datetime.now(timezone.utc).isoformat()),
+            (bankroll, datetime.now(UTC).isoformat()),
         )
         self.conn.commit()
         session_id = cur.lastrowid
@@ -233,7 +233,7 @@ class PersistentStore:
     def end_session(self, session_id: int, final_pnl: float, win_rate: float) -> None:
         self.conn.execute(
             "UPDATE sessions SET ended_at = ?, final_pnl = ?, final_win_rate = ?, status = 'ended' WHERE session_id = ?",
-            (datetime.now(timezone.utc).isoformat(), final_pnl, win_rate, session_id),
+            (datetime.now(UTC).isoformat(), final_pnl, win_rate, session_id),
         )
         self.conn.commit()
 
@@ -346,7 +346,7 @@ class PersistentStore:
             (
                 order_id, market_id, token_id, city_id, side, limit_price,
                 size_shares, size_usd, is_maker,
-                datetime.now(timezone.utc).isoformat(),
+                datetime.now(UTC).isoformat(),
                 description, strategy,
             ),
         )
@@ -357,7 +357,7 @@ class PersistentStore:
         self, order_id: str, avg_fill_price: float, filled_shares: float,
         fee_usd: float = 0.0, status: str = "filled",
     ) -> None:
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         cost_basis = avg_fill_price * filled_shares + fee_usd
         self.conn.execute(
             """UPDATE live_trades
@@ -371,7 +371,7 @@ class PersistentStore:
     def resolve_live_trade(
         self, order_id: str, proceeds: float, pnl: float, status: str = "won",
     ) -> None:
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         self.conn.execute(
             """UPDATE live_trades
                SET proceeds = ?, pnl = ?, resolved_at = ?, status = ?
@@ -587,7 +587,7 @@ class PersistentStore:
         model_values: dict[str, float], trade_id: int | None = None,
     ) -> None:
         """Save per-model forecast values for later Brier scoring."""
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         for model_name, value in model_values.items():
             self.conn.execute(
                 """INSERT INTO forecast_snapshots
@@ -671,7 +671,7 @@ class PersistentStore:
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (trade_id, market_id, city_id, source, decision,
              rationale, confidence_adj, dissent_strength,
-             datetime.now(timezone.utc).isoformat()),
+             datetime.now(UTC).isoformat()),
         )
         self.conn.commit()
 

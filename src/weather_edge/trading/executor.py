@@ -19,7 +19,7 @@ import contextvars
 import logging
 import math
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import requests
 
@@ -655,7 +655,7 @@ class TradeExecutor:
             if not isinstance(result, list):
                 result = result.get("data", []) if isinstance(result, dict) else []
 
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
             cancelled = 0
 
             for order in result:
@@ -670,7 +670,7 @@ class TradeExecutor:
                         )
                     else:
                         order_time = datetime.fromtimestamp(
-                            float(created), tz=timezone.utc,
+                            float(created), tz=UTC,
                         )
                 except (ValueError, TypeError):
                     continue
@@ -962,7 +962,7 @@ class TradeExecutor:
                 from weather_edge.live_state import set_value
                 set_value(
                     "heartbeat:last",
-                    datetime.now(timezone.utc).isoformat(),
+                    datetime.now(UTC).isoformat(),
                     ttl=60,
                 )
             except Exception:

@@ -17,7 +17,7 @@ which previously had no coverage of its actual math.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from weather_edge.analysis.bias_correction import (
     MIN_SNAPSHOTS_FOR_BIAS,
@@ -26,7 +26,6 @@ from weather_edge.analysis.bias_correction import (
 from weather_edge.analysis.edge import calculate_edge
 from weather_edge.analysis.enso_regime import ENSOState, get_bias_shrinkage
 from weather_edge.models.enums import SignalTier, TradeSide
-
 
 # ---------------------------------------------------------------------------
 # Bias significance gate
@@ -124,7 +123,7 @@ def _enso(transitioning: bool) -> ENSOState:
         oni_value=-0.3 if transitioning else -1.2,
         transitioning=transitioning,
         confidence=0.6 if transitioning else 0.9,
-        fetched_at=datetime.now(timezone.utc),
+        fetched_at=datetime.now(UTC),
     )
 
 

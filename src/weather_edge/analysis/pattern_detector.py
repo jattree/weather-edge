@@ -89,8 +89,6 @@ def detect_patterns(
     ecmwf = temps.get(WeatherModel.ECMWF.value)
     gfs = temps.get(WeatherModel.GFS.value)
     hrrr = temps.get(WeatherModel.HRRR.value)
-    icon = temps.get(WeatherModel.ICON.value)
-    nam = temps.get(WeatherModel.NAM.value)
 
     # === DENVER: Chinook detection ===
     if city_id == City.DEN and spread > CHINOOK_PRESSURE_GRADIENT_THRESHOLD:

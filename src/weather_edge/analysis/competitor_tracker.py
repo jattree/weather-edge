@@ -7,9 +7,8 @@ Tracked usernames come from COMPETITOR_USERNAMES (empty by default).
 from __future__ import annotations
 
 import logging
-import re
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from dataclasses import dataclass
+from datetime import UTC, datetime
 
 import httpx
 
@@ -38,8 +37,7 @@ class CompetitorTracker:
 
     async def fetch_profile(self, username: str) -> CompetitorSnapshot | None:
         """Fetch public stats from Polymarket profile page."""
-        url = f"https://polymarket.com/@{username}"
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         try:
             async with httpx.AsyncClient() as client:
