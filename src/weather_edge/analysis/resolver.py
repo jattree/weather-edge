@@ -1,8 +1,9 @@
 """Trade resolution system, settles open paper trades against actual outcomes.
 
-Checks Polymarket Gamma API for resolved markets, with Open-Meteo archive
-as a fallback for markets whose target date has passed but haven't resolved
-on-chain yet.
+Checks Polymarket Gamma API for resolved markets, with METAR/HKO station
+observations as a fallback for markets whose target date has passed but haven't
+resolved on-chain yet. There is no reanalysis fallback: without station data a
+trade stays open and is retried.
 """
 from __future__ import annotations
 
@@ -15,6 +16,12 @@ import httpx
 
 from weather_edge.config import CITIES
 from weather_edge.fetchers.openmeteo import c_to_f
+from weather_edge.fetchers.polymarket import (
+    LOWER_TAIL_WORDS,
+    MONTH_MAP,
+    UPPER_TAIL_WORDS,
+    nearest_year_date,
+)
 from weather_edge.models.enums import City
 from weather_edge.trading.paper import PaperTrade, PaperTrader
 
@@ -24,23 +31,47 @@ logger = logging.getLogger(__name__)
 # Capture groups use (-?\d+) so subzero winter buckets parse correctly, an
 # unsigned (\d+) drops the minus sign and resolves "-2°C or below" as "2°C or
 # below", a guaranteed mis-resolution on every freezing-weather market.
+# Tail wording ("or below"/"or lower"/..., "or above"/"or higher"/...) is shared
+# with the market parser in fetchers/polymarket.py so the two never disagree.
 # Fahrenheit patterns
 RANGE_PATTERN = re.compile(r"(-?\d+)\s*[-–]\s*(-?\d+)\s*°?\s*F", re.IGNORECASE)
-BELOW_PATTERN = re.compile(r"(-?\d+)\s*°?\s*F\s+or\s+below", re.IGNORECASE)
-ABOVE_PATTERN = re.compile(r"(-?\d+)\s*°?\s*F\s+or\s+above", re.IGNORECASE)
+BELOW_PATTERN = re.compile(
+    r"(-?\d+)\s*°?\s*F\s+or\s+" + LOWER_TAIL_WORDS + r"\b", re.IGNORECASE,
+)
+ABOVE_PATTERN = re.compile(
+    r"(-?\d+)\s*°?\s*F\s+or\s+" + UPPER_TAIL_WORDS + r"\b", re.IGNORECASE,
+)
 # Celsius patterns (Asian/international cities)
 RANGE_PATTERN_C = re.compile(r"(-?\d+)\s*[-–]\s*(-?\d+)\s*°\s*C", re.IGNORECASE)
-BELOW_PATTERN_C = re.compile(r"(-?\d+)\s*°?\s*C\s+or\s+below", re.IGNORECASE)
-ABOVE_PATTERN_C = re.compile(r"(-?\d+)\s*°?\s*C\s+or\s+above", re.IGNORECASE)
+BELOW_PATTERN_C = re.compile(
+    r"(-?\d+)\s*°?\s*C\s+or\s+" + LOWER_TAIL_WORDS + r"\b", re.IGNORECASE,
+)
+ABOVE_PATTERN_C = re.compile(
+    r"(-?\d+)\s*°?\s*C\s+or\s+" + UPPER_TAIL_WORDS + r"\b", re.IGNORECASE,
+)
 # Exact Celsius: "be 8°C on" (single-value buckets)
 EXACT_PATTERN_C = re.compile(r"be\s+(-?\d+)\s*°\s*C\s+on\s+", re.IGNORECASE)
-
-# Open-Meteo archive API, always use free tier (customer archive needs Professional plan)
-ARCHIVE_API_URL = "https://archive-api.open-meteo.com/v1/archive"
 
 # Cache native Fahrenheit max from METAR to avoid F↔C conversion rounding errors.
 # Key: (city_id, target_date_str) → native max_f value
 _metar_native_f_cache: dict[tuple[str, str], float | None] = {}
+
+
+# A resolved market pays out at exactly 1/0; allow float noise only.
+RESOLVED_PRICE_THRESHOLD = 0.99
+
+
+def _is_market_resolved(mkt: dict) -> bool:
+    """True only when Gamma reports the market's oracle resolution as final.
+
+    ``closed`` alone is NOT resolution: it just means trading stopped. Gamma
+    signals final resolution via ``umaResolutionStatus == "resolved"`` (or a
+    ``resolved`` flag on some payloads).
+    """
+    if mkt.get("resolved") is True:
+        return True
+    status = str(mkt.get("umaResolutionStatus") or "").strip().lower()
+    return status == "resolved"
 
 
 async def fetch_resolved_markets() -> dict[str, bool]:
@@ -80,14 +111,13 @@ async def fetch_resolved_markets() -> dict[str, bool]:
                     if not condition_id:
                         continue
 
-                    # Check resolution status
-                    # Polymarket marks resolved markets with "resolved" flag or
-                    # outcome data showing which side won
-                    is_resolved = mkt.get("resolved", False)
-                    if not is_resolved:
-                        # Also check if the market is closed with a clear outcome
-                        if not mkt.get("closed", False):
-                            continue
+                    # Only an ACTUALLY resolved market settles a trade. A market
+                    # that is merely closed (trading halted, oracle not yet
+                    # reported, or a disputed proposal) can sit at 0.95+ and
+                    # still resolve the other way; treating it as settled
+                    # booked P&L that the oracle could reverse.
+                    if not _is_market_resolved(mkt):
+                        continue
 
                     # Determine outcome: check outcomePrices for resolved state
                     # Resolved markets show [1.0, 0.0] (YES won) or [0.0, 1.0] (NO won)
@@ -101,9 +131,9 @@ async def fetch_resolved_markets() -> dict[str, bool]:
                                 yes_price = float(outcome_prices[0])
                                 no_price = float(outcome_prices[1])
                                 # Resolved markets have prices at 0 or 1
-                                if yes_price >= 0.95:
+                                if yes_price >= RESOLVED_PRICE_THRESHOLD:
                                     resolved[condition_id] = True
-                                elif no_price >= 0.95:
+                                elif no_price >= RESOLVED_PRICE_THRESHOLD:
                                     resolved[condition_id] = False
                         except (ValueError, TypeError):
                             pass
@@ -132,7 +162,8 @@ async def check_nws_observations(city_id: str, target_date: date) -> float | Non
     this is the same raw METAR data that Weather Underground displays, and
     Polymarket resolves weather markets against Wunderground.
 
-    Falls back to Open-Meteo archive if METAR is unavailable.
+    Returns None (never a reanalysis substitute) when METAR is unavailable,
+    so the caller leaves the trade open and retries later.
 
     Args:
         city_id: City enum value (e.g., "nyc", "den").
@@ -152,87 +183,60 @@ async def check_nws_observations(city_id: str, target_date: date) -> float | Non
 
     city_config = CITIES[city_enum]
 
-    # --- Primary: IEM METAR station observation ---
+    # --- IEM METAR station observation (the resolution source) ---
     # Fetch both native C and F to avoid conversion rounding errors.
     # Store native_f on the trade for Fahrenheit markets so the resolver
     # can round(max_f) directly instead of round(c_to_f(max_c)).
+    #
+    # There is deliberately NO Open-Meteo reanalysis fallback here. Gridded
+    # reanalysis differs from the station sensor by 0.5-1.5°C, enough to flip a
+    # whole-degree bucket most of the time; settling a trade from it booked a
+    # permanent, possibly wrong outcome AND wrote reanalysis values into the
+    # bias-training data as if they were station truth. When METAR is
+    # unavailable we return None and the trade stays open, to be retried next
+    # cycle (or settled by Polymarket's own resolution).
     try:
         from weather_edge.fetchers.metar import fetch_station_tmax_both
         temp_c, temp_f = await fetch_station_tmax_both(
             city_config.icao, target_date, station_tz=city_config.timezone,
         )
-        # Accept Fahrenheit-only readings: if native °C is missing but °F is
-        # present, derive °C rather than silently falling through to the
-        # (wrong-source) Open-Meteo reanalysis. Falling through here was the
-        # exact data-source divergence the project was meant to have eliminated.
-        if temp_c is None and temp_f is not None:
-            temp_c = (temp_f - 32.0) * 5.0 / 9.0
-        if temp_c is not None:
-            # Store native F max in a module-level cache for the resolver
-            _metar_native_f_cache[(city_id, str(target_date))] = temp_f
-            logger.info(
-                "METAR obs for %s on %s: %.1f°C / %.1f°F [station %s]",
-                city_id, target_date, temp_c,
-                temp_f if temp_f else c_to_f(temp_c), city_config.icao,
-            )
-            # Backfill actual value in forecast snapshots
-            try:
-                from weather_edge.dashboard.app import paper_trader
-                updated = paper_trader.store.backfill_actual(
-                    city_id, str(target_date), temp_c,
-                )
-                if updated:
-                    logger.info("Backfilled %d forecast snapshots for %s %s",
-                               updated, city_id, target_date)
-            except Exception:
-                pass
-            return temp_c
     except Exception as e:
-        logger.debug("METAR fetch failed for %s: %s", city_id, e)
-
-    # --- Fallback: Open-Meteo archive (gridded, less accurate) ---
-    logger.debug("Falling back to Open-Meteo archive for %s on %s", city_id, target_date)
-    async with httpx.AsyncClient() as client:
-        try:
-            resp = await client.get(
-                ARCHIVE_API_URL,
-                params={
-                    "latitude": city_config.latitude,
-                    "longitude": city_config.longitude,
-                    "start_date": target_date.isoformat(),
-                    "end_date": target_date.isoformat(),
-                    "daily": "temperature_2m_max",
-                    "timezone": "auto",
-                },
-                timeout=15.0,
-            )
-            resp.raise_for_status()
-            data = resp.json()
-        except (httpx.HTTPError, ValueError) as e:
-            logger.warning("Open-Meteo fallback failed for %s on %s: %s", city_id, target_date, e)
-            return None
-
-    daily = data.get("daily", {})
-    temps = daily.get("temperature_2m_max", [])
-    if temps and temps[0] is not None:
-        temp_c = float(temps[0])
         logger.warning(
-            "Using Open-Meteo FALLBACK for %s on %s: %.1f°C (less accurate than METAR)",
-            city_id, target_date, temp_c,
+            "METAR fetch failed for %s on %s: %s; leaving trade unresolved",
+            city_id, target_date, e,
         )
-        try:
-            from weather_edge.dashboard.app import paper_trader
-            updated = paper_trader.store.backfill_actual(
-                city_id, str(target_date), temp_c,
-            )
-            if updated:
-                logger.info("Backfilled %d forecast snapshots for %s %s",
-                           updated, city_id, target_date)
-        except Exception:
-            pass
-        return temp_c
+        return None
 
-    return None
+    # fetch_station_tmax_both always returns (c, f) together or (None, None):
+    # every station row contributes to both candidate lists, so there is no
+    # Fahrenheit-only case to reconstruct here.
+    if temp_c is None:
+        logger.warning(
+            "No usable METAR observation for %s on %s [station %s]; "
+            "leaving trade unresolved",
+            city_id, target_date, city_config.icao,
+        )
+        return None
+
+    # Store native F max in a module-level cache for the resolver
+    _metar_native_f_cache[(city_id, str(target_date))] = temp_f
+    logger.info(
+        "METAR obs for %s on %s: %.1f°C / %.1f°F [station %s]",
+        city_id, target_date, temp_c,
+        temp_f if temp_f is not None else c_to_f(temp_c), city_config.icao,
+    )
+    # Backfill actual value in forecast snapshots (station truth only)
+    try:
+        from weather_edge.dashboard.app import paper_trader
+        updated = paper_trader.store.backfill_actual(
+            city_id, str(target_date), temp_c,
+        )
+        if updated:
+            logger.info("Backfilled %d forecast snapshots for %s %s",
+                       updated, city_id, target_date)
+    except Exception:
+        logger.debug("Snapshot backfill skipped", exc_info=True)
+    return temp_c
 
 
 def _c_to_f(c: float) -> float:
@@ -252,6 +256,12 @@ def _round_half_up(x: float) -> int:
     """
     import math
     return math.floor(x + 0.5)
+
+
+def _hkg_label(x: float) -> int:
+    """Whole-degree bucket label for an HK Observatory 0.1°C reading: [L, L+1)."""
+    import math
+    return math.floor(x + 1e-9)
 
 
 @dataclass
@@ -323,14 +333,22 @@ def actual_falls_in_bucket(
     rounded to whole degrees. We round in the market's NATIVE unit to
     avoid F↔C conversion rounding errors.
 
-    HKG is special: HK Observatory resolves to 0.1°C precision, so
-    we compare the raw decimal value without rounding.
+    HKG is special: HK Observatory publishes the Absolute Daily Max to 0.1°C
+    and that decimal value is NOT rounded to a whole degree. A whole-degree
+    label L covers the decimal values whose integer part is L, i.e. [L, L+1):
+    "28°C" is 28.0-28.9, "28°C or below" is anything under 29.0, "28°C or
+    above" is 28.0 and up. We floor the decimal to its whole-degree label and
+    then apply the same integer bucket test as every other city. The
+    probability side (scheduler._bucket_celsius_band) integrates the same
+    [L, L+1) interval for HKG. (The raw-decimal comparison this replaced got
+    the "or below" tail wrong: 28.5 is inside "28°C or below" under this rule
+    but failed ``28.5 <= 28``.)
 
     Args:
         actual_temp_c: Actual observed temperature in Celsius (raw METAR).
         bucket: BucketInfo from parse_bucket_from_description.
         native_f: Native Fahrenheit max from METAR (avoids C→F→round error).
-        is_hkg: True for Hong Kong (0.1°C precision, no rounding).
+        is_hkg: True for Hong Kong (0.1°C value, whole-degree label = floor).
 
     Returns:
         True if the actual temperature falls in this bucket.
@@ -342,8 +360,9 @@ def actual_falls_in_bucket(
         else:
             actual = _round_half_up(_c_to_f(actual_temp_c))
     elif is_hkg:
-        # HK Observatory: 0.1°C precision, no rounding
-        actual = actual_temp_c
+        # HK Observatory: 0.1°C value; its whole-degree label is the floor.
+        # The epsilon absorbs float noise like 28.999999 from a "29.0" reading.
+        actual = _hkg_label(actual_temp_c)
     else:
         actual = _round_half_up(actual_temp_c)
 
@@ -380,23 +399,14 @@ def _extract_target_date_from_trade(trade: PaperTrade) -> date | None:
     )
     m = date_pattern.search(desc)
     if m:
-        month_map = {
-            "january": 1, "february": 2, "march": 3, "april": 4,
-            "may": 5, "june": 6, "july": 7, "august": 8,
-            "september": 9, "october": 10, "november": 11, "december": 12,
-        }
-        month_name = m.group(1).lower()
+        month = MONTH_MAP.get(m.group(1).lower(), 1)
         day = int(m.group(2))
-        month = month_map.get(month_name, 1)
-        year = date.today().year
-        try:
-            d = date(year, month, day)
-            # If the date is more than 6 months in the past, it's probably next year
-            if (date.today() - d).days > 180:
-                d = date(year + 1, month, day)
-            return d
-        except ValueError:
-            pass
+        # Year: nearest to when the trade was placed (the market was live then),
+        # falling back to today. Fixes the year rollover where a "December 31"
+        # market checked on Jan 2 parsed as the future Dec 31.
+        placed = getattr(trade, "placed_at", None)
+        reference = placed.date() if placed is not None else date.today()
+        return nearest_year_date(month, day, reference)
     return None
 
 
@@ -404,7 +414,8 @@ async def resolve_open_trades(paper_trader: PaperTrader) -> int:
     """Resolve any open trades whose markets have settled.
 
     Checks Polymarket for resolved markets first, then falls back to
-    Open-Meteo archive observations for trades past their target date.
+    METAR/HKO station observations for trades past their target date. A trade
+    with no station observation stays open.
 
     Args:
         paper_trader: The paper trader instance (PaperTrader or PersistentPaperTrader).

@@ -18,8 +18,12 @@ from weather_edge.models.enums import City
 
 logger = logging.getLogger(__name__)
 
-# Minimum snapshots needed to trust a bias correction
+# Minimum independent samples (distinct target dates, NOT raw snapshots)
+# needed to trust a bias correction.
 MIN_SNAPSHOTS_FOR_BIAS = 14
+
+# Rolling window: the most recent N distinct target dates.
+BIAS_WINDOW_DATES = 90
 
 # Significance gate: only apply a correction whose mean bias is
 # distinguishable from sampling noise (|bias| > t * standard error).
@@ -48,7 +52,9 @@ _cache_age: float = 0
 def compute_gated_bias(errors: list[float]) -> BiasCorrection:
     """Turn a sample of forecast errors into a (possibly gated) correction.
 
-    errors are (forecast - actual) per snapshot. Returns a zero correction
+    errors must be INDEPENDENT samples: one (forecast - actual) per target
+    date, never one per raw snapshot (see PersistentStore.
+    get_daily_forecast_history). Returns a zero correction
     when the sample is too small or the mean bias is not statistically
     distinguishable from noise.
     """
@@ -82,30 +88,34 @@ def compute_gated_bias(errors: list[float]) -> BiasCorrection:
     )
 
 
+def compute_bias_from_store(store, model_name: str, city_id: City) -> BiasCorrection:
+    """Gated correction from one-error-per-target-date snapshot history.
+
+    The old query read ``LIMIT 90`` raw rows. With a snapshot per model per
+    30-minute cycle, that was ~2 target dates counted as ~90 independent
+    samples, so the 2-SE significance gate almost always passed.
+    """
+    rows = store.get_daily_forecast_history(
+        model_name, city_id.value, limit=BIAS_WINDOW_DATES,
+    )
+    errors = [r["forecast_value"] - r["actual_value"] for r in rows]
+    return compute_gated_bias(errors)
+
+
 def _load_dynamic_bias(model_name: str, city_id: City) -> BiasCorrection:
     """Compute bias correction from hindcast data.
 
-    Queries forecast_snapshots for this model+city, computes
-    mean(forecast - actual) over the most recent data, and returns
-    the negative as the correction offset (gated on significance).
+    Queries forecast_snapshots for this model+city, collapsed to one error
+    per target date, over the most recent BIAS_WINDOW_DATES dates, and returns
+    the negative mean as the correction offset (gated on significance).
     """
     try:
         from weather_edge.persistence import PersistentStore
         store = PersistentStore()
-
-        rows = store.conn.execute(
-            """SELECT forecast_value, actual_value
-               FROM forecast_snapshots
-               WHERE model_name = ? AND city_id = ?
-               AND actual_value IS NOT NULL
-               ORDER BY target_date DESC
-               LIMIT 90""",
-            (model_name, city_id.value),
-        ).fetchall()
-        store.close()
-
-        errors = [r["forecast_value"] - r["actual_value"] for r in rows]
-        return compute_gated_bias(errors)
+        try:
+            return compute_bias_from_store(store, model_name, city_id)
+        finally:
+            store.close()
     except Exception as e:
         logger.debug("Dynamic bias lookup failed: %s", e)
         return BiasCorrection()
@@ -172,12 +182,19 @@ def get_all_biases(limit_cities: list[str] | None = None) -> list[dict]:
         from weather_edge.persistence import PersistentStore
         store = PersistentStore()
 
+        # One error per (model, city, target_date) first, so "samples" is the
+        # number of independent days, not the number of 30-min snapshots.
         query = """SELECT model_name, city_id,
             COUNT(*) as n,
-            ROUND(AVG(forecast_value - actual_value), 3) as bias,
-            ROUND(AVG(ABS(forecast_value - actual_value)), 3) as mae
-            FROM forecast_snapshots
-            WHERE actual_value IS NOT NULL
+            ROUND(AVG(err), 3) as bias,
+            ROUND(AVG(ABS(err)), 3) as mae
+            FROM (
+                SELECT model_name, city_id, target_date,
+                       AVG(forecast_value) - AVG(actual_value) AS err
+                FROM forecast_snapshots
+                WHERE actual_value IS NOT NULL AND forecast_value IS NOT NULL
+                GROUP BY model_name, city_id, target_date
+            )
             GROUP BY model_name, city_id
             ORDER BY city_id, model_name"""
 

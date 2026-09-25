@@ -41,8 +41,10 @@ IEM_ASOS_URL = "https://mesonet.agron.iastate.edu/cgi-bin/request/asos.py"
 MIN_READINGS = 12
 
 # Precise hourly temperature group: T s nnn s nnn (tenths of °C; s 0=+, 1=-).
-# Example: T02110017 -> +21.1°C air temp, +1.7°C dewpoint.
-_T_GROUP = re.compile(r"\bT([01])(\d{3})([01])(\d{3})\b")
+# Example: T02110017 -> +21.1°C air temp, +1.7°C dewpoint. The dewpoint half is
+# omitted when the dewpoint sensor is missing ("T0211" -> +21.1°C), so it is
+# optional here; dropping that form silently lost the precise reading.
+_T_GROUP = re.compile(r"\bT([01])(\d{3})(?:([01])(\d{3}))?\b")
 # 6-hour maximum-temperature group in the remarks: 1 s nnn (tenths of °C).
 # Example: 10217 -> +21.7°C max over the past 6 hours.
 _SIXHR_MAX = re.compile(r"\b1([01])(\d{3})\b")

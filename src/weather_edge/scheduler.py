@@ -63,15 +63,45 @@ def _bucket_celsius_band(market: MarketInfo) -> tuple[float | None, float | None
     ``None`` for the corresponding edge. Returns ``None`` when the market carries
     no native integer labels (e.g. snow / "any" markets), so callers fall back to
     the legacy °C-bound path.
+
+    Hong Kong is the exception: the HK Observatory value is a 0.1°C decimal that
+    is not rounded, and label ``L`` covers ``[L, L+1)`` (the decimals whose
+    integer part is L). This must match resolver.actual_falls_in_bucket's HKG
+    branch, which floors the reading to its label.
     """
     lo = market.bucket_low_int
     hi = market.bucket_high_int
     if lo is None and hi is None:
         return None
+    if market.city_id == City.HKG and market.threshold_unit == "celsius":
+        return (
+            float(lo) if lo is not None else None,
+            float(hi) + 1.0 if hi is not None else None,
+        )
     conv = (lambda x: x) if market.threshold_unit == "celsius" else f_to_c
     lo_c = conv(lo - 0.5) if lo is not None else None
     hi_c = conv(hi + 0.5) if hi is not None else None
     return lo_c, hi_c
+
+
+# Model agreement gate: skip a city/variable when the models themselves are
+# more than this far apart (sample std of the bias-corrected model values, °C).
+MODEL_AGREEMENT_MAX_STD_C = 2.0
+
+
+def _model_agreement_std(consensus) -> float:
+    """Spread the agreement gate compares against MODEL_AGREEMENT_MAX_STD_C.
+
+    This is the RAW model spread (how far apart the models actually are).
+    consensus.std_dev is the EMOS-inflated probability std (raw x
+    SPREAD_INFLATION_FACTOR, then floored); comparing 2.0 against that silently
+    tightened the gate to ~1.54°C of real disagreement. Consensus objects built
+    without raw_std_dev fall back to un-inflating std_dev.
+    """
+    raw = getattr(consensus, "raw_std_dev", None)
+    if raw is not None:
+        return raw
+    return consensus.std_dev / SPREAD_INFLATION_FACTOR
 
 
 def compute_model_prob_for_market(market: MarketInfo, consensus) -> float | None:
@@ -426,6 +456,14 @@ async def run_cycle(
             thresholds = []
             for m in city_markets:
                 if get_required_variable(m) == variable:
+                    # Pre-compute on the EXACT band edges that
+                    # compute_model_prob_for_market will look up, so the
+                    # calibrated blend is served from threshold_probs instead
+                    # of missing every key (get_probability_for_threshold also
+                    # computes the blend on demand for any other edge).
+                    band = _bucket_celsius_band(m)
+                    if band is not None:
+                        thresholds.extend(e for e in band if e is not None)
                     if m.threshold_low_c is not None:
                         thresholds.append(m.threshold_low_c)
                     if m.threshold_high_c is not None:
@@ -444,16 +482,18 @@ async def run_cycle(
             # trading on noise when ensembles are in chaos. HAIL MARY mode lets
             # every signal through: penny tickets are cheap enough that noisy
             # bets beat missed ones.
-            if consensus.std_dev > 2.0:
+            # Applied to the RAW model spread, see _model_agreement_std.
+            agreement_std = _model_agreement_std(consensus)
+            if agreement_std > MODEL_AGREEMENT_MAX_STD_C:
                 if settings.hail_mary_mode:
                     logger.info(
-                        "HAILMARY allow: %s/%s std=%.1f > 2.0 (would have skipped)",
-                        city_id.value, variable, consensus.std_dev
+                        "HAILMARY allow: %s/%s raw std=%.1f > 2.0 (would have skipped)",
+                        city_id.value, variable, agreement_std
                     )
                 else:
                     logger.warning(
-                        "MODEL AGREEMENT REJECT: %s/%s std=%.1f > 2.0, skipping",
-                        city_id.value, variable, consensus.std_dev
+                        "MODEL AGREEMENT REJECT: %s/%s raw std=%.1f > 2.0, skipping",
+                        city_id.value, variable, agreement_std
                     )
                     continue
 

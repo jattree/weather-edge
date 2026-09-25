@@ -613,6 +613,35 @@ class PersistentStore:
         params.append(limit)
         return [dict(r) for r in self.conn.execute(query, params).fetchall()]
 
+    def get_daily_forecast_history(
+        self, model_name: str, city_id: str, limit: int = 90,
+    ) -> list[dict]:
+        """One resolved row per target date for a model at a city.
+
+        forecast_snapshots holds one row per model per scheduler cycle (every
+        ~30 min) plus hindcast rows, so a single target date can carry dozens
+        of near-identical snapshots. Treating them as independent samples
+        inflates n ~45x and makes any standard-error test meaningless. This
+        collapses each (model, city, target_date) to the MEAN of its snapshot
+        forecasts, and returns the ``limit`` most recent distinct dates.
+        ``n_snapshots`` reports how many rows were collapsed.
+        """
+        rows = self.conn.execute(
+            """SELECT target_date,
+                      AVG(forecast_value) AS forecast_value,
+                      AVG(actual_value) AS actual_value,
+                      COUNT(*) AS n_snapshots
+               FROM forecast_snapshots
+               WHERE model_name = ? AND city_id = ?
+                 AND actual_value IS NOT NULL
+                 AND forecast_value IS NOT NULL
+               GROUP BY target_date
+               ORDER BY target_date DESC
+               LIMIT ?""",
+            (model_name, city_id, limit),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
     # --- AI Decisions (for self-learning) ---
 
     def save_ai_decision(
