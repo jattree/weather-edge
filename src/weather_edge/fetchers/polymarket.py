@@ -66,13 +66,44 @@ MONTH_MAP = {
     "september": 9, "october": 10, "november": 11, "december": 12,
 }
 
+
+def nearest_year_date(month: int, day: int, reference: date) -> date | None:
+    """The (month, day) whose year puts it closest to ``reference``.
+
+    Market titles carry no year. Picking ``reference.year`` and bumping to next
+    year only for dates >6 months past broke at the year boundary: a
+    "December 31" market evaluated on Jan 2 became the FUTURE Dec 31 (363 days
+    away) instead of 2 days ago. The nearest candidate among the adjacent years
+    is right for any market within ~6 months of the reference date.
+    Returns None for an impossible date (e.g. February 30).
+    """
+    candidates = []
+    for year in (reference.year - 1, reference.year, reference.year + 1):
+        try:
+            candidates.append(date(year, month, day))
+        except ValueError:
+            continue  # Feb 29 in a non-leap year, or an invalid day
+    if not candidates:
+        return None
+    return min(candidates, key=lambda d: abs((d - reference).days))
+
+
 # Parse bucket ranges from market questions.
 # NOTE: temperature capture groups use (-?\d+) so subzero winter buckets
 # (e.g. "-2°C or below", "be -5°C on") parse correctly. The unsigned (\d+)
 # version silently dropped the minus sign, resolving "-2°C" as "2°C".
+# Tail wording varies across events: "or below", "or lower", "or less",
+# "or under", "or colder" (lower tail) and "or above", "or higher", "or more",
+# "or over", "or hotter" (upper tail). A real example that the old
+# "or above"-only pattern dropped: "Will the highest temperature in Shanghai be
+# 21°C or higher on March 27?". Shared with the resolver so both parse alike.
+LOWER_TAIL_WORDS = r"(?:below|lower|less|under|colder|cooler)"
+UPPER_TAIL_WORDS = r"(?:above|higher|more|over|greater|hotter|warmer)"
+
 # "Will the highest temperature in Denver be 49°F or below on March 27?"
 BUCKET_BELOW_PATTERN = re.compile(
-    r"(?:highest|high)\s+temperature\s+in\s+(.+?)\s+be\s+(-?\d+)\s*°?\s*(F|C)\s+or\s+below",
+    r"(?:highest|high)\s+temperature\s+in\s+(.+?)\s+be\s+(-?\d+)\s*°?\s*(F|C)\s+or\s+"
+    + LOWER_TAIL_WORDS + r"\b",
     re.IGNORECASE,
 )
 # "Will the highest temperature in Denver be between 50-51°F on March 27?"
@@ -82,7 +113,8 @@ BUCKET_RANGE_PATTERN = re.compile(
 )
 # "Will the highest temperature in Denver be 60°F or above on March 27?"
 BUCKET_ABOVE_PATTERN = re.compile(
-    r"(?:highest|high)\s+temperature\s+in\s+(.+?)\s+be\s+(-?\d+)\s*°?\s*(F|C)\s+or\s+above",
+    r"(?:highest|high)\s+temperature\s+in\s+(.+?)\s+be\s+(-?\d+)\s*°?\s*(F|C)\s+or\s+"
+    + UPPER_TAIL_WORDS + r"\b",
     re.IGNORECASE,
 )
 # "Will the highest temperature in Seoul be 8°C on March 29?"
@@ -164,22 +196,30 @@ def parse_city_from_text(text: str) -> tuple[City | None, str]:
     return None, ""
 
 
-def parse_target_date(text: str, fallback_end_date: str | None = None) -> date:
-    """Extract target date from event title or endDate."""
+def parse_target_date(
+    text: str,
+    fallback_end_date: str | None = None,
+    reference: date | None = None,
+) -> date:
+    """Extract target date from event title or endDate.
+
+    The title has no year; the year is chosen to put the date nearest to
+    ``reference`` (default: the market's endDate when given, else today), see
+    nearest_year_date.
+    """
+    ref = reference
+    if ref is None and fallback_end_date:
+        try:
+            ref = datetime.fromisoformat(fallback_end_date.replace("Z", "+00:00")).date()
+        except (ValueError, AttributeError):
+            ref = None
+    ref = ref or date.today()
     m = DATE_PATTERN.search(text)
     if m:
-        month_name = m.group(1).lower()
-        day = int(m.group(2))
-        month = MONTH_MAP.get(month_name, 1)
-        year = date.today().year
-        try:
-            d = date(year, month, day)
-            # If the date is more than 6 months in the past, it's probably next year
-            if (date.today() - d).days > 180:
-                d = date(year + 1, month, day)
+        month = MONTH_MAP.get(m.group(1).lower(), 1)
+        d = nearest_year_date(month, int(m.group(2)), ref)
+        if d is not None:
             return d
-        except ValueError:
-            pass
 
     if fallback_end_date:
         try:
