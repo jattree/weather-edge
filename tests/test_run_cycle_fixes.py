@@ -1,7 +1,7 @@
 """Regression tests for bugs found while refactoring scheduler.run_cycle."""
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
@@ -275,3 +275,25 @@ async def test_cleanup_zeroes_missing_positions_on_complete_response(monkeypatch
     )
     assert len(calls) == 1
     assert _held(store) == ["keep"]
+
+
+# ---------------------------------------------------------------------------
+# trading_today: the earliest city-local date, independent of the host zone
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(("now", "expected"), [
+    # 23:30 UTC: Asia/Pacific are on the 26th, the Americas still on the 25th
+    (datetime(2026, 9, 25, 23, 30, tzinfo=UTC), date(2026, 9, 25)),
+    # 06:00 UTC: Los Angeles (UTC-7) is still on the 25th
+    (datetime(2026, 9, 26, 6, 0, tzinfo=UTC), date(2026, 9, 25)),
+    # 08:00 UTC: every tracked city has reached the 26th
+    (datetime(2026, 9, 26, 8, 0, tzinfo=UTC), date(2026, 9, 26)),
+])
+def test_trading_today_is_earliest_city_local_date(now, expected):
+    assert scheduler.trading_today(now) == expected
+
+
+def test_default_window_starts_at_trading_today():
+    today = scheduler.trading_today()
+    assert scheduler.default_target_dates(days=2) == [today, today + timedelta(days=1)]

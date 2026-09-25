@@ -173,7 +173,7 @@ async def test_gemini_half_cuts_size(monkeypatch):
 
 def test_live_min_size_bump_never_applies_to_zero_size():
     src = (SRC / "scheduler.py").read_text()
-    bump = src.index("signal.recommended_size = MIN_LIVE_SIZE")
+    bump = src.index("signal.recommended_size = max(signal.recommended_size, MIN_LIVE_SIZE)")
     guard = src.rfind("if signal.recommended_size <= 0:", 0, bump)
     assert guard != -1 and bump - guard < 300, "zero-size guard must precede the $5 bump"
 
@@ -660,7 +660,7 @@ async def test_run_loop_honours_days_and_stops(monkeypatch):
 
     monkeypatch.setattr(scheduler, "run_cycle", fake_cycle)
     await scheduler.run_loop(None, days=3, max_cycles=1)
-    assert seen == [scheduler.default_target_dates(date.today(), 3)]
+    assert seen == [scheduler.default_target_dates(scheduler.trading_today(), 3)]
 
 
 # ---------------------------------------------------------------------------

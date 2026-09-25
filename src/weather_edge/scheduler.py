@@ -4,7 +4,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass, field, replace
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
@@ -18,8 +18,12 @@ from weather_edge.analysis.claude_reasoning import (
     record_decision,
 )
 from weather_edge.analysis.consensus import (
+    CITY_CLIMATOLOGY,
+    CLIMATOLOGICAL_MEAN,
+    CLIMATOLOGICAL_STD,
     EMOS_VARIANCE_FLOOR_C,
     MAX_BUCKET_PROBABILITY,
+    MAX_BUCKET_PROBABILITY_EXTREME,
     SPREAD_INFLATION_FACTOR,
     compute_consensus,
     get_probability_for_threshold,
@@ -107,17 +111,41 @@ def _model_agreement_std(consensus) -> float:
     return consensus.std_dev / SPREAD_INFLATION_FACTOR
 
 
-def compute_model_prob_for_market(market: MarketInfo, consensus) -> float | None:
-    """Compute model probability for a market bucket.
+def _lte_probability(market: MarketInfo, consensus, band) -> float:
+    """P(displayed high <= the bucket's top label)."""
+    hi_c = band[1] if band is not None else None
+    if hi_c is None:
+        hi_c = market.threshold_high_c or market.threshold_value
+    return 1.0 - get_probability_for_threshold(consensus, hi_c, "gte")
 
-    Handles the multi-bucket format with EMOS probability cap:
-    - A single 2°F bucket should never exceed 70% at >12h horizon
-    - Per Gemini: >90% on a single bucket is "likely broken"
-    """
-    from weather_edge.analysis.consensus import MAX_BUCKET_PROBABILITY
 
-    prob = None
+def _range_probability(market: MarketInfo, consensus, band) -> float | None:
+    """P(displayed high lands in the bucket), None without usable bounds."""
+    if band is not None:
+        lo_c, hi_c = band
+        p_lo = (
+            get_probability_for_threshold(consensus, lo_c, "gte")
+            if lo_c is not None else 1.0
+        )
+        p_hi = (
+            get_probability_for_threshold(consensus, hi_c, "gte")
+            if hi_c is not None else 0.0
+        )
+        return max(0.0, p_lo - p_hi)
+    if market.threshold_low_c is not None and market.threshold_high_c is not None:
+        # Legacy fallback when native integer labels are unavailable.
+        p_gte_low = get_probability_for_threshold(
+            consensus, market.threshold_low_c, "gte",
+        )
+        p_gte_high = get_probability_for_threshold(
+            consensus, market.threshold_high_c, "gte",
+        )
+        return max(0.0, p_gte_low - p_gte_high)
+    return None
 
+
+def _raw_bucket_probability(market: MarketInfo, consensus) -> float | None:
+    """Uncapped model probability for the market's bucket (None if unsupported)."""
     # Round-half-up display semantics: a market resolves YES when the displayed
     # (rounded) daily high lands on one of the bucket's integer labels. An
     # integer label L therefore covers the continuous half-open interval
@@ -127,88 +155,66 @@ def compute_model_prob_for_market(market: MarketInfo, consensus) -> float | None
     # °C-converted bound for Fahrenheit buckets, which mixed units and made every
     # F range bucket ~0.8°F too wide on the top edge (inflating YES probability).
     band = _bucket_celsius_band(market)
+    direction = market.threshold_dir
+    if direction == "lte":
+        return _lte_probability(market, consensus, band)
+    if direction == "range":
+        return _range_probability(market, consensus, band)
+    if direction == "gte":
+        lo_c = band[0] if band is not None else None
+        return get_probability_for_threshold(
+            consensus, lo_c if lo_c is not None else market.threshold_value, "gte",
+        )
+    if direction == "any":
+        return get_probability_for_threshold(consensus, 0.0, "any")
+    return None
 
-    if market.threshold_dir == "lte":
-        if band is not None and band[1] is not None:
-            p_gte_hi = get_probability_for_threshold(consensus, band[1], "gte")
-            prob = 1.0 - p_gte_hi
+
+def _bucket_probability_cap(market: MarketInfo, consensus) -> float:
+    """EMOS cap for a narrow (range/lte) bucket, raised during extreme events.
+
+    Extreme = tight model agreement and a consensus > 2 sigma from the city's
+    climatology.
+    """
+    cap = MAX_BUCKET_PROBABILITY
+    if consensus.std_dev < 1.5 and consensus.model_count >= 5:
+        # Models tightly clustered, check if extreme for THIS city
+        city_key = market.city_id.value if market.city_id else ""
+        clim = CITY_CLIMATOLOGY.get(city_key)
+        if clim:
+            clim_mean, clim_std = clim
         else:
-            p_gte = get_probability_for_threshold(
-                consensus,
-                market.threshold_high_c or market.threshold_value,
-                "gte",
+            clim_mean = CLIMATOLOGICAL_MEAN.get("temp_max_c", 15.0)
+            clim_std = CLIMATOLOGICAL_STD.get("temp_max_c", 6.0)
+        anomaly = (
+            abs(consensus.weighted_mean - clim_mean) / clim_std
+            if clim_std > 0 else 0
+        )
+        if anomaly > 2.0:
+            cap = MAX_BUCKET_PROBABILITY_EXTREME
+            logger.info(
+                "EXTREME EVENT: %s consensus=%.1f°C "
+                "(%.1f sigma from %.1f°C norm), "
+                "std=%.1f, cap raised to %.0f%%",
+                city_key, consensus.weighted_mean,
+                anomaly, clim_mean,
+                consensus.std_dev, cap * 100,
             )
-            prob = 1.0 - p_gte
+    return cap
 
-    elif market.threshold_dir == "range":
-        if band is not None:
-            lo_c, hi_c = band
-            p_lo = (
-                get_probability_for_threshold(consensus, lo_c, "gte")
-                if lo_c is not None else 1.0
-            )
-            p_hi = (
-                get_probability_for_threshold(consensus, hi_c, "gte")
-                if hi_c is not None else 0.0
-            )
-            prob = max(0.0, p_lo - p_hi)
-        elif (
-            market.threshold_low_c is not None
-            and market.threshold_high_c is not None
-        ):
-            # Legacy fallback when native integer labels are unavailable.
-            p_gte_low = get_probability_for_threshold(
-                consensus, market.threshold_low_c, "gte",
-            )
-            p_gte_high = get_probability_for_threshold(
-                consensus, market.threshold_high_c, "gte",
-            )
-            prob = max(0.0, p_gte_low - p_gte_high)
 
-    elif market.threshold_dir == "gte":
-        if band is not None and band[0] is not None:
-            prob = get_probability_for_threshold(consensus, band[0], "gte")
-        else:
-            prob = get_probability_for_threshold(consensus, market.threshold_value, "gte")
+def compute_model_prob_for_market(market: MarketInfo, consensus) -> float | None:
+    """Compute model probability for a market bucket.
 
-    elif market.threshold_dir == "any":
-        prob = get_probability_for_threshold(consensus, 0.0, "any")
-
+    Handles the multi-bucket format with EMOS probability cap:
+    - A single 2°F bucket should never exceed 70% at >12h horizon
+    - Per Gemini: >90% on a single bucket is "likely broken"
+    """
+    prob = _raw_bucket_probability(market, consensus)
     # Apply bucket probability cap for range/lte buckets (narrow temperature ranges)
     # During extreme events (tight model agreement + anomalous temps), raise the cap
     if prob is not None and market.threshold_dir in ("range", "lte"):
-        from weather_edge.analysis.consensus import (
-            CITY_CLIMATOLOGY,
-            CLIMATOLOGICAL_MEAN,
-            CLIMATOLOGICAL_STD,
-            MAX_BUCKET_PROBABILITY_EXTREME,
-        )
-        cap = MAX_BUCKET_PROBABILITY
-        if consensus.std_dev < 1.5 and consensus.model_count >= 5:
-            # Models tightly clustered, check if extreme for THIS city
-            city_key = market.city_id.value if market.city_id else ""
-            clim = CITY_CLIMATOLOGY.get(city_key)
-            if clim:
-                clim_mean, clim_std = clim
-            else:
-                clim_mean = CLIMATOLOGICAL_MEAN.get("temp_max_c", 15.0)
-                clim_std = CLIMATOLOGICAL_STD.get("temp_max_c", 6.0)
-            anomaly = (
-                abs(consensus.weighted_mean - clim_mean) / clim_std
-                if clim_std > 0 else 0
-            )
-            if anomaly > 2.0:
-                cap = MAX_BUCKET_PROBABILITY_EXTREME
-                logger.info(
-                    "EXTREME EVENT: %s consensus=%.1f°C "
-                    "(%.1f sigma from %.1f°C norm), "
-                    "std=%.1f, cap raised to %.0f%%",
-                    city_key, consensus.weighted_mean,
-                    anomaly, clim_mean,
-                    consensus.std_dev, cap * 100,
-                )
-        prob = min(prob, cap)
-
+        prob = min(prob, _bucket_probability_cap(market, consensus))
     return prob
 
 
@@ -232,14 +238,14 @@ def filter_dates_by_horizon(
     (hours_to_local_end_of_day).
     """
     if now_utc is None:
-        now_utc = datetime.now(timezone.utc)
+        now_utc = datetime.now(UTC)
     if min_horizon_hours is None:
         min_horizon_hours = 0 if settings.hail_mary_mode else MIN_HORIZON_HOURS
     min_horizon = timedelta(hours=min_horizon_hours)
     kept, blocked = [], []
     for d in target_dates:
         resolves = datetime.combine(d + timedelta(days=1), datetime.min.time()).replace(
-            tzinfo=timezone.utc,
+            tzinfo=UTC,
         )
         (kept if resolves - now_utc >= min_horizon else blocked).append(d)
     return kept, blocked, min_horizon_hours
@@ -255,16 +261,33 @@ def hours_to_local_end_of_day(
     Americas). Falls back to UTC for a city without config. Never negative.
     """
     if now_utc is None:
-        now_utc = datetime.now(timezone.utc)
+        now_utc = datetime.now(UTC)
     city = CITIES.get(city_id)
-    tz = ZoneInfo(city.timezone) if city else timezone.utc
+    tz = ZoneInfo(city.timezone) if city else UTC
     end_local = datetime.combine(target_date + timedelta(days=1), datetime.min.time(), tzinfo=tz)
     return max(0.0, (end_local - now_utc).total_seconds() / 3600)
 
 
+def trading_today(now_utc: datetime | None = None) -> date:
+    """The earliest local calendar date among tracked cities.
+
+    Markets resolve on each city's local date, so a date is still trading
+    while any city is on it. This is the oldest such date: the start of the
+    scan window and the cut-off for evicting past dates. Independent of the
+    host's time zone (it used to be ``date.today()``, the host's local date).
+    """
+    if now_utc is None:
+        now_utc = datetime.now(UTC)
+    zones = {c.timezone for c in CITIES.values()}
+    return min(
+        (now_utc.astimezone(ZoneInfo(tz)).date() for tz in zones),
+        default=now_utc.astimezone(UTC).date(),
+    )
+
+
 def default_target_dates(today: date | None = None, days: int = 4) -> list[date]:
     """``today`` .. ``today + days - 1`` (the scheduler's default window)."""
-    today = today or date.today()
+    today = today or trading_today()
     return [today + timedelta(days=i) for i in range(max(1, days))]
 
 
@@ -284,7 +307,7 @@ def _forecast_age_hours(forecasts: list, now_utc: datetime) -> float | None:
     times = [t for t in times if isinstance(t, datetime)]
     if not times:
         return None
-    oldest = min(t if t.tzinfo else t.replace(tzinfo=timezone.utc) for t in times)
+    oldest = min(t if t.tzinfo else t.replace(tzinfo=UTC) for t in times)
     return (now_utc - oldest).total_seconds() / 3600
 
 
@@ -345,6 +368,8 @@ def _gemini_size_multiplier(dissent: float, sizing: str) -> float:
 
 def _save_claude_decision(store, signal: Signal, reasoning) -> None:
     """Persist a Claude verdict for accuracy analysis (best effort)."""
+    if store is None:
+        return
     try:
         store.save_ai_decision(
             source="claude",
@@ -355,7 +380,9 @@ def _save_claude_decision(store, signal: Signal, reasoning) -> None:
             confidence_adj=reasoning.confidence_adjustment,
         )
     except Exception:
-        pass
+        # Analytics only: a failed write must never block the review.
+        logger.warning("Failed to persist Claude decision for %s", signal.market_id,
+                       exc_info=True)
 
 
 def _apply_claude_verdict(signal: Signal, reasoning, memory, hail: bool) -> float | None:
@@ -400,7 +427,8 @@ async def _gemini_red_team(
             claude_rationale=reasoning.rationale,
         )
     except Exception as e:
-        logger.warning("Gemini red team crashed for %s: %s", signal.city_id, e)
+        # Any Gemini failure fails closed (below), so catch everything.
+        logger.warning("Gemini red team crashed for %s: %s", signal.city_id, e, exc_info=True)
         return {"error": str(e), "dissent_strength": 1.0,
                 "verdict": "DISSENT", "sizing_recommendation": "skip"}
 
@@ -412,7 +440,7 @@ def _record_gemini_decision(
     from weather_edge.analysis.claude_reasoning import _decision_history
 
     _decision_history.insert(0, {
-        "time": datetime.now(timezone.utc).strftime("%H:%M:%S"),
+        "time": datetime.now(UTC).strftime("%H:%M:%S"),
         "city": (
             signal.city_id.upper()
             if isinstance(signal.city_id, str)
@@ -425,6 +453,8 @@ def _record_gemini_decision(
         "risk_factors": [gemini_result.get("risk_the_bull_missed", "")],
         "source": "gemini",
     })
+    if store is None:
+        return
     try:
         store.save_ai_decision(
             source="gemini",
@@ -435,7 +465,9 @@ def _record_gemini_decision(
             dissent_strength=dissent,
         )
     except Exception:
-        pass
+        # Analytics only: a failed write must never block the review.
+        logger.warning("Failed to persist Gemini decision for %s", signal.market_id,
+                       exc_info=True)
 
 
 def _apply_gemini_sizing(signal: Signal, dissent: float, sizing: str, memory) -> float | None:
@@ -644,7 +676,7 @@ async def apply_ai_review(
     require_review = bool(getattr(settings, "require_ai_review", True))
     max_reviews = int(getattr(settings, "max_ai_reviews_per_cycle", 3))
     memory = get_review_memory()
-    memory.evict_before(date.today())
+    memory.evict_before(trading_today())
 
     outcome = {} if hail else _remembered_vetoes(signals, memory)
 
@@ -782,7 +814,8 @@ async def _refresh_enso_state() -> None:
         from weather_edge.analysis.enso_regime import fetch_enso_state
         await fetch_enso_state()
     except Exception:
-        logger.debug("ENSO state fetch skipped", exc_info=True)
+        # Optional: bias correction falls back to its cached / neutral state.
+        logger.warning("ENSO state fetch skipped", exc_info=True)
 
 
 async def _start_cycle(
@@ -803,14 +836,14 @@ async def _start_cycle(
     if target_dates is None:
         target_dates = default_target_dates()
 
-    now_utc = datetime.now(timezone.utc)
+    now_utc = datetime.now(UTC)
     target_dates, min_horizon_hours = _apply_horizon_filter(target_dates, now_utc)
     _check_emos_contract()
     await _resolve_paper_trades(paper_trader)
 
     _forecast_cache = forecast_cache if forecast_cache is not None else {}
     # Cross-cycle cache: forget target dates that have already passed.
-    evict_stale_forecasts(_forecast_cache, date.today())
+    evict_stale_forecasts(_forecast_cache, trading_today(now_utc))
     ctx = CycleContext(
         paper_trader=paper_trader,
         live_executor=live_executor,
@@ -839,7 +872,8 @@ async def _sync_market_map(ctx: CycleContext) -> None:
             if mapped:
                 logger.info("Market map updated: %d token mappings", mapped)
         except Exception:
-            logger.debug("Market map update failed", exc_info=True)
+            # Optional: positions just keep their previous city mapping.
+            logger.warning("Market map update failed", exc_info=True)
 
 
 async def _reconcile_portfolio(ctx: CycleContext) -> None:
@@ -933,7 +967,8 @@ async def _fetch_ai_forecasts_for_date(
     try:
         ai_batch = await fetch_ai_forecasts_batch(market_cities, ai_target)
     except Exception:
-        logger.debug("GribStream AI fetch failed for %s", ai_target, exc_info=True)
+        # Optional: GraphCast only adjusts confidence; the cycle runs without it.
+        logger.warning("GribStream AI fetch failed for %s", ai_target, exc_info=True)
         return
     for cid, fc in (ai_batch or {}).items():
         ctx.ai_forecasts[(getattr(cid, "value", cid), ai_target)] = fc
@@ -958,8 +993,9 @@ async def _fetch_ai_forecasts(ctx: CycleContext) -> None:
         ctx.ai_divergence_fn = compute_ai_physics_divergence
         for ai_target in sorted({d for _, d in ctx.market_groups}):
             await _fetch_ai_forecasts_for_date(ctx, ai_target, fetch_ai_forecasts_batch)
-    except Exception:
-        logger.debug("GribStream AI fetch skipped", exc_info=True)
+    except ImportError:
+        # Per-date fetch failures are handled in _fetch_ai_forecasts_for_date.
+        logger.warning("GribStream AI fetch skipped", exc_info=True)
 
 
 @dataclass
@@ -976,6 +1012,8 @@ class SignalGroup:
 
 def _save_forecast_snapshot(store, city_id: City, target_date: date, forecasts: list) -> None:
     """Persist a forecast snapshot for self-learning (best effort)."""
+    if store is None:
+        return
     try:
         m_vals = {f.model_name: f.temp_max_c for f in forecasts if f.temp_max_c is not None}
         if m_vals:
@@ -983,7 +1021,9 @@ def _save_forecast_snapshot(store, city_id: City, target_date: date, forecasts: 
                 city_id.value, str(target_date), m_vals,
             )
     except Exception:
-        pass  # Don't break pipeline if persistence fails
+        # Don't break the pipeline if persistence fails
+        logger.warning("Failed to save forecast snapshot for %s on %s",
+                       city_id.value, target_date, exc_info=True)
 
 
 def _fresh_cached_forecasts(ctx: CycleContext, city_id: City, target_date: date) -> list | None:
@@ -1117,7 +1157,8 @@ def _trend_multiplier(city_id: City, variable: str, consensus) -> float:
                     trend.stability, trend_mult,
                 )
     except Exception:
-        pass
+        # Optional: trend history lives in Redis / on disk; neutral on failure.
+        logger.warning("Forecast trend skipped for %s", city_id.value, exc_info=True)
     return trend_mult
 
 
@@ -1147,6 +1188,8 @@ def _ai_divergence(
                         div["confidence_multiplier"],
                     )
             except Exception:
+                # Optional: a bad GraphCast payload just means no adjustment.
+                logger.warning("AI divergence failed for %s", city_id.value, exc_info=True)
                 ctx.ai_divergence_cache[_ai_div_key] = None
 
     return ctx.ai_divergence_cache.get(_ai_div_key)
@@ -1341,7 +1384,7 @@ def _hail_mary_entry_price(s: Signal) -> float:
             entry_price = s.market_prob
         else:
             entry_price = 1.0 - s.market_prob
-    except Exception:
+    except AttributeError:  # no recommended side
         entry_price = s.market_prob
     return entry_price
 
@@ -1437,8 +1480,10 @@ async def _fetch_book_for_signal(ctx: CycleContext, signal: Signal, fetch_book_p
     if m and m.token_id_yes and m.token_id_no:
         try:
             book = await asyncio.wait_for(fetch_book_prices(m), timeout=10.0)
-        except (asyncio.TimeoutError, Exception) as e:
-            logger.debug("Book fetch timeout/error for %s: %s", signal.city_id, e)
+        except Exception as e:  # includes TimeoutError
+            # Optional: without a book the signal trades on Gamma prices.
+            logger.warning("Book fetch timeout/error for %s: %s", signal.city_id, e,
+                           exc_info=True)
             return
         if book:
             ctx.market_prices[signal.market_id] = {
@@ -1475,7 +1520,8 @@ async def _fetch_live_balance(ctx: CycleContext) -> float | None:
             _live_balance = await ctx.live_executor.check_balance()
             logger.info("USDC balance: $%.2f", _live_balance or 0)
         except Exception:
-            logger.warning("Failed to fetch live balance, will skip balance checks")
+            logger.warning("Failed to fetch live balance, will skip balance checks",
+                           exc_info=True)
     return _live_balance
 
 
@@ -1587,6 +1633,9 @@ async def _count_active_positions(ctx: CycleContext) -> int:
                     _active_position_count, ctx.max_positions,
                 )
         except Exception:
+            # Cleanup is best effort; fall back to the uncleaned DB count.
+            logger.warning("Position cleanup failed, using the DB position count",
+                           exc_info=True)
             _active_position_count = store.get_portfolio_summary().get("position_count", 0)
     return _active_position_count
 
@@ -1703,8 +1752,7 @@ def _size_swing_entry(ctx: CycleContext, signal: Signal) -> bool:
     # (AI veto / Kelly says no) was already dropped above.
     if signal.recommended_size <= 0:
         return False
-    if signal.recommended_size < MIN_LIVE_SIZE:
-        signal.recommended_size = MIN_LIVE_SIZE
+    signal.recommended_size = max(signal.recommended_size, MIN_LIVE_SIZE)
 
     # Margin check, use tracked live balance, not stale portfolio
     # calc. Runs AFTER min size bump so the floor is respected.
@@ -1752,7 +1800,7 @@ def _order_age_minutes(existing: dict) -> float:
         try:
             placed_dt = datetime.fromisoformat(placed_str)
             order_age_minutes = (
-                datetime.now(timezone.utc) - placed_dt
+                datetime.now(UTC) - placed_dt
             ).total_seconds() / 60
         except (ValueError, TypeError):
             pass
@@ -1829,7 +1877,7 @@ async def _chase_resting_entry(
         except Exception as e:
             logger.warning(
                 "Price chase cancel failed %s: %s",
-                old_id[:16], e,
+                old_id[:16], e, exc_info=True,
             )
     # Fall through to place new order at chased price. place_limit_order
     # improves market_prob by half a tick, so aim half a tick above.
@@ -1858,7 +1906,7 @@ async def _replace_resting_entry(
         except Exception as e:
             logger.warning(
                 "Failed to cancel old order %s: %s",
-                old_id[:16], e,
+                old_id[:16], e, exc_info=True,
             )
 
 
@@ -2184,8 +2232,9 @@ async def _submit_live_entry(ctx: CycleContext, signal: Signal, token_id: str) -
             await _place_live_hedge(ctx, signal)
 
     except Exception as e:
+        # One failed order must not stop the rest of the execution loop.
         logger.error(
-            "LIVE ORDER FAILED: %s, %s", signal.city_id, e,
+            "LIVE ORDER FAILED: %s, %s", signal.city_id, e, exc_info=True,
         )
 
 
@@ -2338,18 +2387,18 @@ async def _scan_paper_exits(ctx: CycleContext, marks: _ExitMarks) -> None:
     if paper_candidates:
         logger.info("PAPER EXIT MONITOR: %d candidates", len(paper_candidates))
         for candidate in paper_candidates[:3]:
-            candidate = await _review_exit_candidate(ctx, candidate, marks)
-            if candidate.final_decision == "EXIT":
+            reviewed = await _review_exit_candidate(ctx, candidate, marks)
+            if reviewed.final_decision == "EXIT":
                 logger.warning(
                     "PAPER EXIT: %s %s $%.0f, %s",
-                    candidate.trade.side,
-                    candidate.trade.city_id,
-                    candidate.trade.size_usd,
-                    candidate.reason,
+                    reviewed.trade.side,
+                    reviewed.trade.city_id,
+                    reviewed.trade.size_usd,
+                    reviewed.reason,
                 )
                 paper_trader.close_position(
-                    candidate.trade,
-                    candidate.current_market_price,
+                    reviewed.trade,
+                    reviewed.current_market_price,
                 )
 
 
@@ -2423,7 +2472,7 @@ async def _cancel_open_buy(ctx: CycleContext, market_id: str, city_id_str: str) 
         except Exception as e:
             logger.warning(
                 "Failed to cancel BUY order %s: %s",
-                buy_id[:16], e,
+                buy_id[:16], e, exc_info=True,
             )
 
 
@@ -2456,7 +2505,7 @@ async def _replace_existing_sell(
         logger.warning(
             "Failed to cancel old "
             "sell order %s: %s",
-            old_id[:16], e,
+            old_id[:16], e, exc_info=True,
         )
     return True
 
@@ -2508,9 +2557,10 @@ async def _place_exit_sell(
                 sell_result.order_id,
             )
     except Exception as e:
+        # One failed exit must not stop the remaining exit candidates.
         logger.error(
             "LIVE EXIT FAILED: %s, %s",
-            city_id_str, e,
+            city_id_str, e, exc_info=True,
         )
 
 
@@ -2563,7 +2613,7 @@ def _record_exit_decision(candidate) -> None:
     """Record an exit decision to the AI Decisions tab."""
     from weather_edge.analysis.claude_reasoning import _decision_history
     _decision_history.insert(0, {
-        "time": datetime.now(timezone.utc).strftime("%H:%M:%S"),
+        "time": datetime.now(UTC).strftime("%H:%M:%S"),
         "city": candidate.trade.city_id.upper(),
         "decision": "EXIT" if candidate.final_decision == "EXIT" else "HOLD",
         "signal": (
@@ -2592,13 +2642,13 @@ async def _scan_live_exits(ctx: CycleContext, marks: _ExitMarks) -> None:
         if live_candidates:
             logger.info("LIVE EXIT MONITOR: %d candidates", len(live_candidates))
             for candidate in live_candidates[:3]:
-                candidate = await _review_exit_candidate(ctx, candidate, marks)
+                reviewed = await _review_exit_candidate(ctx, candidate, marks)
                 if (
-                    candidate.final_decision == "EXIT"
-                    and not await _execute_live_exit(ctx, candidate)
+                    reviewed.final_decision == "EXIT"
+                    and not await _execute_live_exit(ctx, reviewed)
                 ):
                     continue
-                _record_exit_decision(candidate)
+                _record_exit_decision(reviewed)
 
 
 async def _monitor_exits(ctx: CycleContext) -> None:
@@ -2630,7 +2680,7 @@ def _monitoring_date(target_dates: list[date]) -> date:
     elif target_dates:
         tomorrow = target_dates[0]
     else:
-        tomorrow = date.today() + timedelta(days=1)
+        tomorrow = trading_today() + timedelta(days=1)
     return tomorrow
 
 
@@ -2659,6 +2709,7 @@ async def _refresh_monitoring_forecasts(ctx: CycleContext) -> None:
 async def run_cycle(
     paper_trader: PaperTrader | None,
     target_dates: list[date] | None = None,
+    *,
     run_ai_reasoning: bool = True,
     live_executor=None,
     store=None,
@@ -2731,7 +2782,7 @@ async def run_loop(
         cycle_num += 1
         logger.info("===== CYCLE %d START =====", cycle_num)
         try:
-            today = date.today()
+            today = trading_today()
             evicted = evict_stale_forecasts(forecast_cache, today)
             evicted += get_review_memory().evict_before(today)
             if evicted:

@@ -3154,7 +3154,7 @@
   "INFO weather_edge.scheduler   den/temp_max_c: mean=21.0\u00b0C std=0.5 conf=90% (5 models)",
   "INFO weather_edge.scheduler AI GATE: 19/19 signals cleared for execution",
   "INFO weather_edge.scheduler Fetching order book prices for spread detection...",
-  "DEBUG weather_edge.scheduler Book fetch timeout/error for nyc: ",
+  "WARNING weather_edge.scheduler Book fetch timeout/error for nyc: ",
   "INFO weather_edge.scheduler SPREAD OPP: lax, YES_ask=0.310 NO_ask=0.660 total=0.970 profit=0.030/share",
   "INFO weather_edge.scheduler SPREAD OPP: hou, YES_ask=0.310 NO_ask=0.660 total=0.970 profit=0.030/share",
   "INFO weather_edge.scheduler Book price fetch complete, placing trades...",

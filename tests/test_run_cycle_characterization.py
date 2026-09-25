@@ -239,7 +239,7 @@ class Harness:
         self.mp = monkeypatch
         self.tmp_path = tmp_path
         self.caplog = caplog
-        self.d = [date.today() + timedelta(days=i) for i in range(5)]
+        self.d = [scheduler.trading_today() + timedelta(days=i) for i in range(5)]
         self.events: list = []
         self.markets = []
         self.model_prob: dict[str, float | None] = {}
