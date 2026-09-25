@@ -493,11 +493,6 @@
    "store.rebuild_positions"
   ],
   [
-   "store.get_portfolio_summary",
-   [],
-   {}
-  ],
-  [
    "gribstream",
    [
     "nyc"
@@ -552,6 +547,8 @@
    "http.get",
    "https://data-api.polymarket.com/positions",
    {
+    "limit": 500,
+    "offset": 0,
     "sizeThreshold": 0,
     "user": "0xwallet"
    }

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta, timezone
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
@@ -30,7 +30,7 @@ from weather_edge.analysis.contracts import (
     validate_model_count,
 )
 from weather_edge.analysis.edge import Signal, calculate_edge
-from weather_edge.analysis.market_mapper import get_required_variable
+from weather_edge.analysis.market_mapper import MARKET_TYPE_TO_VARIABLE, get_required_variable
 from weather_edge.analysis.model_timing import is_golden_window
 from weather_edge.analysis.pattern_detector import (
     detect_patterns,
@@ -698,7 +698,6 @@ class CycleContext:
     market_groups: dict[tuple[City, date], list[MarketInfo]] = field(default_factory=dict)
     city_volume: dict[str, dict] = field(default_factory=dict)
     total_equity: float = 0.0
-    portfolio_summary: dict = field(default_factory=dict)
     # (city_id, target_date) -> GraphCast forecast
     ai_forecasts: dict[tuple[str, date], object] = field(default_factory=dict)
     # GribStream's compute_ai_physics_divergence, bound when the fetch imports
@@ -853,10 +852,7 @@ async def _reconcile_portfolio(ctx: CycleContext) -> None:
         live_executor, store = ctx.live_executor, ctx.store
         try:
             from weather_edge.trading.portfolio_sync import fetch_polymarket_state, sync_portfolio
-            ctx.portfolio_summary = await sync_portfolio(
-                executor=live_executor,
-                store=store,
-            )
+            await sync_portfolio(executor=live_executor, store=store)
             # Fetch full state to get balance + current market value of positions
             state = await fetch_polymarket_state(live_executor, live_executor.wallet_address)
             ctx.total_equity = state["portfolio_value"]
@@ -866,7 +862,6 @@ async def _reconcile_portfolio(ctx: CycleContext) -> None:
 
             # Rebuild positions again to pick up market_map city_ids
             store.rebuild_positions()
-            ctx.portfolio_summary = store.get_portfolio_summary()
         except Exception:
             logger.exception("Portfolio sync failed, continuing with stale positions")
 
@@ -1028,15 +1023,23 @@ async def _group_forecasts(ctx: CycleContext, city_id: City, target_date: date) 
     return _fresh_cached_forecasts(ctx, city_id, target_date) or forecasts
 
 
-def _variables_needed(markets: list[MarketInfo]) -> set[str]:
-    """Consensus variables the group's markets need (temp_max_c always)."""
-    variables_needed = set()
+def _variables_needed(markets: list[MarketInfo]) -> list[str]:
+    """Consensus variables the group's markets need (temp_max_c always), in a fixed order.
+
+    A set's iteration order depends on the hash seed, which made the order of
+    signals (and log lines) for multi-variable groups vary run to run. Order
+    is MARKET_TYPE_TO_VARIABLE's (temp_max_c first), then any others sorted.
+    """
+    variables_needed = {"temp_max_c"}  # Always compute
     for m in markets:
         var = get_required_variable(m)
         if var:
             variables_needed.add(var)
-    variables_needed.add("temp_max_c")  # Always compute
-    return variables_needed
+    canonical = list(MARKET_TYPE_TO_VARIABLE.values())
+    return sorted(
+        variables_needed,
+        key=lambda v: (canonical.index(v) if v in canonical else len(canonical), v),
+    )
 
 
 def _collect_thresholds(markets: list[MarketInfo], variable: str) -> list[float]:
@@ -1323,15 +1326,11 @@ async def _signals_for_group(
 
 async def _compute_signals(ctx: CycleContext) -> None:
     """Stage 2: for each city with markets, fetch forecasts and compute signals."""
-    cities_processed = set()
+    # market_groups keys are unique (city, date) pairs: one header per group.
     for (city_id, target_date), city_markets in ctx.market_groups.items():
         city_config = CITIES[city_id]
-
-        if (city_id, target_date) not in cities_processed:
-            logger.info("=== %s (%s) on %s, %d markets ===",
-                       city_config.name, city_config.icao, target_date, len(city_markets))
-            cities_processed.add((city_id, target_date))
-
+        logger.info("=== %s (%s) on %s, %d markets ===",
+                    city_config.name, city_config.icao, target_date, len(city_markets))
         await _signals_for_group(ctx, city_config, city_id, target_date, city_markets)
 
 
@@ -1502,39 +1501,75 @@ def _usdc_floor_blocks(ctx: CycleContext) -> bool:
     return _usdc_floor_block
 
 
+DATA_API_POSITIONS_URL = "https://data-api.polymarket.com/positions"
+# Data API /positions pages with limit (default 100, max 500) and offset
+# (max 10000). An unpaginated call returns only the first 100 rows, and with
+# sizeThreshold=0 resolved dust counts toward that, so it truncates easily.
+DATA_API_POSITIONS_PAGE_LIMIT = 500
+DATA_API_POSITIONS_MAX_PAGES = 20
+
+
+async def _fetch_all_data_api_positions(client, wallet: str) -> list[dict] | None:
+    """Every /positions row for ``wallet``, or None if the list may be incomplete.
+
+    None when any page fails (non-200 or not a list), or when the last page we
+    are allowed to fetch is still full (more rows may exist beyond it).
+    """
+    rows: list[dict] = []
+    for page in range(DATA_API_POSITIONS_MAX_PAGES):
+        resp = await client.get(
+            DATA_API_POSITIONS_URL,
+            params={
+                "user": wallet, "sizeThreshold": 0,
+                "limit": DATA_API_POSITIONS_PAGE_LIMIT,
+                "offset": page * DATA_API_POSITIONS_PAGE_LIMIT,
+            },
+            timeout=15.0,
+        )
+        if resp.status_code != 200:
+            return None
+        batch = resp.json()
+        if not isinstance(batch, list):
+            return None
+        rows.extend(batch)
+        if len(batch) < DATA_API_POSITIONS_PAGE_LIMIT:
+            return rows
+    return None
+
+
 async def _clean_resolved_positions(store, live_executor) -> None:
     """Zero DB positions the exchange no longer reports as held.
 
     rebuild_positions() re-creates them from fills every cycle, so this must
-    run every time before the position count is read.
+    run every time before the position count is read. Only a complete
+    position list is trusted: on any failed or possibly truncated fetch
+    nothing is zeroed.
     """
-    import httpx as _httpx
-    _wallet = (live_executor.wallet_address or "").lower()
-    async with _httpx.AsyncClient() as _hc:
-        _pr = await _hc.get(
-            "https://data-api.polymarket.com/positions",
-            params={"user": _wallet, "sizeThreshold": 0},
-            timeout=15.0,
-        )
-        if _pr.status_code == 200:
-            _active_cids = {
-                p.get("conditionId")
-                for p in _pr.json()
-                if float(p.get("size", 0)) > 0
-            }
-            _db_pos = store.conn.execute(
-                "SELECT condition_id FROM positions WHERE total_shares > 0"
-            ).fetchall()
-            _cleaned = 0
-            for _row in _db_pos:
-                if _row["condition_id"] not in _active_cids:
-                    store.conn.execute(
-                        "UPDATE positions SET total_shares = 0 WHERE condition_id = ?",
-                        (_row["condition_id"],),
-                    )
-                    _cleaned += 1
-            if _cleaned:
-                store.commit()
+    import httpx
+    wallet = (live_executor.wallet_address or "").lower()
+    async with httpx.AsyncClient() as client:
+        api_positions = await _fetch_all_data_api_positions(client, wallet)
+    if api_positions is None:
+        logger.warning("POSITION CLEANUP skipped: Data API position list incomplete")
+        return
+    active_cids = {
+        p.get("conditionId")
+        for p in api_positions
+        if float(p.get("size", 0)) > 0
+    }
+    db_pos = store.conn.execute(
+        "SELECT condition_id FROM positions WHERE total_shares > 0"
+    ).fetchall()
+    cleaned = 0
+    for row in db_pos:
+        if row["condition_id"] not in active_cids:
+            store.conn.execute(
+                "UPDATE positions SET total_shares = 0 WHERE condition_id = ?",
+                (row["condition_id"],),
+            )
+            cleaned += 1
+    if cleaned:
+        store.commit()
 
 
 async def _count_active_positions(ctx: CycleContext) -> int:
@@ -1773,8 +1808,12 @@ def _chase_limit(signal: Signal, resting: _RestingEntry) -> float | None:
 
 async def _chase_resting_entry(
     ctx: CycleContext, signal: Signal, resting: _RestingEntry, chase_price: float,
-) -> None:
-    """Cancel the stale order and re-aim ``signal`` at the chased price."""
+) -> float:
+    """Cancel the stale order; return the YES-equivalent market_prob to re-place at.
+
+    ``signal.market_prob`` is left alone: it is the observed market price the
+    dashboard shows. Only the order placed for this signal uses the chased one.
+    """
     old_id = resting.order.get("order_id")
     if old_id:
         try:
@@ -1792,12 +1831,11 @@ async def _chase_resting_entry(
                 "Price chase cancel failed %s: %s",
                 old_id[:16], e,
             )
-    # Fall through to place new order at chased price
-    # Override the signal's market_prob to get the chased price
+    # Fall through to place new order at chased price. place_limit_order
+    # improves market_prob by half a tick, so aim half a tick above.
     if signal.recommended_side.value == "YES":
-        signal.market_prob = chase_price + 0.005
-    else:
-        signal.market_prob = 1.0 - (chase_price + 0.005)
+        return chase_price + 0.005
+    return 1.0 - (chase_price + 0.005)
 
 
 async def _replace_resting_entry(
@@ -1824,8 +1862,13 @@ async def _replace_resting_entry(
             )
 
 
-async def _reprice_resting_entry(ctx: CycleContext, signal: Signal, existing: dict) -> bool:
-    """Chase, keep or replace an open entry order. True to go on and place a new one."""
+async def _reprice_resting_entry(
+    ctx: CycleContext, signal: Signal, existing: dict,
+) -> tuple[bool, float | None]:
+    """Chase, keep or replace an open entry order.
+
+    Returns (place a new order?, chased market_prob for that order or None).
+    """
     resting = _resting_entry(existing, signal)
     should_chase = (
         resting.age_minutes > 60
@@ -1837,10 +1880,10 @@ async def _reprice_resting_entry(ctx: CycleContext, signal: Signal, existing: di
     if should_chase:
         chase_price = _chase_limit(signal, resting)
         if chase_price is None:
-            return False
+            return False, None
     if chase_price is not None:
-        await _chase_resting_entry(ctx, signal, resting, chase_price)
-    elif resting.price_drift <= 0.001:
+        return True, await _chase_resting_entry(ctx, signal, resting, chase_price)
+    if resting.price_drift <= 0.001:
         # Price unchanged, keep existing order, preserve queue priority
         logger.info(
             "LIVE KEEP: %s @ %.3f "
@@ -1849,16 +1892,28 @@ async def _reprice_resting_entry(ctx: CycleContext, signal: Signal, existing: di
             int(resting.age_minutes),
             resting.price_drift, resting.filled,
         )
-        return False
-    else:
-        # Price drifted, cancel old, place new
-        await _replace_resting_entry(ctx, signal, resting)
-    return True
+        return False, None
+    # Price drifted, cancel old, place new
+    await _replace_resting_entry(ctx, signal, resting)
+    return True, None
 
 
-async def _reconcile_existing_entry(ctx: CycleContext, signal: Signal) -> bool:
-    """POSITION-AWARE DUPLICATE PREVENTION. True if a new order should be placed."""
+async def _reconcile_existing_entry(
+    ctx: CycleContext, signal: Signal,
+) -> tuple[bool, float | None]:
+    """POSITION-AWARE DUPLICATE PREVENTION.
+
+    Returns (place a new order?, chased market_prob for that order or None).
+    """
     store = ctx.store
+    if store is None:
+        # No store: nothing to reconcile against. Treat as no position and
+        # no resting order rather than crashing the cycle.
+        logger.warning(
+            "NO STORE: %s, skipping position/open-order duplicate check",
+            signal.city_id,
+        )
+        return True, None
     # Check POSITIONS (what we actually hold) not orders
     existing_position = store.get_position_for_market(signal.market_id)
     if existing_position and existing_position.get("total_shares", 0) > 0:
@@ -1868,19 +1923,21 @@ async def _reconcile_existing_entry(ctx: CycleContext, signal: Signal) -> bool:
             existing_position["total_shares"],
             existing_position.get("cost_basis", 0),
         )
-        return False
+        return False, None
 
     # Also check open orders (not yet filled)
     existing = store.get_open_order_for_market(signal.market_id)
     if existing:
         return await _reprice_resting_entry(ctx, signal, existing)
-    return True
+    return True, None
 
 
 def _open_positions_for_risk(store) -> list:
     """Stored positions as Position objects for the portfolio risk checks."""
     from weather_edge.models.position import Position, normalize_side
 
+    if store is None:
+        return []
     raw_pos = store.get_positions()
     return [
         Position(
@@ -1969,6 +2026,11 @@ def _passes_live_risk_controls(ctx: CycleContext, signal: Signal) -> bool:
     # Use real position value (total_equity - cash) not inflated
     # DB cost_basis. DB cost_basis includes resolved positions;
     # Polymarket value is truth.
+    # With the built-in profiles this cannot bind today: every city is in a
+    # correlation group, so size <= max_group_exposure_pct * NAV by now,
+    # while total_at_risk <= NAV leaves gross headroom of at least
+    # (max_gross_exposure_multiple - 1) * NAV, which is larger. Kept as a
+    # backstop for an ungrouped city or a custom profile, not dead code.
     total_at_risk = max(0, total_equity - (ctx.live_balance or 0))
     if not _apply_risk_limit(signal, check_gross_exposure(
         signal.recommended_size, total_at_risk, total_equity, profile
@@ -1983,7 +2045,7 @@ def _passes_live_risk_controls(ctx: CycleContext, signal: Signal) -> bool:
     return True
 
 
-def _use_taker(signal: Signal, fee_blocked: bool) -> bool:
+def _use_taker(signal: Signal) -> bool:
     """Entry style: True = taker (cross the spread), False = resting maker order."""
     if settings.hail_mary_mode:
         # --- HAIL MARY: always taker on penny tickets ---
@@ -1997,22 +2059,21 @@ def _use_taker(signal: Signal, fee_blocked: bool) -> bool:
         # Below: maker (rest on book, cancel if unfilled)
         # At tail prices (<10c), taker fee is negligible anyway
         use_taker = signal.edge >= 0.08
-        # Re-check fee gate for taker orders, maker is $0 fee
-        # but taker pays real fees that could eat alpha.
-        # At $5 bets, taker fee is ~10c, skip fee gate, not
-        # worth the miss.
-        if use_taker and fee_blocked and signal.recommended_size > 20:
-            logger.info(
-                "FEE GATE TAKER: %s edge=%.1f%% but fee eats >40%% alpha on $%.0f, using maker",
-                signal.city_id, signal.edge * 100, signal.recommended_size,
-            )
-            use_taker = False
+        # No fee-gate re-check for takers: validate_fee_alpha_ratio blocks
+        # only when 0.05 * p * (1 - p) / edge > 0.40, i.e. edge < 3.125% at
+        # worst (p = 0.5), independent of size. Every taker has edge >= 8%,
+        # so a fee-blocked taker cannot exist (the old "FEE GATE TAKER"
+        # branch was unreachable).
         if use_taker:
             logger.info(
                 "TAKER ENTRY: %s edge=%.1f%%, crossing spread",
                 signal.city_id, signal.edge * 100,
             )
     return use_taker
+
+
+# place_limit_order statuses that mean no order is resting on the book
+_REJECTED_ENTRY_STATUSES = ("rejected", "post_only_reject", "too_small")
 
 
 def _record_live_entry(ctx: CycleContext, signal: Signal, result, use_taker: bool) -> None:
@@ -2030,6 +2091,36 @@ def _record_live_entry(ctx: CycleContext, signal: Signal, result, use_taker: boo
         signal.city_id, result.size_shares,
         result.limit_price, result.order_id,
         ctx.live_balance or 0,
+    )
+
+
+def _hedge_fits(ctx: CycleContext, h_signal: Signal) -> bool:
+    """A hedge is a position like any entry: it needs cap room and the cash."""
+    if ctx.active_position_count >= ctx.max_positions:
+        logger.info(
+            "HEDGE SKIP: %s, position cap %d/%d",
+            h_signal.city_id, ctx.active_position_count, ctx.max_positions,
+        )
+        return False
+    if ctx.live_balance is not None and h_signal.recommended_size > ctx.live_balance:
+        logger.info(
+            "HEDGE SKIP: %s needs $%.2f but exchange balance is $%.2f",
+            h_signal.city_id, h_signal.recommended_size, ctx.live_balance,
+        )
+        return False
+    return True
+
+
+def _record_live_hedge(ctx: CycleContext, signal: Signal, h_signal: Signal, h_result) -> None:
+    """Track an accepted hedge against the balance and the position cap, like an entry."""
+    if ctx.live_balance is not None:
+        ctx.live_balance -= h_result.size_usd
+    ctx.active_position_count += 1
+    logger.info(
+        "LIVE SPREAD HEDGE: %s %s %.0f shares @ %.3f, %s (bal=$%.2f)",
+        h_signal.recommended_side.value, signal.city_id,
+        h_result.size_shares, h_result.limit_price,
+        h_result.order_id, ctx.live_balance or 0,
     )
 
 
@@ -2065,7 +2156,8 @@ async def _place_live_hedge(ctx: CycleContext, signal: Signal) -> None:
     # Synthetic signal: market_prob is the
     # YES-equivalent of the hedge token price
     h_signal = build_hedge_signal(signal, hedge)
-    h_side = h_signal.recommended_side
+    if not _hedge_fits(ctx, h_signal):
+        return
 
     try:
         import requests
@@ -2074,29 +2166,20 @@ async def _place_live_hedge(ctx: CycleContext, signal: Signal) -> None:
         h_result = await live_executor.place_limit_order(
             h_signal, h_token_id, improve_price_by=0.0,
         )
-        if h_result:
-            logger.info(
-                "LIVE SPREAD HEDGE: %s %s %.0f shares @ %.3f, %s",
-                h_side.value, signal.city_id,
-                h_result.size_shares, h_result.limit_price,
-                h_result.order_id,
-            )
+        if h_result and h_result.status not in _REJECTED_ENTRY_STATUSES:
+            _record_live_hedge(ctx, signal, h_signal, h_result)
     except (requests.RequestException, ValueError, KeyError) as e:
         logger.error("LIVE SPREAD HEDGE FAILED: %s, %s", signal.city_id, e)
 
 
-async def _submit_live_entry(
-    ctx: CycleContext, signal: Signal, token_id: str, fee_blocked: bool,
-) -> None:
+async def _submit_live_entry(ctx: CycleContext, signal: Signal, token_id: str) -> None:
     """Place the live entry order (and its spread hedge); failures are logged."""
     try:
-        use_taker = _use_taker(signal, fee_blocked)
+        use_taker = _use_taker(signal)
         result = await ctx.live_executor.place_limit_order(
             signal, token_id, force_taker=use_taker,
         )
-        if result and result.status not in (
-            "rejected", "post_only_reject", "too_small",
-        ):
+        if result and result.status not in _REJECTED_ENTRY_STATUSES:
             _record_live_entry(ctx, signal, result, use_taker)
             await _place_live_hedge(ctx, signal)
 
@@ -2106,7 +2189,7 @@ async def _submit_live_entry(
         )
 
 
-async def _place_live_entry(ctx: CycleContext, signal: Signal, fee_blocked: bool) -> None:
+async def _place_live_entry(ctx: CycleContext, signal: Signal) -> None:
     """LIVE EXECUTION (maker orders bypass fee gate, $0 maker fee).
 
     Still require minimum raw edge, we're bypassing fee check, not edge check.
@@ -2131,11 +2214,14 @@ async def _place_live_entry(ctx: CycleContext, signal: Signal, fee_blocked: bool
     if not token_id:
         return
 
-    if not await _reconcile_existing_entry(ctx, signal):
+    place, chased_prob = await _reconcile_existing_entry(ctx, signal)
+    if not place or not _passes_live_risk_controls(ctx, signal):
         return
-    if not _passes_live_risk_controls(ctx, signal):
-        return
-    await _submit_live_entry(ctx, signal, token_id, fee_blocked)
+    # Order on a copy at the chased price; the signal keeps the observed price.
+    order_signal = (
+        signal if chased_prob is None else replace(signal, market_prob=chased_prob)
+    )
+    await _submit_live_entry(ctx, order_signal, token_id)
 
 
 async def _execute_signal(ctx: CycleContext, signal: Signal) -> None:
@@ -2178,7 +2264,7 @@ async def _execute_signal(ctx: CycleContext, signal: Signal) -> None:
     _place_paper_entry(ctx, signal, fee_blocked)
 
     if ctx.live_entries_open():
-        await _place_live_entry(ctx, signal, fee_blocked)
+        await _place_live_entry(ctx, signal)
 
 
 async def _execute_signals(ctx: CycleContext) -> None:

@@ -945,11 +945,6 @@
    "store.rebuild_positions"
   ],
   [
-   "store.get_portfolio_summary",
-   [],
-   {}
-  ],
-  [
    "gribstream",
    [
     "atl",
@@ -1710,6 +1705,8 @@
    "http.get",
    "https://data-api.polymarket.com/positions",
    {
+    "limit": 500,
+    "offset": 0,
     "sizeThreshold": 0,
     "user": "0xwallet"
    }
@@ -3205,20 +3202,20 @@
   "INFO weather_edge.scheduler TAKER ENTRY: lax edge=9.0%, crossing spread",
   "INFO weather_edge.scheduler LIVE: TAKER pending NO lax 29 shares @ 0.690, new-8 (bal=$393.00)",
   "INFO weather_edge.trading.market_maker SPREAD ORDER: YES lax 17 shares @ 0.30 ($5.00), hedges NO lax | guaranteed profit: $0.00",
-  "INFO weather_edge.scheduler LIVE SPREAD HEDGE: YES lax 17 shares @ 0.300, new-9",
+  "INFO weather_edge.scheduler LIVE SPREAD HEDGE: YES lax 17 shares @ 0.300, new-9 (bal=$388.00)",
   "INFO weather_edge.trading.paper PAPER TRADE: NO hou $20 @ 0.28 (+2\u00a2 spread, fee $0.20) | edge=9.0% conf=90% | [TOMORROW] hfail bucket?",
   "INFO weather_edge.trading.market_maker SPREAD ORDER: YES hou 67 shares @ 0.30 ($20.00), hedges NO hou | guaranteed profit: $26.67",
   "INFO weather_edge.trading.paper SPREAD TRADE: YES hou $20 @ 0.30 (fee $0.21) | est guaranteed=$26.67 | [SPREAD] HEDGE YES @ 0.30 for hou hfail bucket?",
   "INFO weather_edge.scheduler TAKER ENTRY: hou edge=9.0%, crossing spread",
-  "INFO weather_edge.scheduler LIVE: TAKER pending NO hou 29 shares @ 0.690, new-10 (bal=$373.00)",
+  "INFO weather_edge.scheduler LIVE: TAKER pending NO hou 29 shares @ 0.690, new-10 (bal=$368.00)",
   "INFO weather_edge.trading.market_maker SPREAD ORDER: YES hou 17 shares @ 0.30 ($5.00), hedges NO hou | guaranteed profit: $0.00",
   "ERROR weather_edge.scheduler LIVE SPREAD HEDGE FAILED: hou, hedge down",
   "INFO weather_edge.trading.paper PAPER TRADE: NO hou $20 @ 0.28 (+2\u00a2 spread, fee $0.20) | edge=10.0% conf=90% | [TOMORROW] hnone bucket?",
   "INFO weather_edge.scheduler TAKER ENTRY: hou edge=10.0%, crossing spread",
-  "INFO weather_edge.scheduler LIVE: TAKER pending NO hou 29 shares @ 0.690, new-11 (bal=$353.00)",
+  "INFO weather_edge.scheduler LIVE: TAKER pending NO hou 29 shares @ 0.690, new-11 (bal=$348.00)",
   "INFO weather_edge.trading.paper PAPER TRADE: NO den $20 @ 0.03 (+2\u00a2 spread, fee $0.02) | edge=8.0% conf=90% | [PENNY] tail bucket?",
   "INFO weather_edge.scheduler TAKER ENTRY: den edge=8.0%, crossing spread",
-  "INFO weather_edge.scheduler LIVE: TAKER pending NO den 21 shares @ 0.950, new-12 (bal=$333.00)",
+  "INFO weather_edge.scheduler LIVE: TAKER pending NO den 21 shares @ 0.950, new-12 (bal=$328.00)",
   "INFO weather_edge.scheduler SPREAD CAPTURE: 4 orders, est. guaranteed P&L=$53.34",
   "INFO weather_edge.scheduler   bue (no markets): mean=21.0\u00b0C conf=90%",
   "INFO weather_edge.scheduler   sel (no markets): mean=21.0\u00b0C conf=90%",
@@ -3589,7 +3586,7 @@
    "city": "atl",
    "edge": 0.05,
    "market_id": "chase",
-   "market_prob": 0.835,
+   "market_prob": 0.3,
    "net_edge": 0.04,
    "side": "NO",
    "size": 20.0,
@@ -3611,7 +3608,7 @@
    "city": "sfo",
    "edge": 0.05,
    "market_id": "chasey",
-   "market_prob": 0.265,
+   "market_prob": 0.3,
    "net_edge": 0.04,
    "side": "YES",
    "size": 11.0,
