@@ -7,6 +7,7 @@ minimal stub modules are registered when the real ones are absent.
 from __future__ import annotations
 
 import asyncio
+import sqlite3
 import sys
 import types
 from unittest.mock import MagicMock
@@ -100,7 +101,7 @@ class FakeStore:
     def save_live_trade(self, **kw):
         if FakeStore.fail_first > 0:
             FakeStore.fail_first -= 1
-            raise RuntimeError("db locked")
+            raise sqlite3.OperationalError("database is locked")
         FakeStore.saved.append(kw)
 
     def close(self):

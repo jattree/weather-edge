@@ -94,6 +94,9 @@ _STATUS_TTL = 1800  # 30 minutes, status expires to "unknown" if not refreshed
 _METRIC_TTL = 86400  # 24 hours for daily counters
 
 
+_recording = False  # re-entrancy guard for record_service_call
+
+
 def record_service_call(
     service_name: str,
     success: bool,
@@ -120,9 +123,17 @@ def record_service_call(
     if extra:
         data.update(extra)
 
-    # Store in Redis if available
+    # Store in Redis if available. Never for the "redis" service itself:
+    # live_state._get_redis() reports its own failures through this function,
+    # and reading Redis from here would re-enter the connect attempt,
+    # recursing (with a connect timeout per level) while Redis is down.
+    global _recording
+    if service_name == "redis" or _recording:
+        _health_store[service_name] = data
+        return
+    _recording = True
     try:
-        from weather_edge.live_state import set_json, get_json
+        from weather_edge.live_state import get_json, set_json
         existing = get_json(f"svc:{service_name}") or {}
         # Preserve counters from Redis
         if "call_count" in existing:
@@ -140,6 +151,8 @@ def record_service_call(
         set_json(f"svc:{service_name}", data, ttl=_STATUS_TTL)
     except Exception:
         pass
+    finally:
+        _recording = False
 
     # Always update in-memory fallback
     _health_store[service_name] = data

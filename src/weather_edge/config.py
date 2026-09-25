@@ -361,6 +361,10 @@ class Settings(BaseSettings):
     claude_model: str = "claude-sonnet-5"  # Claude reasoning model id
     # When True, no trade is placed on a signal without a successful AI review
     require_ai_review: bool = True
+    # Paid Claude/Gemini reviews per main cycle; unreviewed signals go first
+    max_ai_reviews_per_cycle: int = 3
+    # Oldest cached forecast the STALE DATA fallback may use
+    max_stale_forecast_hours: float = 6.0
     gemini_api_key: str = ""  # Gemini red team / dissent layer
     gribstream_api_key: str = ""  # GribStream AI models (GraphCast, AIFS)
     openmeteo_base_url: str = "https://api.open-meteo.com/v1/forecast"

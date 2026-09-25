@@ -278,6 +278,11 @@ async def run_dashboard_cycle(run_ai: bool = True) -> None:
         await _run_dashboard_cycle_inner(run_ai)
 
 
+# (city_id, target_date) -> forecasts, shared across dashboard cycles
+# (run_cycle evicts past dates).
+_dashboard_forecast_cache: dict[tuple, list] = {}
+
+
 async def _run_dashboard_cycle_inner(run_ai: bool = True) -> None:
     """Inner cycle logic, always called under _cycle_lock."""
     global latest_state
@@ -300,10 +305,13 @@ async def _run_dashboard_cycle_inner(run_ai: bool = True) -> None:
     # Either can be None/disabled and the other keeps working
     _paper = paper_trader if settings.paper_mode else None
     _live = live_executor if settings.live_mode else None
+    # Persist the forecast cache across cycles so run_cycle's STALE DATA
+    # fallback has something to fall back on when a fetch fails.
     all_signals, forecast_cache, city_volume = await run_cycle(
         _paper, target_dates, run_ai_reasoning=run_ai,
         live_executor=_live,
         store=paper_trader.store,
+        forecast_cache=_dashboard_forecast_cache,
     )
 
     # Cache model probs for fast exit loop
@@ -755,6 +763,8 @@ async def sniper_loop() -> None:
                     logger.warning("Golden window flush failed", exc_info=True)
 
             try:
+                # No paid AI call here; run_cycle only executes signals the AI
+                # approved earlier today and honours every remembered veto.
                 await run_dashboard_cycle(run_ai=False)
             except Exception:
                 logger.exception("Sniper-triggered cycle failed")
@@ -1100,7 +1110,12 @@ async def _user_triggered_refresh() -> None:
     if run_ai:
         _last_ai_refresh_monotonic = now
     else:
-        logger.info("Refresh: AI reasoning on cooldown, refreshing data only")
+        # Without a fresh review, run_cycle's AI gate only lets through
+        # signals approved earlier today; remembered vetoes still apply.
+        logger.info(
+            "Refresh: AI reasoning on cooldown, refreshing data "
+            "(only previously approved signals can trade)",
+        )
     if trading_active:
         await run_dashboard_cycle(run_ai=run_ai)
         return

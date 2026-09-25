@@ -209,6 +209,348 @@ def compute_model_prob_for_market(market: MarketInfo, consensus) -> float | None
     return prob
 
 
+# Swing-bot horizon: block entries on markets resolving sooner than this.
+MIN_HORIZON_HOURS = 36
+# STALE DATA fallback: never reuse a cached forecast older than this.
+DEFAULT_MAX_STALE_FORECAST_HOURS = 6.0
+
+
+def filter_dates_by_horizon(
+    target_dates: list[date],
+    now_utc: datetime | None = None,
+    min_horizon_hours: int | None = None,
+) -> tuple[list[date], list[date], int]:
+    """Split target dates into (kept, blocked, min_horizon_hours).
+
+    A market for date ``d`` resolves at 00:00 UTC on ``d + 1``; it is kept
+    only if that is at least ``min_horizon_hours`` away. HAIL MARY mode uses a
+    0h horizon.
+    """
+    if now_utc is None:
+        now_utc = datetime.now(timezone.utc)
+    if min_horizon_hours is None:
+        min_horizon_hours = 0 if settings.hail_mary_mode else MIN_HORIZON_HOURS
+    min_horizon = timedelta(hours=min_horizon_hours)
+    kept, blocked = [], []
+    for d in target_dates:
+        resolves = datetime.combine(d + timedelta(days=1), datetime.min.time()).replace(
+            tzinfo=timezone.utc,
+        )
+        (kept if resolves - now_utc >= min_horizon else blocked).append(d)
+    return kept, blocked, min_horizon_hours
+
+
+def default_target_dates(today: date | None = None, days: int = 4) -> list[date]:
+    """``today`` .. ``today + days - 1`` (the scheduler's default window)."""
+    today = today or date.today()
+    return [today + timedelta(days=i) for i in range(max(1, days))]
+
+
+def evict_stale_forecasts(forecast_cache: dict[tuple, list], today: date) -> int:
+    """Remove cache entries for target dates before ``today``. Returns count."""
+    stale = [
+        k for k in forecast_cache
+        if isinstance(k, tuple) and len(k) == 2 and isinstance(k[1], date) and k[1] < today
+    ]
+    for k in stale:
+        del forecast_cache[k]
+    return len(stale)
+
+
+def _forecast_age_hours(forecasts: list, now_utc: datetime) -> float | None:
+    times = [getattr(f, "fetched_at", None) for f in forecasts]
+    times = [t for t in times if isinstance(t, datetime)]
+    if not times:
+        return None
+    oldest = min(t if t.tzinfo else t.replace(tzinfo=timezone.utc) for t in times)
+    return (now_utc - oldest).total_seconds() / 3600
+
+
+def model_context_for_signal(
+    signal: Signal, forecast_cache: dict[tuple, list],
+) -> tuple[dict[str, float], float, float]:
+    """(model_values, mean, std) for the signal's OWN city and target date.
+
+    Never falls back to another date's forecasts: an empty dict means "no
+    context", and the AI review treats that as no review.
+    """
+    try:
+        key = (City(signal.city_id), date.fromisoformat(str(signal.target_date)))
+    except ValueError:
+        return {}, 0.0, 0.0
+    f_list = forecast_cache.get(key) or []
+    model_vals = {f.model_name: f.temp_max_c for f in f_list if f.temp_max_c is not None}
+    if not model_vals:
+        return {}, 0.0, 0.0
+    vals = list(model_vals.values())
+    mean = sum(vals) / len(vals)
+    std = (max(vals) - min(vals)) / 2 if len(vals) > 1 else 0.5
+    return model_vals, mean, std
+
+
+def _gemini_size_multiplier(dissent: float, sizing: str) -> float:
+    """Position-size multiplier from a Gemini red-team verdict (1.0 = no cut)."""
+    if dissent >= 0.7 or sizing in ("half", "skip"):
+        if sizing == "skip" and dissent >= 0.9:
+            return 0.0
+        if sizing == "half" or dissent >= 0.7:
+            return 0.5
+        return 1.0 - (dissent * 0.5)
+    if dissent >= 0.3 and sizing == "reduce_20pct":
+        return 0.8
+    return 1.0
+
+
+async def _review_signal(signal: Signal, forecast_cache: dict[tuple, list], store) -> str:
+    """Claude + Gemini review of one signal: 'approved', 'vetoed' or 'failed'.
+
+    Outside hail-mary, applies the AI sizing to ``signal.recommended_size`` and
+    records approvals/vetoes in the shared review memory. In hail-mary mode the
+    verdicts are logged only (no cut, no block, nothing remembered).
+    """
+    from weather_edge.analysis import gemini_reasoning
+    from weather_edge.analysis.claude_reasoning import _decision_history, get_review_memory
+
+    hail = settings.hail_mary_mode
+    memory = get_review_memory()
+
+    model_vals, consensus_mean, consensus_std = model_context_for_signal(signal, forecast_cache)
+    reasoning = None
+    if model_vals:
+        reasoning = await analyze_trade(signal, model_vals, consensus_mean, consensus_std)
+    if reasoning is None:
+        logger.warning(
+            "CLAUDE REVIEW UNAVAILABLE: %s %s %s (%s)",
+            signal.city_id, signal.target_date, signal.description[:40],
+            "no forecasts for this date" if not model_vals else "API call failed",
+        )
+        return "failed"
+
+    record_decision(reasoning)
+    try:
+        store.save_ai_decision(
+            source="claude",
+            decision="TRADE" if reasoning.should_trade else "SKIP",
+            city_id=signal.city_id,
+            market_id=signal.market_id,
+            rationale=reasoning.rationale[:500],
+            confidence_adj=reasoning.confidence_adjustment,
+        )
+    except Exception:
+        pass
+
+    if not reasoning.review_ok and not hail:
+        return "failed"
+
+    size_mult = 1.0
+    if not reasoning.should_trade:
+        if hail:
+            # HAIL MARY: Claude SKIP is logged but does not block
+            logger.info(
+                "HAILMARY override CLAUDE SKIP: %s %s, %s",
+                signal.city_id, signal.description[:40], reasoning.rationale,
+            )
+        else:
+            logger.info(
+                "CLAUDE SKIP: %s %s, %s",
+                signal.city_id, signal.description[:40], reasoning.rationale,
+            )
+            memory.record_veto(signal, reasoning.rationale, "claude")
+            return "vetoed"
+    elif not hail:
+        # Apply Claude's confidence adjustment to position size.
+        # HAIL MARY ignores it, sizing is fixed downstream.
+        size_mult = reasoning.confidence_adjustment
+        signal.recommended_size = round(signal.recommended_size * size_mult, 2)
+
+    # === Gemini red team on Claude-approved trades ===
+    # None = Gemini not configured (Claude-only review). A configured Gemini
+    # that errors returns a fail-closed result carrying "error".
+    try:
+        gemini_result = await gemini_reasoning.red_team_trade(
+            signal, model_vals, consensus_mean, consensus_std,
+            claude_rationale=reasoning.rationale,
+        )
+    except Exception as e:
+        logger.warning("Gemini red team crashed for %s: %s", signal.city_id, e)
+        gemini_result = {"error": str(e), "dissent_strength": 1.0,
+                         "verdict": "DISSENT", "sizing_recommendation": "skip"}
+
+    if gemini_result:
+        dissent = float(gemini_result.get("dissent_strength", 1.0))
+        verdict = gemini_result.get("verdict", "DISSENT")
+        sizing = gemini_result.get("sizing_recommendation", "skip")
+        _decision_history.insert(0, {
+            "time": datetime.now(timezone.utc).strftime("%H:%M:%S"),
+            "city": (
+                signal.city_id.upper()
+                if isinstance(signal.city_id, str)
+                else signal.city_id
+            ),
+            "decision": "DISSENT" if verdict == "DISSENT" else "AGREE",
+            "signal": signal.description[:60],
+            "adjustment": round(1.0 - dissent, 2),
+            "rationale": "; ".join(gemini_result.get("counter_arguments", [])[:2]),
+            "risk_factors": [gemini_result.get("risk_the_bull_missed", "")],
+            "source": "gemini",
+        })
+        try:
+            store.save_ai_decision(
+                source="gemini",
+                decision=verdict,
+                city_id=signal.city_id,
+                market_id=signal.market_id,
+                rationale="; ".join(gemini_result.get("counter_arguments", [])[:2]),
+                dissent_strength=dissent,
+            )
+        except Exception:
+            pass
+
+        if hail:
+            if gemini_result.get("error") or dissent >= 0.3:
+                logger.info(
+                    "HAILMARY override GEMINI DISSENT: %s d=%.1f %s (no cut applied)",
+                    signal.city_id, dissent, sizing,
+                )
+        elif gemini_result.get("error"):
+            logger.warning(
+                "GEMINI REVIEW FAILED: %s, not executing this cycle (%s)",
+                signal.city_id, gemini_result["error"],
+            )
+            return "failed"
+        else:
+            multiplier = _gemini_size_multiplier(dissent, sizing)
+            if multiplier <= 0:
+                logger.info(
+                    "GEMINI VETO: %s, sizing=%s dissent=%.1f, dropping signal",
+                    signal.city_id, sizing, dissent,
+                )
+                memory.record_veto(signal, f"gemini {sizing} d={dissent:.1f}", "gemini")
+                return "vetoed"
+            if multiplier < 1.0:
+                old_size = signal.recommended_size
+                signal.recommended_size = round(signal.recommended_size * multiplier, 2)
+                logger.info(
+                    "GEMINI DISSENT: %s, %.0f%% cut $%.0f->$%.0f (d=%.1f %s)",
+                    signal.city_id, (1 - multiplier) * 100,
+                    old_size, signal.recommended_size, dissent, sizing,
+                )
+            size_mult *= multiplier
+
+    if not hail:
+        memory.record_approval(signal, size_mult, reasoning.rationale)
+    return "approved"
+
+
+async def apply_ai_review(
+    signals: list[Signal],
+    forecast_cache: dict[tuple, list],
+    run_ai_reasoning: bool,
+    store=None,
+) -> list[Signal]:
+    """Gate ``signals`` through the Claude + Gemini review; return the executable ones.
+
+    Outside HAIL MARY mode a signal is executed only if:
+    - it has no veto recorded today for its (market, target date), and
+    - it was approved in this cycle, or approved earlier (within
+      ``claude_reasoning.APPROVAL_TTL_SEC``) on the same side, in which case
+      the remembered AI size multiplier is re-applied, and
+    - its size after AI adjustments is > 0.
+
+    A failed review (API error, unparseable/truncated reply, no forecast
+    context) blocks the signal for this cycle but is not remembered.
+
+    Signals with no review at all (sniper / cooldown-refresh cycles with
+    ``run_ai_reasoning=False``, no ANTHROPIC_API_KEY, or beyond the
+    ``max_ai_reviews_per_cycle`` budget) are NOT executed unless
+    ``settings.require_ai_review`` is False. Explicit vetoes block regardless.
+
+    HAIL MARY mode keeps its log-only behaviour: every signal is returned.
+    """
+    from weather_edge.analysis.claude_reasoning import get_review_memory
+
+    if not signals:
+        return []
+
+    hail = settings.hail_mary_mode
+    require_review = bool(getattr(settings, "require_ai_review", True))
+    max_reviews = int(getattr(settings, "max_ai_reviews_per_cycle", 3))
+    memory = get_review_memory()
+    memory.evict_before(date.today())
+
+    outcome: dict[int, str] = {}
+    if not hail:
+        for s in signals:
+            veto = memory.veto_for(s)
+            if veto:
+                outcome[id(s)] = "vetoed"
+                logger.info(
+                    "AI VETO (remembered, %s): %s %s %s, %s",
+                    veto.source, s.city_id, s.target_date, s.description[:40], veto.reason,
+                )
+
+    ai_available = bool(run_ai_reasoning and ANTHROPIC_API_KEY)
+    if ai_available:
+        candidates = [
+            s for s in signals
+            if s.confidence_tier.value != "low" and id(s) not in outcome
+        ]
+        # Unreviewed signals first so the budget eventually covers all of them.
+        candidates.sort(key=lambda s: (memory.approval_for(s) is not None, -abs(s.edge)))
+        for s in candidates[:max_reviews]:
+            outcome[id(s)] = await _review_signal(s, forecast_cache, store)
+
+    if hail:
+        return list(signals)
+
+    if not run_ai_reasoning:
+        why = "AI skipped on this cycle (sniper / refresh cooldown)"
+    elif not ANTHROPIC_API_KEY:
+        why = "no ANTHROPIC_API_KEY"
+    else:
+        why = f"outside the {max_reviews}-review budget"
+
+    executable: list[Signal] = []
+    for s in signals:
+        state = outcome.get(id(s))
+        if state == "vetoed":
+            continue
+        if state == "approved":
+            if s.recommended_size > 0:
+                executable.append(s)
+            continue
+        if state is None:
+            approval = memory.approval_for(s)
+            if approval:
+                s.recommended_size = round(s.recommended_size * approval.size_multiplier, 2)
+                if s.recommended_size > 0:
+                    logger.info(
+                        "AI APPROVAL (remembered): %s %s %s, size x%.2f",
+                        s.city_id, s.target_date, s.description[:40],
+                        approval.size_multiplier,
+                    )
+                    executable.append(s)
+                continue
+        # Failed review, or never reviewed
+        if not require_review:
+            logger.warning(
+                "UNREVIEWED TRADE (require_ai_review=False): %s %s %s",
+                s.city_id, s.target_date, s.description[:40],
+            )
+            executable.append(s)
+        else:
+            logger.info(
+                "NO AI APPROVAL: %s %s %s not executed (%s)",
+                s.city_id, s.target_date, s.description[:40],
+                "review failed" if state == "failed" else why,
+            )
+
+    logger.info(
+        "AI GATE: %d/%d signals cleared for execution", len(executable), len(signals),
+    )
+    return executable
+
+
 async def run_cycle(
     paper_trader: PaperTrader | None,
     target_dates: list[date] | None = None,
@@ -227,20 +569,18 @@ async def run_cycle(
         forecast_cache: Optional persistent cache of forecasts across cycles.
 
     Returns:
-        (signals, forecast_cache) where forecast_cache maps (city_id, date) -> forecasts
+        (signals, forecast_cache, city_volume) where forecast_cache maps
+        (city_id, date) -> forecasts. ``signals`` is every candidate after
+        filtering (for display / exit monitoring); only the AI-cleared subset
+        is executed.
     """
-    # Store can come from paper_trader or be passed directly
+    # Store can come from paper_trader or be passed directly. A plain
+    # in-memory PaperTrader (CLI) has no store; every store use tolerates None.
     if store is None and paper_trader is not None:
-        store = paper_trader.store
+        store = getattr(paper_trader, "store", None)
 
     if target_dates is None:
-        today = date.today()
-        target_dates = [
-            today,
-            today + timedelta(days=1),
-            today + timedelta(days=2),
-            today + timedelta(days=3),
-        ]
+        target_dates = default_target_dates()
 
     # --- SWING BOT: 36h horizon filter ---
     # Block entries on markets resolving too soon. We get front-run by bots
@@ -249,16 +589,9 @@ async def run_cycle(
     # HAIL MARY mode drops the filter: penny lottery tickets only need to
     # resolve, they don't need to be ahead of the front-running bots.
     now_utc = datetime.now(timezone.utc)
-    min_horizon_hours = 0 if settings.hail_mary_mode else 36
-    min_horizon = timedelta(hours=min_horizon_hours)
-    original_dates = list(target_dates)
-    target_dates = [
-        d for d in target_dates
-        if datetime.combine(d + timedelta(days=1), datetime.min.time()).replace(
-            tzinfo=timezone.utc,
-        ) - now_utc >= min_horizon
-    ]
-    blocked = set(original_dates) - set(target_dates)
+    target_dates, blocked, min_horizon_hours = filter_dates_by_horizon(
+        list(target_dates), now_utc,
+    )
     if blocked:
         logger.info(
             "HORIZON FILTER: blocked %s (resolve < %dh)",
@@ -290,7 +623,11 @@ async def run_cycle(
 
     all_signals: list[Signal] = []
     _forecast_cache = forecast_cache if forecast_cache is not None else {}
-    _ai_divergence_cache: dict[tuple, dict | None] = {}  # (city, variable) -> divergence result
+    # Cross-cycle cache: forget target dates that have already passed.
+    evict_stale_forecasts(_forecast_cache, date.today())
+    _refreshed_this_cycle: set[tuple] = set()  # keys fetched fresh in this cycle
+    # (city, target_date, variable) -> divergence result
+    _ai_divergence_cache: dict[tuple, dict | None] = {}
 
     # Check if we're in a golden window (model just updated)
     if is_golden_window():
@@ -374,19 +711,29 @@ async def run_cycle(
     logger.info("Active market groups: %d city-date combos", len(market_groups))
 
     # Step 1c: Fetch AI model forecasts (GraphCast via GribStream) for comparison
-    ai_forecasts: dict[str, dict] = {}  # city_id -> AIModelForecast
+    # Keyed (city_id, target_date): a GraphCast run for one date must never be
+    # compared against the physics consensus for another.
+    ai_forecasts: dict[tuple[str, date], object] = {}
     try:
         from weather_edge.fetchers.gribstream import (
             compute_ai_physics_divergence,
             fetch_ai_forecasts_batch,
         )
-        market_cities = list({city_id for city_id, _ in market_groups})
-        # Use earliest target date for GraphCast (not [1] which may be wrong after horizon filter)
-        ai_target = target_dates[0] if target_dates else date.today() + timedelta(days=1)
-        ai_batch = await fetch_ai_forecasts_batch(market_cities, ai_target)
-        ai_forecasts = ai_batch
-        if ai_batch:
-            logger.info("GraphCast: %d city forecasts fetched", len(ai_batch))
+        for ai_target in sorted({d for _, d in market_groups}):
+            market_cities = sorted(
+                {c for c, d in market_groups if d == ai_target}, key=lambda c: c.value,
+            )
+            try:
+                ai_batch = await fetch_ai_forecasts_batch(market_cities, ai_target)
+            except Exception:
+                logger.debug("GribStream AI fetch failed for %s", ai_target, exc_info=True)
+                continue
+            for cid, fc in (ai_batch or {}).items():
+                ai_forecasts[(getattr(cid, "value", cid), ai_target)] = fc
+            if ai_batch:
+                logger.info(
+                    "GraphCast: %d city forecasts fetched for %s", len(ai_batch), ai_target,
+                )
     except Exception:
         logger.debug("GribStream AI fetch skipped", exc_info=True)
 
@@ -404,6 +751,7 @@ async def run_cycle(
         forecasts = await fetch_city_forecasts(city_id, target_date)
         if forecasts:
             _forecast_cache[(city_id, target_date)] = forecasts
+            _refreshed_this_cycle.add((city_id, target_date))
 
             # Persist forecast snapshot for self-learning
             try:
@@ -417,11 +765,24 @@ async def run_cycle(
         else:
             # Check if we have stale data in cache
             cached = _forecast_cache.get((city_id, target_date))
-            if cached:
+            max_stale_h = float(getattr(
+                settings, "max_stale_forecast_hours", DEFAULT_MAX_STALE_FORECAST_HOURS,
+            ))
+            age_h = _forecast_age_hours(cached, now_utc) if cached else None
+            if cached and age_h is not None and age_h <= max_stale_h:
                 forecasts = cached
                 logger.warning(
-                    "STALE DATA: fetch failed for %s on %s, using cached data from %s",
-                    city_id.value, target_date, cached[0].fetched_at.strftime("%H:%M:%S"),
+                    "STALE DATA: fetch failed for %s on %s, using cached data from %s "
+                    "(%.1fh old)",
+                    city_id.value, target_date,
+                    cached[0].fetched_at.strftime("%H:%M:%S"), age_h,
+                )
+            elif cached:
+                logger.warning(
+                    "STALE DATA REJECTED: cached forecast for %s on %s is too old "
+                    "(%s h > %.1f h), skipping",
+                    city_id.value, target_date,
+                    f"{age_h:.1f}" if age_h is not None else "unknown", max_stale_h,
                 )
 
         if not forecasts:
@@ -557,9 +918,9 @@ async def run_cycle(
                 adjusted_conf = min(1.0, consensus.confidence * pattern_conf_mult * trend_mult)
 
                 # Apply AI vs physics divergence (GraphCast comparison), computed once per city
-                _ai_div_key = (city_id.value, variable)
+                _ai_div_key = (city_id.value, target_date, variable)
                 if _ai_div_key not in _ai_divergence_cache:
-                    ai_fc = ai_forecasts.get(city_id.value)
+                    ai_fc = ai_forecasts.get((city_id.value, target_date))
                     if ai_fc and variable == "temp_max_c":
                         try:
                             div = compute_ai_physics_divergence(
@@ -717,155 +1078,11 @@ async def run_cycle(
     all_signals = filtered_signals
 
     # === Claude + Gemini reasoning layer ===
-    # Only on main cycles (not sniper-triggered) to save API costs
-    if run_ai_reasoning and ANTHROPIC_API_KEY and all_signals:
-        tradeable = sorted(
-            [s for s in all_signals if s.confidence_tier.value != "low"],
-            key=lambda s: abs(s.edge),
-            reverse=True,
-        )[:3]
-
-        _golden = is_golden_window()  # used for future timing logic
-        for signal in tradeable:
-            # Build model context for Claude from cached forecasts
-            model_vals = {}
-            consensus_mean = signal.model_prob * 30  # Rough temp estimate from probability
-            consensus_std = 2.0
-            for (cid, td), f_list in _forecast_cache.items():
-                if cid.value == signal.city_id:
-                    model_vals = {
-                        f.model_name: f.temp_max_c
-                        for f in f_list
-                        if f.temp_max_c is not None
-                    }
-                    if model_vals:
-                        vals = list(model_vals.values())
-                        consensus_mean = sum(vals) / len(vals)
-                        consensus_std = (
-                            (max(vals) - min(vals)) / 2
-                            if len(vals) > 1 else 0.5
-                        )
-                    break
-
-            reasoning = await analyze_trade(
-                signal, model_vals, consensus_mean, consensus_std,
-            )
-            if reasoning:
-                # Record every decision for the AI Decisions dashboard tab
-                record_decision(reasoning)
-
-                # Persist AI decision for self-learning
-                try:
-                    store.save_ai_decision(
-                        source="claude",
-                        decision="TRADE" if reasoning.should_trade else "SKIP",
-                        city_id=signal.city_id,
-                        market_id=signal.market_id,
-                        rationale=reasoning.rationale[:500],
-                        confidence_adj=reasoning.confidence_adjustment,
-                    )
-                except Exception:
-                    pass
-
-                if not reasoning.should_trade:
-                    if settings.hail_mary_mode:
-                        # HAIL MARY: Claude SKIP is logged but does not block
-                        logger.info(
-                            "HAILMARY override CLAUDE SKIP: %s %s, %s",
-                            signal.city_id,
-                            signal.description[:40],
-                            reasoning.rationale,
-                        )
-                    else:
-                        logger.info(
-                            "CLAUDE SKIP: %s %s, %s",
-                            signal.city_id,
-                            signal.description[:40],
-                            reasoning.rationale,
-                        )
-                        continue
-                elif not settings.hail_mary_mode:
-                    # Apply Claude's confidence adjustment to position size.
-                    # HAIL MARY ignores it, sizing is fixed downstream.
-                    signal.recommended_size = round(
-                        signal.recommended_size
-                        * reasoning.confidence_adjustment, 2,
-                    )
-
-                # === Gemini red team on Claude-approved trades ===
-                try:
-                    from weather_edge.analysis.gemini_reasoning import red_team_trade
-                    gemini_result = await red_team_trade(
-                        signal, model_vals, consensus_mean, consensus_std,
-                        claude_rationale=reasoning.rationale,
-                    )
-                    if gemini_result:
-                        dissent = gemini_result.get("dissent_strength", 0)
-                        verdict = gemini_result.get("verdict", "AGREE")
-                        # Record Gemini decision for dashboard
-                        from weather_edge.analysis.claude_reasoning import _decision_history
-                        _decision_history.insert(0, {
-                            "time": datetime.now(timezone.utc).strftime("%H:%M:%S"),
-                            "city": (
-                                signal.city_id.upper()
-                                if isinstance(signal.city_id, str)
-                                else signal.city_id
-                            ),
-                            "decision": "DISSENT" if verdict == "DISSENT" else "AGREE",
-                            "signal": signal.description[:60],
-                            "adjustment": round(1.0 - dissent, 2),
-                            "rationale": "; ".join(gemini_result.get("counter_arguments", [])[:2]),
-                            "risk_factors": [gemini_result.get("risk_the_bull_missed", "")],
-                            "source": "gemini",
-                        })
-                        # Persist Gemini decision for self-learning
-                        try:
-                            store.save_ai_decision(
-                                source="gemini",
-                                decision=verdict,
-                                city_id=signal.city_id,
-                                market_id=signal.market_id,
-                                rationale="; ".join(gemini_result.get("counter_arguments", [])[:2]),
-                                dissent_strength=dissent,
-                            )
-                        except Exception:
-                            pass
-                        # Variable dissent sizing based on strength.
-                        # HAIL MARY logs the dissent but applies no cut.
-                        sizing = gemini_result.get("sizing_recommendation", "full")
-                        if settings.hail_mary_mode:
-                            if dissent >= 0.3:
-                                logger.info(
-                                    "HAILMARY override GEMINI DISSENT: %s d=%.1f %s (no cut applied)",
-                                    signal.city_id, dissent, sizing,
-                                )
-                        elif dissent >= 0.7 or sizing in ("half", "skip"):
-                            if sizing == "skip" and dissent >= 0.9:
-                                multiplier = 0.0
-                            elif sizing == "half" or dissent >= 0.7:
-                                multiplier = 0.5
-                            else:
-                                multiplier = 1.0 - (dissent * 0.5)
-                            old_size = signal.recommended_size
-                            signal.recommended_size = round(
-                                signal.recommended_size * multiplier, 2
-                            )
-                            logger.info(
-                                "GEMINI DISSENT: %s, %.0f%% cut $%.0f->$%.0f (d=%.1f %s)",
-                                signal.city_id, (1 - multiplier) * 100,
-                                old_size, signal.recommended_size, dissent, sizing,
-                            )
-                        elif dissent >= 0.3 and sizing == "reduce_20pct":
-                            old_size = signal.recommended_size
-                            signal.recommended_size = round(
-                                signal.recommended_size * 0.8, 2
-                            )
-                            logger.info(
-                                "GEMINI MILD DISSENT: %s, 20%% trim $%.0f -> $%.0f (dissent=%.1f)",
-                                signal.city_id, old_size, signal.recommended_size, dissent,
-                            )
-                except Exception:
-                    logger.debug("Gemini red team skipped", exc_info=True)
+    # Every cycle type (main, sniper, refresh) goes through the same gate: only
+    # signals the AI layer approved (this cycle, or earlier today) are executed.
+    executable_signals = await apply_ai_review(
+        all_signals, _forecast_cache, run_ai_reasoning, store,
+    )
 
     # Place trades for all signals + generate spread capture orders
     from weather_edge.fetchers.polymarket import fetch_book_prices
@@ -879,7 +1096,7 @@ async def run_cycle(
 
     # Fetch book prices for top 5 signals only (each = 2 CLOB API calls)
     logger.info("Fetching order book prices for spread detection...")
-    top_signals = sorted(all_signals, key=lambda s: abs(s.edge), reverse=True)[:5]
+    top_signals = sorted(executable_signals, key=lambda s: abs(s.edge), reverse=True)[:5]
     for signal in top_signals:
         m = market_by_id.get(signal.market_id)
         if m and m.token_id_yes and m.token_id_no:
@@ -983,14 +1200,24 @@ async def run_cycle(
     logger.info(
         "EXECUTION LOOP: %d signals, live_executor=%s, dry_run=%s, "
         "usdc_floor_block=%s, pos_count=%d/%d",
-        len(all_signals),
+        len(executable_signals),
         bool(live_executor),
         live_executor.dry_run if live_executor else "N/A",
         _usdc_floor_block,
         _active_position_count,
         max_positions,
     )
-    for signal in all_signals:
+    for signal in executable_signals:
+        # A zero/negative size means some layer (Kelly, Claude, Gemini) sized
+        # the trade away. Never trade it, and never let the live min-size
+        # floor below resurrect it.
+        if signal.recommended_size <= 0 and not settings.hail_mary_mode:
+            logger.info(
+                "ZERO SIZE: %s %s sized to $%.2f, skipping",
+                signal.city_id, signal.description[:40], signal.recommended_size,
+            )
+            continue
+
         # Contract: verify taker fee doesn't eat >40% of projected alpha
         # This gate applies to TAKER orders only. Live executor uses post_only
         # (maker, $0 fee) so it bypasses this check.
@@ -1080,6 +1307,10 @@ async def run_cycle(
             else:
                 # --- SWING BOT: Minimum position size ---
                 # Survival tier: $5 min until bankroll > $500, then raise to $10.
+                # Only genuinely small positive sizes are bumped; a zero size
+                # (AI veto / Kelly says no) was already dropped above.
+                if signal.recommended_size <= 0:
+                    continue
                 if signal.recommended_size < MIN_LIVE_SIZE:
                     signal.recommended_size = MIN_LIVE_SIZE
 
@@ -1732,10 +1963,13 @@ async def run_cycle(
     else:
         tomorrow = date.today() + timedelta(days=1)
     for city_id in City:
-        if (city_id, tomorrow) not in _forecast_cache:
+        # The cache persists across cycles, so "not in cache" would freeze
+        # monitoring data after the first cycle; refetch unless fresh this cycle.
+        if (city_id, tomorrow) not in _refreshed_this_cycle:
             forecasts = await fetch_city_forecasts(city_id, tomorrow)
             if forecasts:
                 _forecast_cache[(city_id, tomorrow)] = forecasts
+                _refreshed_this_cycle.add((city_id, tomorrow))
                 consensus = compute_consensus(city_id, str(tomorrow), "temp_max_c", forecasts)
                 if consensus:
                     logger.info(
@@ -1746,8 +1980,21 @@ async def run_cycle(
     return all_signals, _forecast_cache, city_volume
 
 
-async def run_loop(paper_trader: PaperTrader | None) -> None:
-    """Run the fetch-analyze-trade loop continuously."""
+async def run_loop(
+    paper_trader: PaperTrader | None,
+    days: int | None = None,
+    max_cycles: int | None = None,
+) -> None:
+    """Run the fetch-analyze-trade loop continuously.
+
+    Args:
+        paper_trader: Paper trader (None disables paper trading).
+        days: Scan ``today .. today + days - 1`` each cycle (recomputed every
+            cycle so the window rolls over at midnight). None = scheduler default.
+        max_cycles: Stop after this many cycles (None = forever; for tests).
+    """
+    from weather_edge.analysis.claude_reasoning import get_review_memory
+
     interval = settings.fetch_interval_minutes * 60
     cycle_num = 0
     forecast_cache: dict[tuple, list] = {}
@@ -1756,9 +2003,16 @@ async def run_loop(paper_trader: PaperTrader | None) -> None:
         cycle_num += 1
         logger.info("===== CYCLE %d START =====", cycle_num)
         try:
+            today = date.today()
+            evicted = evict_stale_forecasts(forecast_cache, today)
+            evicted += get_review_memory().evict_before(today)
+            if evicted:
+                logger.info("Evicted %d cache entries for past dates", evicted)
+            target_dates = default_target_dates(today, days) if days else None
             # Pass existing cache to run_cycle
             signals, forecast_cache, _ = await run_cycle(
                 paper_trader,
+                target_dates,
                 forecast_cache=forecast_cache,
             )
             tradeable = [s for s in signals if s.confidence_tier.value != "low"]
@@ -1770,5 +2024,7 @@ async def run_loop(paper_trader: PaperTrader | None) -> None:
         except Exception:
             logger.exception("Cycle %d failed", cycle_num)
 
+        if max_cycles is not None and cycle_num >= max_cycles:
+            return
         logger.info("Sleeping %d minutes until next cycle...", settings.fetch_interval_minutes)
         await asyncio.sleep(interval)

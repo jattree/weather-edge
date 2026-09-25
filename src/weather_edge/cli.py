@@ -34,28 +34,64 @@ def cli(verbose: bool) -> None:
     setup_logging(verbose)
 
 
+DEFAULT_DAYS = 4  # today .. today+3, same window as the scheduler default
+DAYS_HELP = (
+    "Scan today .. today+N-1. Dates resolving inside the entry horizon "
+    "(36h, 0h in hail-mary mode) are skipped, so N=2 scans nothing after 12:00 UTC."
+)
+
+
+def _print_scan_plan(target_dates: list[date]) -> list[date]:
+    """Print which dates will be scanned and why others are not. Returns kept."""
+    from weather_edge.analysis import claude_reasoning
+    from weather_edge.config import settings
+    from weather_edge.scheduler import filter_dates_by_horizon
+
+    kept, blocked, horizon_h = filter_dates_by_horizon(target_dates)
+    console.print(
+        f"\n[bold cyan]Weather Edge[/], scanning {', '.join(map(str, kept)) or 'nothing'}"
+    )
+    if blocked:
+        console.print(
+            f"[dim]Skipping {', '.join(map(str, blocked))}: resolves in < {horizon_h}h "
+            "(entry horizon filter)[/]"
+        )
+    if not kept:
+        console.print(
+            f"[yellow]Every requested date resolves inside the {horizon_h}h horizon, "
+            f"nothing to scan. Use --days {DEFAULT_DAYS} (the default).[/]"
+        )
+    if getattr(settings, "require_ai_review", True) and not claude_reasoning.ANTHROPIC_API_KEY:
+        console.print(
+            "[yellow]No ANTHROPIC_API_KEY: signals are shown but not paper-traded "
+            "(set REQUIRE_AI_REVIEW=false to paper-trade unreviewed signals).[/]"
+        )
+    console.print()
+    return kept
+
+
 @cli.command()
-@click.option("--days", default=2, help="Number of days to forecast (today + N)")
+@click.option("--days", default=DEFAULT_DAYS, show_default=True, type=click.IntRange(1),
+              help=DAYS_HELP)
 def run(days: int) -> None:
-    """Run one fetch → analyze → signal cycle."""
+    """Run one fetch → analyze → signal cycle (paper trading, in memory)."""
+    from weather_edge.config import settings
     from weather_edge.reporting import print_paper_trades, print_signals
-    from weather_edge.scheduler import run_cycle
+    from weather_edge.scheduler import default_target_dates, run_cycle
     from weather_edge.trading.paper import PaperTrader
 
     async def _run():
-        trader = PaperTrader()
-        today = date.today()
-        target_dates = [today + timedelta(days=i) for i in range(days)]
+        trader = PaperTrader(bankroll=settings.bankroll)
+        target_dates = default_target_dates(date.today(), days)
+        if not _print_scan_plan(target_dates):
+            return
 
-        console.print(f"\n[bold cyan]Weather Edge[/], Cycle for {target_dates}")
-        console.print()
-
-        signals = await run_cycle(trader, target_dates)
+        signals, _forecasts, _volume = await run_cycle(trader, target_dates)
 
         if signals:
             print_signals(signals)
         else:
-            console.print("[yellow]No signals generated, no active markets found.[/]")
+            console.print("[yellow]No signals generated for the scanned dates.[/]")
 
         print_paper_trades(trader)
 
@@ -63,18 +99,23 @@ def run(days: int) -> None:
 
 
 @cli.command()
-@click.option("--days", default=2, help="Number of days to forecast")
+@click.option("--days", default=DEFAULT_DAYS, show_default=True, type=click.IntRange(1),
+              help=DAYS_HELP)
 def watch(days: int) -> None:
     """Run continuously, fetching every FETCH_INTERVAL_MINUTES."""
-    from weather_edge.scheduler import run_loop
+    from weather_edge.config import settings
+    from weather_edge.scheduler import default_target_dates, run_loop
     from weather_edge.trading.paper import PaperTrader
 
-    trader = PaperTrader()
+    trader = PaperTrader(bankroll=settings.bankroll)
     console.print("[bold cyan]Weather Edge[/], Continuous mode")
-    console.print(f"Fetching every {30} minutes. Press Ctrl+C to stop.\n")
+    _print_scan_plan(default_target_dates(date.today(), days))
+    console.print(
+        f"Fetching every {settings.fetch_interval_minutes} minutes. Press Ctrl+C to stop.\n"
+    )
 
     try:
-        asyncio.run(run_loop(trader))
+        asyncio.run(run_loop(trader, days=days))
     except KeyboardInterrupt:
         console.print("\n[yellow]Stopped.[/]")
         from weather_edge.reporting import print_paper_trades
@@ -145,7 +186,9 @@ def dashboard() -> None:
     try:
         import uvicorn
     except ImportError:
-        console.print("[red]Dashboard requires extra deps: pip install 'weather-edge[dashboard]'[/]")
+        console.print(
+            "[red]Dashboard requires extra deps: pip install 'weather-edge[dashboard]'[/]"
+        )
         sys.exit(1)
 
     # Bind to localhost by default, the dashboard has NO authentication, so it

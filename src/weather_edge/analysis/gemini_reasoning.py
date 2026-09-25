@@ -15,13 +15,19 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
+import re
 
 import httpx
 
 from weather_edge.analysis.edge import Signal
+from weather_edge.retry import redact
 
 logger = logging.getLogger(__name__)
+
+_VALID_VERDICTS = frozenset({"AGREE", "DISSENT"})
+_VALID_SIZING = frozenset({"full", "reduce_20pct", "half", "skip"})
 
 GEMINI_MODEL = "gemini-2.5-flash"
 GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models"
@@ -130,8 +136,14 @@ async def red_team_trade(
 ) -> dict | None:
     """Run Gemini red team analysis on a Claude-approved trade.
 
-    Returns dict with dissent_strength, counter_arguments, risk, verdict.
-    Returns None if Gemini is unavailable or errors.
+    Returns dict with dissent_strength, counter_arguments, primary_risk,
+    verdict and sizing_recommendation.
+
+    Returns None only when Gemini is not configured (no key). When Gemini IS
+    configured but the call or the parse fails, returns a fail-closed result
+    (``sizing_recommendation="skip"``, ``dissent_strength=1.0``) carrying an
+    ``"error"`` key, so callers never size a trade off a review that did not
+    happen.
     """
     if not GEMINI_API_KEY:
         return None
@@ -168,10 +180,9 @@ Bull case (approved by Claude):
 Apply the failure vectors from your system prompt to this specific city. \
 Find the thermodynamic kill-switch for this trade."""
 
-    url = (
-        f"{GEMINI_API_URL}/{GEMINI_MODEL}"
-        f":generateContent?key={GEMINI_API_KEY}"
-    )
+    # The key goes in the x-goog-api-key header, never the URL: httpx error
+    # messages embed the request URL, and those get logged.
+    url = f"{GEMINI_API_URL}/{GEMINI_MODEL}:generateContent"
 
     try:
         from weather_edge.retry import retry_async
@@ -180,6 +191,10 @@ Find the thermodynamic kill-switch for this trade."""
             async with httpx.AsyncClient() as client:
                 resp = await client.post(
                     url,
+                    headers={
+                        "x-goog-api-key": GEMINI_API_KEY,
+                        "content-type": "application/json",
+                    },
                     json={
                         "contents": [{
                             "role": "user",
@@ -205,65 +220,113 @@ Find the thermodynamic kill-switch for this trade."""
             base_delay=2.0,
             label=f"gemini:{signal.city_id}",
         )
+    except Exception as e:
+        return _gemini_failure(signal, f"API call failed: {redact(e)}")
 
-        # Parse Gemini response, extract JSON from last text part
-        import re
-        text = data["candidates"][0]["content"]["parts"][-1]["text"]
-        text = re.sub(r"```json\s*", "", text)
-        text = re.sub(r"```\s*", "", text)
-        match = re.search(r"\{.*\}", text.strip(), re.DOTALL)
-        if not match:
-            logger.warning("Gemini returned non-JSON: %s", text[:100])
-            return None
-        result = json.loads(match.group())
+    result = parse_gemini_response(data)
+    if isinstance(result, str):
+        return _gemini_failure(signal, result)
 
-        dissent = float(result.get("dissent_strength", 0))
-        verdict = result.get("verdict", "AGREE")
-        counters = result.get("counter_arguments", [])
-        risk = result.get("risk_the_bull_missed", "")
-        failure_mode = result.get("primary_failure_mode", "")
-        sizing = result.get("sizing_recommendation", "full")
+    logger.info(
+        "GEMINI RED TEAM: %s %s, %s (dissent=%.1f, sizing=%s, primary_risk=%s), %s",
+        signal.city_id, signal.recommended_side.value,
+        result["verdict"], result["dissent_strength"],
+        result["sizing_recommendation"], result["primary_risk"],
+        "; ".join(result["counter_arguments"][:2]) or "no counter-arguments",
+    )
 
-        logger.info(
-            "GEMINI RED TEAM: %s %s, %s (dissent=%.1f, sizing=%s, failure=%s), %s",
-            signal.city_id, signal.recommended_side.value,
-            verdict, dissent, sizing, failure_mode,
-            "; ".join(counters[:2]) if counters else "no counter-arguments",
+    try:
+        from weather_edge.analysis.service_health import record_service_call
+        existing = {}
+        try:
+            from weather_edge.live_state import get_json
+            existing = get_json("svc:gemini") or {}
+        except Exception:
+            logger.debug("Failed to read Gemini service state", exc_info=True)
+        dissents_today = existing.get("dissents_today", 0) + (
+            1 if result["verdict"] == "DISSENT" else 0
         )
+        record_service_call(
+            "gemini", True,
+            extra={"dissents_today": dissents_today},
+        )
+    except Exception:
+        logger.debug("Failed to record Gemini health", exc_info=True)
 
-        try:
-            from weather_edge.analysis.service_health import record_service_call
-            existing = {}
-            try:
-                from weather_edge.live_state import get_json
-                existing = get_json("svc:gemini") or {}
-            except Exception:
-                logger.debug("Failed to read Gemini service state", exc_info=True)
-            dissents_today = existing.get("dissents_today", 0) + (
-                1 if verdict == "DISSENT" else 0
-            )
-            record_service_call(
-                "gemini", True,
-                extra={"dissents_today": dissents_today},
-            )
-        except Exception:
-            logger.debug("Failed to record Gemini health", exc_info=True)
+    return result
 
-        return {
-            "dissent_strength": dissent,
-            "verdict": verdict,
-            "primary_failure_mode": failure_mode,
-            "counter_arguments": counters,
-            "risk_the_bull_missed": risk,
-            "sizing_recommendation": sizing,
-            "model": "gemini",
-        }
 
-    except (httpx.HTTPError, json.JSONDecodeError, KeyError, IndexError) as e:
-        logger.warning("Gemini red team failed after retries: %s", e)
-        try:
-            from weather_edge.analysis.service_health import record_service_call
-            record_service_call("gemini", False)
-        except Exception:
-            logger.debug("Failed to record Gemini failure", exc_info=True)
-        return None
+def parse_gemini_response(data: object) -> dict | str:
+    """Validate a generateContent response.
+
+    Returns the normalised result dict, or a string describing why the
+    response was rejected. Unknown sizing / verdict values and out-of-range
+    dissent are rejections, not silently defaulted to "full"/"AGREE".
+    """
+    try:
+        text = data["candidates"][0]["content"]["parts"][-1]["text"]  # type: ignore[index]
+    except (KeyError, IndexError, TypeError):
+        return "response has no text part"
+    if not isinstance(text, str):
+        return "response text is not a string"
+    text = re.sub(r"```(?:json)?\s*", "", text)
+    match = re.search(r"\{.*\}", text.strip(), re.DOTALL)
+    if not match:
+        return f"non-JSON reply: {text[:100]}"
+    try:
+        result = json.loads(match.group())
+    except json.JSONDecodeError:
+        return f"unparseable JSON: {text[:100]}"
+    if not isinstance(result, dict):
+        return "JSON reply is not an object"
+
+    try:
+        dissent = float(result.get("dissent_strength"))
+    except (TypeError, ValueError):
+        return f"invalid dissent_strength={result.get('dissent_strength')!r}"
+    if not math.isfinite(dissent) or not 0.0 <= dissent <= 1.0:
+        return f"dissent_strength out of range: {dissent}"
+
+    verdict = str(result.get("verdict", "")).strip().upper()
+    if verdict not in _VALID_VERDICTS:
+        return f"invalid verdict={result.get('verdict')!r}"
+
+    sizing = str(result.get("sizing_recommendation", "")).strip().lower()
+    if sizing not in _VALID_SIZING:
+        return f"invalid sizing_recommendation={result.get('sizing_recommendation')!r}"
+
+    counters = result.get("counter_arguments", [])
+    if not isinstance(counters, list):
+        counters = [str(counters)] if counters else []
+
+    return {
+        "dissent_strength": dissent,
+        "verdict": verdict,
+        "primary_risk": str(result.get("primary_risk", "") or ""),
+        "counter_arguments": [str(c) for c in counters],
+        "risk_the_bull_missed": str(result.get("risk_the_bull_missed", "") or ""),
+        "sizing_recommendation": sizing,
+        "model": "gemini",
+    }
+
+
+def _gemini_failure(signal: Signal, why: str) -> dict:
+    """Fail-closed result: a configured Gemini that errors blocks the trade."""
+    logger.warning(
+        "GEMINI REVIEW FAILED for %s, failing closed: %s", signal.city_id, why,
+    )
+    try:
+        from weather_edge.analysis.service_health import record_service_call
+        record_service_call("gemini", False)
+    except Exception:
+        logger.debug("Failed to record Gemini failure", exc_info=True)
+    return {
+        "dissent_strength": 1.0,
+        "verdict": "DISSENT",
+        "primary_risk": "review unavailable",
+        "counter_arguments": [f"Gemini review failed: {why}"],
+        "risk_the_bull_missed": "",
+        "sizing_recommendation": "skip",
+        "model": "gemini",
+        "error": why,
+    }

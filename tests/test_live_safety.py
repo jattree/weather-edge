@@ -66,9 +66,9 @@ class TestRetrySyncContract:
         def counter():
             nonlocal call_count
             call_count += 1
-            raise ValueError("fail")
+            raise ConnectionError("fail")
 
-        with pytest.raises(ValueError):
+        with pytest.raises(ConnectionError):
             retry_sync(counter, attempts=5, base_delay=0.01, label="test")
         assert call_count == 5
 
