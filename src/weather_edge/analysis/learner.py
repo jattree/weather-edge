@@ -156,10 +156,10 @@ def get_adaptive_weights(
     model_counts: dict[str, int] = {}
 
     for model in models:
-        forecasts = store.get_forecast_history(
-            model_name=model.value,
-            city_id=city_id,
-            limit=500,
+        # One row per target date: raw snapshots repeat every 30-min cycle,
+        # which would inflate the sample count (and the adaptive blend below).
+        forecasts = store.get_daily_forecast_history(
+            model.value, city_id, limit=500,
         )
         if len(forecasts) < MIN_FORECASTS_FOR_ADAPTIVE:
             return None  # Not enough data for any model = fall back
@@ -224,10 +224,8 @@ def run_learning_report(store) -> LearningReport:
 
         has_enough = True
         for model in models:
-            forecasts = store.get_forecast_history(
-                model_name=model.value,
-                city_id=city_str,
-                limit=500,
+            forecasts = store.get_daily_forecast_history(
+                model.value, city_str, limit=500,
             )
             count = len(forecasts)
             total_forecasts += count

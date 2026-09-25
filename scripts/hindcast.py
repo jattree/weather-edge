@@ -12,9 +12,17 @@ Observation sources (in priority order):
     1. IEM ASOS (METAR station data), same source as Wunderground,
        which Polymarket resolves against. This is the correct ground
        truth for bias correction.
-    2. Open-Meteo archive API (fallback), gridded reanalysis data.
-       ~0.9°C MAE vs station readings with 67% rounding mismatch.
-       Only used when METAR data is unavailable.
+    2. Open-Meteo archive API, gridded reanalysis data. ~0.9°C MAE vs
+       station readings with 67% rounding mismatch. OFF by default: it is not
+       the resolution source and would poison the bias training data. Opt in
+       with --allow-reanalysis to fill METAR gaps anyway.
+
+All Open-Meteo requests pass the city's IANA timezone so daily maxima are over
+the station's local civil day (what markets resolve on), matching METAR.
+
+Re-runs are idempotent: existing hindcast rows for the same (city, model,
+target_date) are replaced, never duplicated. Live scheduler snapshots are
+left untouched.
 
 Open-Meteo historical forecast API:
     https://historical-forecast-api.open-meteo.com/v1/forecast
@@ -69,6 +77,7 @@ MAX_HINDCAST_DAYS = 912  # ~2.5 years
 
 def fetch_historical_forecast(
     lat: float, lon: float, target_date: date, model_id: str,
+    station_tz: str = "UTC",
 ) -> float | None:
     """Fetch what a model predicted for a specific date.
 
@@ -88,6 +97,7 @@ def fetch_historical_forecast(
                 "past_days": 0,
                 "forecast_days": 1,
                 "models": model_id,
+                "timezone": station_tz,
             },
             timeout=15,
             follow_redirects=True,
@@ -241,18 +251,22 @@ def fetch_batch_metar_observations(
 def fetch_actual_observation(
     lat: float, lon: float, target_date: date,
     icao: str | None = None, station_tz: str = "Etc/UTC",
+    allow_reanalysis: bool = False,
 ) -> float | None:
     """Fetch actual observed high temperature for a date.
 
-    Tries METAR station data first (correct ground truth for Polymarket),
-    falls back to Open-Meteo archive (gridded reanalysis) if unavailable.
+    METAR station data (correct ground truth for Polymarket). Only when
+    ``allow_reanalysis`` is set does it fall back to the Open-Meteo archive
+    (gridded reanalysis, not the resolution source).
     """
     # Primary: METAR station observation
     if icao:
         result = fetch_metar_observation(icao, target_date, station_tz)
         if result is not None:
             return result
-        logger.debug("METAR unavailable for %s on %s, falling back to Open-Meteo", icao, target_date)
+        logger.debug("METAR unavailable for %s on %s", icao, target_date)
+    if not allow_reanalysis:
+        return None
 
     # Fallback: Open-Meteo archive (gridded reanalysis)
     try:
@@ -264,6 +278,7 @@ def fetch_actual_observation(
                 "daily": "temperature_2m_max",
                 "start_date": str(target_date),
                 "end_date": str(target_date),
+                "timezone": station_tz,
             },
             timeout=15,
             follow_redirects=True,
@@ -282,11 +297,14 @@ def fetch_actual_observation(
 def fetch_batch_observations(
     lat: float, lon: float, start: date, end: date,
     icao: str | None = None, station_tz: str = "Etc/UTC",
+    allow_reanalysis: bool = False,
 ) -> dict[str, float]:
     """Fetch actual observations for a date range.
 
-    Tries METAR station data first (correct ground truth for Polymarket),
-    fills gaps from Open-Meteo archive (gridded reanalysis) if needed.
+    METAR station data (correct ground truth for Polymarket). Gaps are filled
+    from the Open-Meteo archive (gridded reanalysis) only when
+    ``allow_reanalysis`` is set; by default a gap stays a gap (the snapshot is
+    stored with actual_value NULL and never trains the bias table).
     """
     result: dict[str, float] = {}
 
@@ -299,7 +317,7 @@ def fetch_batch_observations(
     # Fallback: fill any missing days from Open-Meteo archive
     # Generate expected date range to check for gaps
     expected_days = (end - start).days + 1
-    if len(result) < expected_days:
+    if allow_reanalysis and len(result) < expected_days:
         try:
             resp = httpx.get(
                 ARCHIVE_URL,
@@ -309,6 +327,7 @@ def fetch_batch_observations(
                     "daily": "temperature_2m_max",
                     "start_date": str(start),
                     "end_date": str(end),
+                    "timezone": station_tz,
                 },
                 timeout=30,
                 follow_redirects=True,
@@ -332,6 +351,7 @@ def fetch_batch_observations(
 
 def fetch_batch_forecasts(
     lat: float, lon: float, start: date, end: date, model_id: str,
+    station_tz: str = "UTC",
 ) -> dict[str, float]:
     """Fetch historical model forecasts for a date range."""
     try:
@@ -346,6 +366,8 @@ def fetch_batch_forecasts(
                 "start_date": str(start),
                 "end_date": str(end),
                 "models": model_id,
+                # Station-local civil day, as the market resolves on.
+                "timezone": station_tz,
             },
             timeout=30,
             follow_redirects=True,
@@ -368,10 +390,46 @@ def fetch_batch_forecasts(
         return {}
 
 
+# Hindcast rows are stamped with a midnight-UTC created_at (live scheduler
+# snapshots carry a full timestamp with microseconds), which is how re-runs find
+# and replace their own earlier rows without touching live data.
+_HINDCAST_CREATED_SUFFIX = "T00:00:00+00:00"
+
+
+def upsert_hindcast_rows(conn: sqlite3.Connection, batch: list[tuple]) -> int:
+    """Insert hindcast snapshot rows, replacing earlier hindcast rows.
+
+    Each row is (trade_id, city_id, target_date, model_name, forecast_value,
+    actual_value, created_at). Any existing HINDCAST row (trade_id NULL and a
+    midnight created_at) for the same (city, target_date, model) is deleted
+    first, so re-running the script is idempotent instead of stacking
+    duplicates that inflate the bias sample size. Works on existing DBs (no
+    schema change / unique index needed).
+    """
+    for row in batch:
+        _trade_id, city_id, target_date, model_name = row[:4]
+        conn.execute(
+            """DELETE FROM forecast_snapshots
+               WHERE city_id = ? AND target_date = ? AND model_name = ?
+                 AND trade_id IS NULL AND created_at LIKE ?""",
+            (city_id, target_date, model_name, "%" + _HINDCAST_CREATED_SUFFIX),
+        )
+    conn.executemany(
+        """INSERT INTO forecast_snapshots
+           (trade_id, city_id, target_date, model_name,
+            forecast_value, actual_value, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        batch,
+    )
+    conn.commit()
+    return len(batch)
+
+
 def run_hindcast(
     days: int = 90,
     city_filter: str | None = None,
     db_path: Path = DB_PATH,
+    allow_reanalysis: bool = False,
 ):
     """Run hindcast for all cities, populating forecast_snapshots."""
     conn = sqlite3.connect(str(db_path))
@@ -404,7 +462,7 @@ def run_hindcast(
             return
 
     total_inserted = 0
-    now_str = date.today().isoformat() + "T00:00:00+00:00"
+    now_str = date.today().isoformat() + _HINDCAST_CREATED_SUFFIX
 
     for city_id, config in cities.items():
         city_str = city_id.value
@@ -423,6 +481,7 @@ def run_hindcast(
         actuals = fetch_batch_observations(
             config.latitude, config.longitude, start_date, end_date,
             icao=config.icao, station_tz=config.timezone,
+            allow_reanalysis=allow_reanalysis,
         )
         logger.info("  Fetched %d actual observations", len(actuals))
         time.sleep(0.5)  # Rate limit
@@ -434,6 +493,7 @@ def run_hindcast(
             forecasts = fetch_batch_forecasts(
                 config.latitude, config.longitude,
                 start_date, end_date, model_id,
+                station_tz=config.timezone,
             )
             logger.info("  %s: %d forecasts", model_id, len(forecasts))
 
@@ -452,15 +512,7 @@ def run_hindcast(
                 ))
 
             if batch:
-                conn.executemany(
-                    """INSERT INTO forecast_snapshots
-                       (trade_id, city_id, target_date, model_name,
-                        forecast_value, actual_value, created_at)
-                       VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                    batch,
-                )
-                conn.commit()
-                total_inserted += len(batch)
+                total_inserted += upsert_hindcast_rows(conn, batch)
 
             time.sleep(0.3)  # Rate limit between models
 
@@ -488,7 +540,14 @@ if __name__ == "__main__":
     parser.add_argument("--days", type=int, default=90, help="Days to hindcast")
     parser.add_argument("--city", type=str, default=None, help="Single city (e.g. nyc)")
     parser.add_argument("--db", type=str, default=None, help="DB path")
+    parser.add_argument(
+        "--allow-reanalysis", action="store_true",
+        help="Fill METAR gaps with Open-Meteo reanalysis (NOT the resolution source)",
+    )
     args = parser.parse_args()
 
     db = Path(args.db) if args.db else DB_PATH
-    run_hindcast(days=args.days, city_filter=args.city, db_path=db)
+    run_hindcast(
+        days=args.days, city_filter=args.city, db_path=db,
+        allow_reanalysis=args.allow_reanalysis,
+    )

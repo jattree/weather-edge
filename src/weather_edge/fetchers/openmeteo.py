@@ -100,7 +100,10 @@ async def fetch_model_forecast(
             "temperature_2m_max,temperature_2m_min,"
             "precipitation_sum,snowfall_sum,wind_speed_10m_max"
         ),
-        "timezone": "UTC",
+        # Local civil day: markets resolve on the station's local-day high,
+        # so the daily max must be aggregated over local midnight-to-midnight,
+        # not the UTC day (off by up to 13h for Wellington).
+        "timezone": city.timezone,
         "models": model_id,
         "start_date": str(target_date),
         "end_date": str(target_date),
@@ -211,7 +214,8 @@ async def fetch_city_forecasts(
             "temperature_2m_max,temperature_2m_min,"
             "precipitation_sum,snowfall_sum,wind_speed_10m_max"
         ),
-        "timezone": "UTC",
+        # Station-local civil day (see fetch_model_forecast).
+        "timezone": city.timezone,
         "models": ",".join(model_ids),
         "start_date": str(target_date),
         "end_date": str(target_date),
