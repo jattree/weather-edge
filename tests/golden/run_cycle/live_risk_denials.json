@@ -376,11 +376,6 @@
    "store.rebuild_positions"
   ],
   [
-   "store.get_portfolio_summary",
-   [],
-   {}
-  ],
-  [
    "gribstream",
    [
     "dal",
@@ -561,6 +556,8 @@
    "http.get",
    "https://data-api.polymarket.com/positions",
    {
+    "limit": 500,
+    "offset": 0,
     "sizeThreshold": 0,
     "user": "0xwallet"
    }
@@ -810,6 +807,7 @@
   "INFO weather_edge.scheduler Fetching order book prices for spread detection...",
   "INFO weather_edge.scheduler Book price fetch complete, placing trades...",
   "WARNING weather_edge.scheduler Failed to fetch live balance, will skip balance checks",
+  "WARNING weather_edge.scheduler POSITION CLEANUP skipped: Data API position list incomplete",
   "INFO weather_edge.scheduler EXECUTION LOOP: 4 signals, live_executor=True, dry_run=False, usdc_floor_block=False, pos_count=2/50",
   "WARNING weather_edge.scheduler YES EXPOSURE CAP: $40 / $35 max (35% NAV)",
   "WARNING weather_edge.scheduler CORRELATION LIMIT: uk_europe group at $20 / $20 max (20%)",
