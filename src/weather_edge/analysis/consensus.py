@@ -113,6 +113,15 @@ class ConsensusResult:
     model_weights: dict[str, float]  # model_name -> normalized weight
     confidence: float  # 0-1, how much models agree
     threshold_probs: dict[str, float] = field(default_factory=dict)  # ">=20.0" -> 0.85
+    # Raw (pre-EMOS-inflation) model spread. ``std_dev`` is the inflated,
+    # floored value used for probabilities; agreement gates that are phrased as
+    # "models disagree by more than X" must compare against this one.
+    raw_std_dev: float | None = None
+    # The weighted_mean at which threshold_probs / the blend were computed. Set
+    # only by compute_consensus; its presence marks that the calibrated blend is
+    # available on demand. If weighted_mean is later shifted (pattern bias), the
+    # blend is recomputed with the model values shifted by the same amount.
+    probs_mean: float | None = None
 
 
 def _compute_threshold_probs_normal(
@@ -333,21 +342,9 @@ def compute_consensus(
                         0.4 * empirical_probs.get(key, 0) + 0.6 * hurdle_prob, 4
                     )
     else:
-        # EMOS-calibrated probability computation:
-        # 1. KDE with inflated bandwidth (captures multimodal patterns)
-        # 2. Normal with EMOS-inflated std (captures spread underestimation)
-        # 3. Empirical (reality check from raw model counts)
-        # Weight toward parametric since EMOS inflation handles the calibration
-        kde_probs = _compute_threshold_probs_kde(values, weights, thresholds)
-        parametric = _compute_threshold_probs_normal(weighted_mean, std_val, thresholds)
-        empirical = _compute_threshold_probs_empirical(values, thresholds)
-        threshold_probs = {}
-        for key in parametric:
-            # Blend: 40% parametric (EMOS-calibrated) + 30% KDE + 30% empirical
-            p = (0.4 * parametric.get(key, 0)
-                 + 0.3 * kde_probs.get(key, 0)
-                 + 0.3 * empirical.get(key, 0))
-            threshold_probs[key] = round(p, 4)
+        threshold_probs = _blend_threshold_probs(
+            values, weights, weighted_mean, std_val, thresholds,
+        )
 
     return ConsensusResult(
         city_id=city_id.value,
@@ -364,6 +361,44 @@ def compute_consensus(
         model_weights=active_weights,
         confidence=round(confidence, 4),
         threshold_probs=threshold_probs,
+        raw_std_dev=round(raw_std, 2),
+        probs_mean=round(weighted_mean, 2),
+    )
+
+
+def _blend_threshold_probs(
+    values: list[float],
+    weights: list[float],
+    weighted_mean: float,
+    std_val: float,
+    thresholds: list[float],
+) -> dict[str, float]:
+    """EMOS-calibrated P(X >= t) blend for continuous (temperature) variables.
+
+    1. KDE with inflated bandwidth (captures multimodal patterns)
+    2. Normal with EMOS-inflated std (captures spread underestimation)
+    3. Empirical (reality check from raw model counts)
+    Weight toward parametric since EMOS inflation handles the calibration.
+    """
+    kde_probs = _compute_threshold_probs_kde(values, weights, thresholds)
+    parametric = _compute_threshold_probs_normal(weighted_mean, std_val, thresholds)
+    empirical = _compute_threshold_probs_empirical(values, thresholds)
+    threshold_probs = {}
+    for key in parametric:
+        # Blend: 40% parametric (EMOS-calibrated) + 30% KDE + 30% empirical
+        p = (0.4 * parametric.get(key, 0)
+             + 0.3 * kde_probs.get(key, 0)
+             + 0.3 * empirical.get(key, 0))
+        threshold_probs[key] = round(p, 4)
+    return threshold_probs
+
+
+def _blend_available(consensus: ConsensusResult) -> bool:
+    """The calibrated blend can be (re)computed for this consensus."""
+    return (
+        consensus.probs_mean is not None
+        and not consensus.variable.startswith(("snow", "precip"))
+        and len(consensus.model_values) >= 2
     )
 
 
@@ -388,10 +423,27 @@ def get_probability_for_threshold(
         vals = list(consensus.model_values.values())
         return sum(1 for v in vals if v > 0) / len(vals) if vals else 0.0
 
-    # Find the closest threshold in our pre-computed set
+    # Pre-computed keys are only valid while weighted_mean is where they were
+    # computed (a later pattern-bias shift moves the distribution).
+    shift = (
+        consensus.weighted_mean - consensus.probs_mean
+        if consensus.probs_mean is not None else 0.0
+    )
+    unshifted = abs(shift) < 1e-9
     target_key = f">={threshold_c}"
-    if target_key in consensus.threshold_probs:
+    if unshifted and target_key in consensus.threshold_probs:
         prob = consensus.threshold_probs[target_key]
+    elif _blend_available(consensus):
+        # Band edges (e.g. L±0.5 converted to °C) rarely coincide with the
+        # pre-computed keys. Falling back to a pure Normal there silently
+        # dropped the KDE + empirical blend for every bucket the resolver cares
+        # about, so compute the same blend on demand instead.
+        names = list(consensus.model_values)
+        vals = [consensus.model_values[n] + shift for n in names]
+        wts = [consensus.model_weights.get(n, 1.0 / len(names)) for n in names]
+        prob = _blend_threshold_probs(
+            vals, wts, consensus.weighted_mean, consensus.std_dev, [threshold_c],
+        )[target_key]
     else:
         # Interpolate or compute on the fly
         vals = list(consensus.model_values.values())
