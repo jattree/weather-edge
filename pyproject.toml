@@ -60,12 +60,43 @@ line-length = 100
 target-version = "py311"
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "N", "W"]
+# Correctness and bug-pattern rules, not a formatter and not "ALL".
+# F      pyflakes: undefined names, unused imports/vars
+# E4/7/9 pycodestyle: import placement, statement errors, syntax errors
+# B      flake8-bugbear: mutable defaults, raise-without-from, loop-var closures
+# DTZ    naive datetimes (the UTC-vs-local-day class of bug this project had)
+# BLE    blind except (except Exception that swallows and carries on)
+# C901   mccabe cyclomatic complexity, ratcheted by .githooks/complexity-check.py
+# PL     pylint: the useful half; the noisy rules are listed in ignore
+# I      isort import ordering
+# UP     pyupgrade
+#
+# The tree is not clean against this list yet. The pre-commit hook reports
+# findings only on lines a commit touches, and CI blocks only the rules in
+# its ratchet list (rules already at zero). Move a rule into the ratchet
+# once its backlog is cleared.
+select = ["F", "E4", "E7", "E9", "B", "DTZ", "BLE", "C901", "PL", "I", "UP"]
+
+# PLR2004 magic-value-comparison: thresholds and prices are the domain here.
+# PLC0415 import-outside-top-level: deferred imports keep optional deps
+#         (py-clob-client, web3, redis) out of module import time.
+# PLR0911/0912/0913/0915 too-many-returns/branches/arguments/statements:
+#         restate what C901 measures. C901 is the single complexity signal.
+# UP042 str+Enum -> StrEnum: changes what str() returns, and enum values are
+#         persisted to SQLite. Not a mechanical change.
+ignore = ["PLR2004", "PLC0415", "PLR0911", "PLR0912", "PLR0913", "PLR0915", "UP042"]
 
 [tool.ruff.lint.per-file-ignores]
 # logging.basicConfig() runs before the app imports on purpose, so every
 # module's logger is configured for journald before it is created.
 "src/weather_edge/dashboard/app.py" = ["E402"]
+# Tests build naive datetimes for fixtures on purpose.
+"tests/**" = ["DTZ"]
+
+[tool.ruff.lint.mccabe]
+# Legacy functions may keep their current complexity only while it does
+# not grow; new functions must stay at or under this.
+max-complexity = 10
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

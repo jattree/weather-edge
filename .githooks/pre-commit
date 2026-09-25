@@ -1,0 +1,50 @@
+#!/bin/bash
+# Pre-commit hook: complexity ratchet + ruff (changed lines) + contract tests
+# + optional Codex review.
+#
+# Enable once per clone:   git config core.hooksPath .githooks
+#
+# Ruff runs the full config in pyproject.toml but reports only findings on
+# lines this commit touches, so the pre-existing backlog never blocks
+# unrelated work and new code meets the full rule set from day one.
+# Complexity is checked separately against the previous Git revision:
+# new functions must stay at or under 10, legacy ones may not grow.
+
+set -e
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+PY="$REPO_ROOT/.venv/bin/python"
+
+echo "=== Pre-commit checks ==="
+
+if [ ! -x "$PY" ] || ! "$PY" -c "import pytest" 2>/dev/null; then
+    echo "  .venv is missing or has no pytest. Create it with:"
+    echo "    uv venv --python 3.12 .venv && VIRTUAL_ENV=.venv uv pip install -e '.[dev]'"
+    exit 1
+fi
+
+# 1. Complexity on the exact staged blobs
+"$PY" "$REPO_ROOT/.githooks/complexity-check.py" --cached
+
+# 2. Ruff on changed lines of staged Python files
+STAGED_PY=$(git diff --cached --name-only --diff-filter=ACM | grep '\.py$' || true)
+if [ -n "$STAGED_PY" ]; then
+    echo "  Ruff: changed lines across $(echo "$STAGED_PY" | wc -l | tr -d ' ') Python files"
+    if ! "$PY" "$REPO_ROOT/.githooks/ruff-changed.py" --cached --ignore C901; then
+        echo "  Ruff found errors on lines this commit changed. Fix them before committing."
+        exit 1
+    fi
+fi
+
+# 3. Contract tests (fast, no network)
+if [ -f "$REPO_ROOT/tests/test_contracts.py" ]; then
+    "$PY" -m pytest "$REPO_ROOT/tests/test_contracts.py" -x -q --no-header
+fi
+
+# 4. Codex review of the staged diff (advisory, never blocks)
+if command -v codex >/dev/null 2>&1 && ! git diff --cached --quiet; then
+    echo "  Codex: reviewing staged changes..."
+    codex review --uncommitted 2>&1 || echo "  Codex review errored, continuing"
+fi
+
+echo "=== Pre-commit checks passed ==="
