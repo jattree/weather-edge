@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
@@ -670,6 +671,253 @@ async def apply_ai_review(
     return executable
 
 
+@dataclass
+class CycleContext:
+    """State shared by the stages of one ``run_cycle`` pass.
+
+    Built by ``_start_cycle``; each stage reads what earlier stages produced
+    and fills in its own fields. Only ``forecast_cache`` (the caller's
+    cross-cycle cache, when one is passed) outlives the cycle.
+    """
+
+    paper_trader: PaperTrader | None
+    live_executor: object | None
+    store: object | None
+    run_ai_reasoning: bool
+    target_dates: list[date]
+    min_horizon_hours: int
+    now_utc: datetime
+    forecast_cache: dict[tuple, list]
+    # (city, target_date) keys fetched fresh in this cycle
+    refreshed: set[tuple] = field(default_factory=set)
+    # (city, target_date, variable) -> GraphCast divergence result
+    ai_divergence_cache: dict[tuple, dict | None] = field(default_factory=dict)
+
+    # Discovery
+    markets: list[MarketInfo] = field(default_factory=list)
+    market_groups: dict[tuple[City, date], list[MarketInfo]] = field(default_factory=dict)
+    city_volume: dict[str, dict] = field(default_factory=dict)
+    total_equity: float = 0.0
+    portfolio_summary: dict = field(default_factory=dict)
+    # (city_id, target_date) -> GraphCast forecast
+    ai_forecasts: dict[tuple[str, date], object] = field(default_factory=dict)
+
+    # Signals: every candidate after filtering, and the AI-cleared subset
+    all_signals: list[Signal] = field(default_factory=list)
+    executable_signals: list[Signal] = field(default_factory=list)
+
+    # Execution
+    market_maker: object | None = None
+    market_prices: dict[str, dict] = field(default_factory=dict)
+    market_by_id: dict[str, MarketInfo] = field(default_factory=dict)
+    live_balance: float | None = None
+    usdc_floor_block: bool = False
+    max_positions: int = 0
+    active_position_count: int = 0
+
+    @property
+    def is_live(self) -> bool:
+        """A live executor that places real orders (not a dry run) is attached."""
+        return bool(self.live_executor and not self.live_executor.dry_run)
+
+
+def _apply_horizon_filter(
+    target_dates: list[date], now_utc: datetime,
+) -> tuple[list[date], int]:
+    """Drop target dates that resolve too soon; returns (kept, min_horizon_hours)."""
+    # --- SWING BOT: 36h horizon filter ---
+    # Block entries on markets resolving too soon. We get front-run by bots
+    # with fresher NWS data on short-dated markets. Our bias correction edge
+    # is strongest at 48-72h where model ensembles still disagree.
+    # HAIL MARY mode drops the filter: penny lottery tickets only need to
+    # resolve, they don't need to be ahead of the front-running bots.
+    target_dates, blocked, min_horizon_hours = filter_dates_by_horizon(
+        list(target_dates), now_utc,
+    )
+    if blocked:
+        logger.info(
+            "HORIZON FILTER: blocked %s (resolve < %dh)",
+            ", ".join(str(d) for d in sorted(blocked)),
+            min_horizon_hours,
+        )
+    return target_dates, min_horizon_hours
+
+
+def _check_emos_contract() -> None:
+    """Contract: verify EMOS calibration is active at cycle start."""
+    emos_check = validate_emos_active(
+        SPREAD_INFLATION_FACTOR, MAX_BUCKET_PROBABILITY,
+        EMOS_VARIANCE_FLOOR_C,
+    )
+    if not emos_check.valid:
+        logger.warning(
+            "CONTRACT VIOLATION [%s]: %s",
+            emos_check.code, emos_check.error,
+        )
+
+
+async def _resolve_paper_trades(paper_trader: PaperTrader | None) -> None:
+    """Resolve any open paper trades before placing new ones."""
+    if paper_trader:
+        try:
+            resolved_count = await resolve_open_trades(paper_trader)
+            if resolved_count > 0:
+                logger.info("Resolved %d paper trades at cycle start", resolved_count)
+        except Exception:
+            logger.exception("Paper trade resolution failed, continuing with cycle")
+
+
+async def _refresh_enso_state() -> None:
+    """Refresh ENSO regime state (cached 24h, affects bias correction shrinkage)."""
+    try:
+        from weather_edge.analysis.enso_regime import fetch_enso_state
+        await fetch_enso_state()
+    except Exception:
+        logger.debug("ENSO state fetch skipped", exc_info=True)
+
+
+async def _start_cycle(
+    paper_trader: PaperTrader | None,
+    *,
+    target_dates: list[date] | None,
+    run_ai_reasoning: bool,
+    live_executor,
+    store,
+    forecast_cache: dict[tuple, list] | None,
+) -> CycleContext:
+    """Stage 0: resolve the store and dates, run the start-of-cycle checks."""
+    # Store can come from paper_trader or be passed directly. A plain
+    # in-memory PaperTrader (CLI) has no store; every store use tolerates None.
+    if store is None and paper_trader is not None:
+        store = getattr(paper_trader, "store", None)
+
+    if target_dates is None:
+        target_dates = default_target_dates()
+
+    now_utc = datetime.now(timezone.utc)
+    target_dates, min_horizon_hours = _apply_horizon_filter(target_dates, now_utc)
+    _check_emos_contract()
+    await _resolve_paper_trades(paper_trader)
+
+    _forecast_cache = forecast_cache if forecast_cache is not None else {}
+    # Cross-cycle cache: forget target dates that have already passed.
+    evict_stale_forecasts(_forecast_cache, date.today())
+    ctx = CycleContext(
+        paper_trader=paper_trader,
+        live_executor=live_executor,
+        store=store,
+        run_ai_reasoning=run_ai_reasoning,
+        target_dates=target_dates,
+        min_horizon_hours=min_horizon_hours,
+        now_utc=now_utc,
+        forecast_cache=_forecast_cache,
+    )
+
+    # Check if we're in a golden window (model just updated)
+    if is_golden_window():
+        logger.info("*** GOLDEN WINDOW: Fresh model data, market may be stale ***")
+
+    await _refresh_enso_state()
+    return ctx
+
+
+async def _sync_market_map(ctx: CycleContext) -> None:
+    """Update market_map for position tracking (maps asset_id → city_id)."""
+    if ctx.live_executor and ctx.markets:
+        try:
+            from weather_edge.trading.portfolio_sync import sync_market_map_from_discovery
+            mapped = await sync_market_map_from_discovery(ctx.store, ctx.markets)
+            if mapped:
+                logger.info("Market map updated: %d token mappings", mapped)
+        except Exception:
+            logger.debug("Market map update failed", exc_info=True)
+
+
+async def _reconcile_portfolio(ctx: CycleContext) -> None:
+    """PORTFOLIO SYNC: reconcile with exchange truth; sets ``ctx.total_equity``.
+
+    Runs AFTER market_map so positions get city_id mapping.
+    """
+    ctx.total_equity = settings.bankroll
+    if ctx.is_live:
+        live_executor, store = ctx.live_executor, ctx.store
+        try:
+            from weather_edge.trading.portfolio_sync import fetch_polymarket_state, sync_portfolio
+            ctx.portfolio_summary = await sync_portfolio(
+                executor=live_executor,
+                store=store,
+            )
+            # Fetch full state to get balance + current market value of positions
+            state = await fetch_polymarket_state(live_executor, live_executor.wallet_address)
+            ctx.total_equity = state["portfolio_value"]
+            logger.info(
+                "PORTFOLIO EQUITY: $%.2f (used as bankroll for Kelly sizing)", ctx.total_equity,
+            )
+
+            # Rebuild positions again to pick up market_map city_ids
+            store.rebuild_positions()
+            ctx.portfolio_summary = store.get_portfolio_summary()
+        except Exception:
+            logger.exception("Portfolio sync failed, continuing with stale positions")
+
+
+def _aggregate_city_volume(markets: list[MarketInfo]) -> dict[str, dict]:
+    """Aggregate volume and liquidity by city for the dashboard."""
+    city_volume: dict[str, dict] = {}
+    for m in markets:
+        if m.city_id:
+            cid = m.city_id.value
+            if cid not in city_volume:
+                city_volume[cid] = {"volume_24h": 0.0, "liquidity": 0.0, "markets": 0}
+            city_volume[cid]["volume_24h"] += m.volume_24h or 0
+            city_volume[cid]["liquidity"] += m.liquidity or 0
+            city_volume[cid]["markets"] += 1
+    return city_volume
+
+
+def _log_parity_arbitrage(markets: list[MarketInfo]) -> None:
+    """Step 1b: check bucket parity for arbitrage opportunities (log only)."""
+    if markets:
+        parity_checks = check_bucket_parity(markets)
+        arb_opportunities = find_parity_opportunities(parity_checks)
+        if arb_opportunities:
+            logger.info("=== %d PARITY ARBITRAGE opportunities ===", len(arb_opportunities))
+            for arb in arb_opportunities:
+                logger.info(
+                    "  %s %s: YES sum=%.3f (%+.1f%%)",
+                    arb.city_id.upper(), arb.target_date, arb.yes_sum, arb.deviation * 100,
+                )
+
+
+def _group_markets(
+    markets: list[MarketInfo], target_dates: list[date],
+) -> dict[tuple[City, date], list[MarketInfo]]:
+    """Group markets by city+date, keeping only the cycle's target dates."""
+    market_groups: dict[tuple[City, date], list[MarketInfo]] = {}
+    for m in markets:
+        if m.city_id and m.target_date in target_dates:
+            key = (m.city_id, m.target_date)
+            market_groups.setdefault(key, []).append(m)
+    return market_groups
+
+
+async def _discover_markets(ctx: CycleContext) -> None:
+    """Stage 1: discover markets, sync the portfolio, group markets by city-date."""
+    # Step 1: Discover active weather markets (prices included from Gamma API)
+    logger.info("=== Discovering Polymarket weather markets ===")
+    ctx.markets = await discover_weather_markets()
+    await _sync_market_map(ctx)
+    await _reconcile_portfolio(ctx)
+    ctx.city_volume = _aggregate_city_volume(ctx.markets)
+    _log_parity_arbitrage(ctx.markets)
+
+    if not ctx.markets:
+        logger.warning("No weather markets found for tracked cities.")
+
+    ctx.market_groups = _group_markets(ctx.markets, ctx.target_dates)
+    logger.info("Active market groups: %d city-date combos", len(ctx.market_groups))
+
+
 async def run_cycle(
     paper_trader: PaperTrader | None,
     target_dates: list[date] | None = None,
@@ -693,141 +941,28 @@ async def run_cycle(
         filtering (for display / exit monitoring); only the AI-cleared subset
         is executed.
     """
-    # Store can come from paper_trader or be passed directly. A plain
-    # in-memory PaperTrader (CLI) has no store; every store use tolerates None.
-    if store is None and paper_trader is not None:
-        store = getattr(paper_trader, "store", None)
-
-    if target_dates is None:
-        target_dates = default_target_dates()
-
-    # --- SWING BOT: 36h horizon filter ---
-    # Block entries on markets resolving too soon. We get front-run by bots
-    # with fresher NWS data on short-dated markets. Our bias correction edge
-    # is strongest at 48-72h where model ensembles still disagree.
-    # HAIL MARY mode drops the filter: penny lottery tickets only need to
-    # resolve, they don't need to be ahead of the front-running bots.
-    now_utc = datetime.now(timezone.utc)
-    target_dates, blocked, min_horizon_hours = filter_dates_by_horizon(
-        list(target_dates), now_utc,
+    ctx = await _start_cycle(
+        paper_trader,
+        target_dates=target_dates,
+        run_ai_reasoning=run_ai_reasoning,
+        live_executor=live_executor,
+        store=store,
+        forecast_cache=forecast_cache,
     )
-    if blocked:
-        logger.info(
-            "HORIZON FILTER: blocked %s (resolve < %dh)",
-            ", ".join(str(d) for d in sorted(blocked)),
-            min_horizon_hours,
-        )
+    await _discover_markets(ctx)
 
-    # Contract: verify EMOS calibration is active at cycle start
-    emos_check = validate_emos_active(
-        SPREAD_INFLATION_FACTOR, MAX_BUCKET_PROBABILITY,
-        EMOS_VARIANCE_FLOOR_C,
-    )
-    if not emos_check.valid:
-        logger.warning(
-            "CONTRACT VIOLATION [%s]: %s",
-            emos_check.code, emos_check.error,
-        )
-
-    # Resolve any open paper trades before placing new ones
-    if paper_trader:
-        try:
-            resolved_count = await resolve_open_trades(paper_trader)
-            if resolved_count > 0:
-                logger.info("Resolved %d paper trades at cycle start", resolved_count)
-        except Exception:
-            logger.exception("Paper trade resolution failed, continuing with cycle")
-
-    _portfolio_summary = {}
-
-    all_signals: list[Signal] = []
-    _forecast_cache = forecast_cache if forecast_cache is not None else {}
-    # Cross-cycle cache: forget target dates that have already passed.
-    evict_stale_forecasts(_forecast_cache, date.today())
-    _refreshed_this_cycle: set[tuple] = set()  # keys fetched fresh in this cycle
-    # (city, target_date, variable) -> divergence result
-    _ai_divergence_cache: dict[tuple, dict | None] = {}
-
-    # Check if we're in a golden window (model just updated)
-    if is_golden_window():
-        logger.info("*** GOLDEN WINDOW: Fresh model data, market may be stale ***")
-
-    # Refresh ENSO regime state (cached 24h, affects bias correction shrinkage)
-    try:
-        from weather_edge.analysis.enso_regime import fetch_enso_state
-        await fetch_enso_state()
-    except Exception:
-        logger.debug("ENSO state fetch skipped", exc_info=True)
-
-    # Step 1: Discover active weather markets (prices included from Gamma API)
-    logger.info("=== Discovering Polymarket weather markets ===")
-    markets = await discover_weather_markets()
-
-    # Update market_map for position tracking (maps asset_id → city_id)
-    if live_executor and markets:
-        try:
-            from weather_edge.trading.portfolio_sync import sync_market_map_from_discovery
-            mapped = await sync_market_map_from_discovery(store, markets)
-            if mapped:
-                logger.info("Market map updated: %d token mappings", mapped)
-        except Exception:
-            logger.debug("Market map update failed", exc_info=True)
-
-    # === PORTFOLIO SYNC: reconcile with exchange truth ===
-    # Runs AFTER market_map so positions get city_id mapping
-    total_equity = settings.bankroll
-    if live_executor and not live_executor.dry_run:
-        try:
-            from weather_edge.trading.portfolio_sync import fetch_polymarket_state, sync_portfolio
-            _portfolio_summary = await sync_portfolio(
-                executor=live_executor,
-                store=store,
-            )
-            # Fetch full state to get balance + current market value of positions
-            state = await fetch_polymarket_state(live_executor, live_executor.wallet_address)
-            total_equity = state["portfolio_value"]
-            logger.info("PORTFOLIO EQUITY: $%.2f (used as bankroll for Kelly sizing)", total_equity)
-
-            # Rebuild positions again to pick up market_map city_ids
-            store.rebuild_positions()
-            _portfolio_summary = store.get_portfolio_summary()
-        except Exception:
-            logger.exception("Portfolio sync failed, continuing with stale positions")
-
-    # Aggregate volume and liquidity by city for dashboard
-    city_volume: dict[str, dict] = {}
-    for m in markets:
-        if m.city_id:
-            cid = m.city_id.value
-            if cid not in city_volume:
-                city_volume[cid] = {"volume_24h": 0.0, "liquidity": 0.0, "markets": 0}
-            city_volume[cid]["volume_24h"] += m.volume_24h or 0
-            city_volume[cid]["liquidity"] += m.liquidity or 0
-            city_volume[cid]["markets"] += 1
-
-    # Step 1b: Check bucket parity for arbitrage opportunities
-    if markets:
-        parity_checks = check_bucket_parity(markets)
-        arb_opportunities = find_parity_opportunities(parity_checks)
-        if arb_opportunities:
-            logger.info("=== %d PARITY ARBITRAGE opportunities ===", len(arb_opportunities))
-            for arb in arb_opportunities:
-                logger.info(
-                    "  %s %s: YES sum=%.3f (%+.1f%%)",
-                    arb.city_id.upper(), arb.target_date, arb.yes_sum, arb.deviation * 100,
-                )
-
-    if not markets:
-        logger.warning("No weather markets found for tracked cities.")
-
-    # Group markets by city+date
-    market_groups: dict[tuple[City, date], list[MarketInfo]] = {}
-    for m in markets:
-        if m.city_id and m.target_date in target_dates:
-            key = (m.city_id, m.target_date)
-            market_groups.setdefault(key, []).append(m)
-
-    logger.info("Active market groups: %d city-date combos", len(market_groups))
+    store = ctx.store
+    target_dates = ctx.target_dates
+    now_utc = ctx.now_utc
+    min_horizon_hours = ctx.min_horizon_hours
+    all_signals = ctx.all_signals
+    _forecast_cache = ctx.forecast_cache
+    _refreshed_this_cycle = ctx.refreshed
+    _ai_divergence_cache = ctx.ai_divergence_cache
+    markets = ctx.markets
+    total_equity = ctx.total_equity
+    city_volume = ctx.city_volume
+    market_groups = ctx.market_groups
 
     # Step 1c: Fetch AI model forecasts (GraphCast via GribStream) for comparison
     # Keyed (city_id, target_date): a GraphCast run for one date must never be
