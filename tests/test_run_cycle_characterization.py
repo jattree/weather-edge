@@ -808,7 +808,7 @@ async def test_live_entry_cycle(h):
     signal("chase", City.ATL, 3, 0.30, edge=0.05, side="NO")    # chase (NO side)
     signal("cskip", City.TOR, 2, 0.205, edge=0.05)              # chase skip at mid
     signal("chasey", City.SFO, 2, 0.30, edge=0.05)              # chase (YES side)
-    signal("cfail", City.TOR, 3, 0.45, edge=0.05, side="NO")    # replace, cancel fails
+    signal("cfail", City.TOR, 3, 0.45, edge=0.05, side="NO")    # cancel fails: no replace
     signal("rej", City.MIA, 3, 0.30, edge=0.05, side="NO")
     signal("boom", City.LAX, 2, 0.30, edge=0.05, side="NO")
     signal("hedge", City.LAX, 3, 0.30, edge=0.09, side="NO")    # live hedge placed
@@ -828,7 +828,9 @@ async def test_live_entry_cycle(h):
     snap = h.check_golden("live_entry_cycle")
     placed = [e[1]["market_id"] for e in events(snap, "exec.place_limit_order")]
     assert "cool" not in placed and "held" not in placed and "keep" not in placed
-    assert {"bypass", "small", "repl", "chase", "cfail", "hedge", "hfail"} <= set(placed)
+    assert {"bypass", "small", "repl", "chase", "hedge", "hfail"} <= set(placed)
+    # The resting order could not be cancelled, so no replacement is placed.
+    assert "cfail" not in placed
     assert ["exec.cancel_order", "o-chase"] in snap["events"]
     assert ["tok-stale", "gone", 0.0] in snap["db"]["positions"]  # cleaned: not on exchange
     for needle in ("EXIT COOLDOWN", "COOLDOWN BYPASS", "BALANCE LIMIT", "LIVE SKIP",
@@ -928,7 +930,7 @@ async def test_live_exit_cycle(h, variant):
                     description="SELL_HALF: sell_half")
     seed_live_trade(store, "sell-keep", "p-keep", "SELL", 0.40)      # keep (drift 0)
     seed_live_trade(store, "sell-repl", "p-repl", "SELL", 0.70)      # replace
-    ex.cancel_fail.add("sell-repl")
+    ex.cancel_fail.add("sell-repl")                                   # so: no 2nd sell
     ex.sell_results["p-repl"] = "rejected"
     ex.sell_results["p-fail"] = RuntimeError("sell exploded")
     h.exit_decisions["p-hold"] = "HOLD"
@@ -963,7 +965,9 @@ async def test_live_exit_cycle(h, variant):
     elif variant == "b":
         assert logs(snap, "SELL_HALF SKIP: sea already trimmed")
         assert logs(snap, "LIVE SELL KEEP") and logs(snap, "Failed to cancel old sell order")
-        assert [s["market_id"] for s in sells] == ["p-repl"]
+        # The old sell could not be cancelled, so no second sell is placed
+        # (it could oversell the position).
+        assert sells == []
     else:
         assert logs(snap, "LIVE EXIT FAILED")
         assert logs(snap, "LIVE SELL REPLACE: atl cancelled sell-keep")

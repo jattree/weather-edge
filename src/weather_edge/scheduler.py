@@ -1823,31 +1823,46 @@ def _chase_limit(signal: Signal, resting: _RestingEntry) -> float | None:
     return chase_price
 
 
+async def _cancel_and_record(ctx: CycleContext, order_id: str, fail_msg: str) -> bool:
+    """Cancel ``order_id`` on the exchange; mark it cancelled only if that worked.
+
+    cancel_order returns False (or raises) when the order may still be
+    resting, including when live orders are suppressed. Callers must not
+    place a replacement then, or two orders would rest on the same market.
+    """
+    try:
+        cancelled = await ctx.live_executor.cancel_order(order_id)
+    except Exception as e:  # noqa: BLE001 - one order; the cycle continues
+        logger.warning(fail_msg, order_id[:16], e, exc_info=True)
+        return False
+    if not cancelled:
+        logger.warning(fail_msg, order_id[:16], "cancel_order returned False")
+        return False
+    ctx.store.cancel_live_trade(order_id)
+    return True
+
+
 async def _chase_resting_entry(
     ctx: CycleContext, signal: Signal, resting: _RestingEntry, chase_price: float,
-) -> float:
+) -> float | None:
     """Cancel the stale order; return the YES-equivalent market_prob to re-place at.
+
+    None if the old order could not be cancelled (keep it, place nothing).
 
     ``signal.market_prob`` is left alone: it is the observed market price the
     dashboard shows. Only the order placed for this signal uses the chased one.
     """
     old_id = resting.order.get("order_id")
     if old_id:
-        try:
-            await ctx.live_executor.cancel_order(old_id)
-            ctx.store.cancel_live_trade(old_id)
-            logger.info(
-                "PRICE CHASE: %s improving "
-                "%.3f→%.3f after %dm unfilled",
-                signal.city_id, resting.old_price,
-                chase_price,
-                int(resting.age_minutes),
-            )
-        except Exception as e:
-            logger.warning(
-                "Price chase cancel failed %s: %s",
-                old_id[:16], e, exc_info=True,
-            )
+        if not await _cancel_and_record(ctx, old_id, "Price chase cancel failed %s: %s"):
+            return None
+        logger.info(
+            "PRICE CHASE: %s improving "
+            "%.3f→%.3f after %dm unfilled",
+            signal.city_id, resting.old_price,
+            chase_price,
+            int(resting.age_minutes),
+        )
     # Fall through to place new order at chased price. place_limit_order
     # improves market_prob by half a tick, so aim half a tick above.
     if signal.recommended_side.value == "YES":
@@ -1857,26 +1872,25 @@ async def _chase_resting_entry(
 
 async def _replace_resting_entry(
     ctx: CycleContext, signal: Signal, resting: _RestingEntry,
-) -> None:
-    """Price drifted: cancel the old order so a new one can be placed."""
+) -> bool:
+    """Price drifted: cancel the old order so a new one can be placed.
+
+    False if the old order could not be cancelled (place nothing).
+    """
     old_id = resting.order.get("order_id")
-    if old_id:
-        try:
-            await ctx.live_executor.cancel_order(old_id)
-            ctx.store.cancel_live_trade(old_id)
-            logger.info(
-                "LIVE REPLACE: %s cancelled "
-                "%s (price %.3f→%.3f, "
-                "drift=%.3f)",
-                signal.city_id, old_id[:16],
-                resting.old_price, resting.new_price,
-                resting.price_drift,
-            )
-        except Exception as e:
-            logger.warning(
-                "Failed to cancel old order %s: %s",
-                old_id[:16], e, exc_info=True,
-            )
+    if not old_id:
+        return True
+    if not await _cancel_and_record(ctx, old_id, "Failed to cancel old order %s: %s"):
+        return False
+    logger.info(
+        "LIVE REPLACE: %s cancelled "
+        "%s (price %.3f→%.3f, "
+        "drift=%.3f)",
+        signal.city_id, old_id[:16],
+        resting.old_price, resting.new_price,
+        resting.price_drift,
+    )
+    return True
 
 
 async def _reprice_resting_entry(
@@ -1899,7 +1913,8 @@ async def _reprice_resting_entry(
         if chase_price is None:
             return False, None
     if chase_price is not None:
-        return True, await _chase_resting_entry(ctx, signal, resting, chase_price)
+        chased = await _chase_resting_entry(ctx, signal, resting, chase_price)
+        return chased is not None, chased
     if resting.price_drift <= 0.001:
         # Price unchanged, keep existing order, preserve queue priority
         logger.info(
@@ -1911,8 +1926,7 @@ async def _reprice_resting_entry(
         )
         return False, None
     # Price drifted, cancel old, place new
-    await _replace_resting_entry(ctx, signal, resting)
-    return True, None
+    return await _replace_resting_entry(ctx, signal, resting), None
 
 
 async def _reconcile_existing_entry(
@@ -2431,24 +2445,22 @@ async def _cancel_open_buy(ctx: CycleContext, market_id: str, city_id_str: str) 
     open_buy = store.get_open_order_for_market(market_id)
     if open_buy and open_buy.get("side") in ("YES", "NO"):
         buy_id = open_buy["order_id"]
-        try:
-            await ctx.live_executor.cancel_order(buy_id)
-            store.cancel_live_trade(buy_id)
+        # A buy that can't be cancelled stays tracked as open; the exit
+        # still sells the tokens already held.
+        if await _cancel_and_record(ctx, buy_id, "Failed to cancel BUY order %s: %s"):
             logger.info(
                 "EXIT: cancelled open BUY order %s for %s",
                 buy_id[:16], city_id_str,
-            )
-        except Exception as e:
-            logger.warning(
-                "Failed to cancel BUY order %s: %s",
-                buy_id[:16], e, exc_info=True,
             )
 
 
 async def _replace_existing_sell(
     ctx: CycleContext, existing_sell: dict, sell_price: float, city_id_str: str,
 ) -> bool:
-    """Replace an open sell only if the price drifted >1c. False = keep it (skip)."""
+    """Replace an open sell only if the price drifted >1c and the old one cancelled.
+
+    False = keep it (skip placing a new sell).
+    """
     old_price = existing_sell.get("limit_price", 0)
     new_price = _round_price(sell_price)
     price_drift = abs(old_price - new_price)
@@ -2461,21 +2473,15 @@ async def _replace_existing_sell(
         )
         return False
     old_id = existing_sell["order_id"]
-    try:
-        await ctx.live_executor.cancel_order(old_id)
-        ctx.store.cancel_live_trade(old_id)
-        logger.info(
-            "LIVE SELL REPLACE: %s "
-            "cancelled %s (%.3f->%.3f)",
-            city_id_str, old_id[:16],
-            old_price, new_price,
-        )
-    except Exception as e:
-        logger.warning(
-            "Failed to cancel old "
-            "sell order %s: %s",
-            old_id[:16], e, exc_info=True,
-        )
+    # A second sell while the first may still rest could oversell the position.
+    if not await _cancel_and_record(ctx, old_id, "Failed to cancel old sell order %s: %s"):
+        return False
+    logger.info(
+        "LIVE SELL REPLACE: %s "
+        "cancelled %s (%.3f->%.3f)",
+        city_id_str, old_id[:16],
+        old_price, new_price,
+    )
     return True
 
 

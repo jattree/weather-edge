@@ -2082,25 +2082,6 @@
    "o-cfail"
   ],
   [
-   "store.get_positions",
-   [],
-   {}
-  ],
-  [
-   "exec.place_limit_order",
-   {
-    "description": "cfail bucket?",
-    "force_taker": false,
-    "improve_price_by": 0.005,
-    "market_id": "cfail",
-    "market_prob": 0.45,
-    "side": "NO",
-    "size": 20.0,
-    "strategy": "core",
-    "token_id": "cfail-N"
-   }
-  ],
-  [
    "paper.place_trade",
    "rej",
    [
@@ -3192,7 +3173,6 @@
   "INFO weather_edge.scheduler LIVE: MAKER pending YES sfo 42 shares @ 0.260, new-5 (bal=$433.00)",
   "INFO weather_edge.trading.paper PAPER TRADE: NO tor $20 @ 0.43 (+2\u00a2 spread, fee $0.25) | edge=5.0% conf=90% | [TOMORROW] cfail bucket?",
   "WARNING weather_edge.scheduler Failed to cancel old order o-cfail: cancel boom o-cfail",
-  "INFO weather_edge.scheduler LIVE: MAKER pending NO tor 36 shares @ 0.550, new-6 (bal=$413.00)",
   "INFO weather_edge.trading.paper PAPER TRADE: NO mia $20 @ 0.28 (+2\u00a2 spread, fee $0.20) | edge=5.0% conf=90% | [TOMORROW] rej bucket?",
   "INFO weather_edge.trading.paper PAPER TRADE: NO lax $20 @ 0.28 (+2\u00a2 spread, fee $0.20) | edge=5.0% conf=90% | [TOMORROW] boom bucket?",
   "ERROR weather_edge.scheduler LIVE ORDER FAILED: lax, clob exploded",
@@ -3200,22 +3180,22 @@
   "INFO weather_edge.trading.market_maker SPREAD ORDER: YES lax 67 shares @ 0.30 ($20.00), hedges NO lax | guaranteed profit: $26.67",
   "INFO weather_edge.trading.paper SPREAD TRADE: YES lax $20 @ 0.30 (fee $0.21) | est guaranteed=$26.67 | [SPREAD] HEDGE YES @ 0.30 for lax hedge bucket?",
   "INFO weather_edge.scheduler TAKER ENTRY: lax edge=9.0%, crossing spread",
-  "INFO weather_edge.scheduler LIVE: TAKER pending NO lax 29 shares @ 0.690, new-8 (bal=$393.00)",
+  "INFO weather_edge.scheduler LIVE: TAKER pending NO lax 29 shares @ 0.690, new-7 (bal=$413.00)",
   "INFO weather_edge.trading.market_maker SPREAD ORDER: YES lax 17 shares @ 0.30 ($5.00), hedges NO lax | guaranteed profit: $0.00",
-  "INFO weather_edge.scheduler LIVE SPREAD HEDGE: YES lax 17 shares @ 0.300, new-9 (bal=$388.00)",
+  "INFO weather_edge.scheduler LIVE SPREAD HEDGE: YES lax 17 shares @ 0.300, new-8 (bal=$408.00)",
   "INFO weather_edge.trading.paper PAPER TRADE: NO hou $20 @ 0.28 (+2\u00a2 spread, fee $0.20) | edge=9.0% conf=90% | [TOMORROW] hfail bucket?",
   "INFO weather_edge.trading.market_maker SPREAD ORDER: YES hou 67 shares @ 0.30 ($20.00), hedges NO hou | guaranteed profit: $26.67",
   "INFO weather_edge.trading.paper SPREAD TRADE: YES hou $20 @ 0.30 (fee $0.21) | est guaranteed=$26.67 | [SPREAD] HEDGE YES @ 0.30 for hou hfail bucket?",
   "INFO weather_edge.scheduler TAKER ENTRY: hou edge=9.0%, crossing spread",
-  "INFO weather_edge.scheduler LIVE: TAKER pending NO hou 29 shares @ 0.690, new-10 (bal=$368.00)",
+  "INFO weather_edge.scheduler LIVE: TAKER pending NO hou 29 shares @ 0.690, new-9 (bal=$388.00)",
   "INFO weather_edge.trading.market_maker SPREAD ORDER: YES hou 17 shares @ 0.30 ($5.00), hedges NO hou | guaranteed profit: $0.00",
   "ERROR weather_edge.scheduler LIVE SPREAD HEDGE FAILED: hou, hedge down",
   "INFO weather_edge.trading.paper PAPER TRADE: NO hou $20 @ 0.28 (+2\u00a2 spread, fee $0.20) | edge=10.0% conf=90% | [TOMORROW] hnone bucket?",
   "INFO weather_edge.scheduler TAKER ENTRY: hou edge=10.0%, crossing spread",
-  "INFO weather_edge.scheduler LIVE: TAKER pending NO hou 29 shares @ 0.690, new-11 (bal=$348.00)",
+  "INFO weather_edge.scheduler LIVE: TAKER pending NO hou 29 shares @ 0.690, new-10 (bal=$368.00)",
   "INFO weather_edge.trading.paper PAPER TRADE: NO den $20 @ 0.03 (+2\u00a2 spread, fee $0.02) | edge=8.0% conf=90% | [PENNY] tail bucket?",
   "INFO weather_edge.scheduler TAKER ENTRY: den edge=8.0%, crossing spread",
-  "INFO weather_edge.scheduler LIVE: TAKER pending NO den 21 shares @ 0.950, new-12 (bal=$328.00)",
+  "INFO weather_edge.scheduler LIVE: TAKER pending NO den 21 shares @ 0.950, new-11 (bal=$348.00)",
   "INFO weather_edge.scheduler SPREAD CAPTURE: 4 orders, est. guaranteed P&L=$53.34",
   "INFO weather_edge.scheduler   bue (no markets): mean=21.0\u00b0C conf=90%",
   "INFO weather_edge.scheduler   sel (no markets): mean=21.0\u00b0C conf=90%",

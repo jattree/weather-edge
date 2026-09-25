@@ -1,6 +1,7 @@
 """Regression tests for bugs found while refactoring scheduler.run_cycle."""
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, date, datetime, timedelta
 from types import SimpleNamespace
 
@@ -298,3 +299,40 @@ def test_trading_today_is_earliest_city_local_date(now, expected):
 def test_default_window_starts_at_trading_today():
     today = scheduler.trading_today()
     assert scheduler.default_target_dates(days=2) == [today, today + timedelta(days=1)]
+
+
+# ---------------------------------------------------------------------------
+# cancel_order results are checked
+# ---------------------------------------------------------------------------
+
+class _CancelExec:
+    def __init__(self, result):
+        self.result = result
+
+    async def cancel_order(self, order_id):
+        if isinstance(self.result, Exception):
+            raise self.result
+        return self.result
+
+
+class _CancelStore:
+    def __init__(self):
+        self.cancelled = []
+
+    def cancel_live_trade(self, order_id):
+        self.cancelled.append(order_id)
+
+
+@pytest.mark.parametrize("result", [False, RuntimeError("network")])
+def test_failed_cancel_is_not_recorded(result):
+    ctx = SimpleNamespace(live_executor=_CancelExec(result), store=_CancelStore())
+    ok = asyncio.run(scheduler._cancel_and_record(ctx, "order-123456789012", "fail %s: %s"))
+    assert ok is False
+    assert ctx.store.cancelled == []
+
+
+def test_successful_cancel_is_recorded():
+    ctx = SimpleNamespace(live_executor=_CancelExec(True), store=_CancelStore())
+    ok = asyncio.run(scheduler._cancel_and_record(ctx, "order-1", "fail %s: %s"))
+    assert ok is True
+    assert ctx.store.cancelled == ["order-1"]

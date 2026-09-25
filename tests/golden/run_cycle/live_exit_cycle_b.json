@@ -432,19 +432,7 @@
    ]
   ]
  },
- "decision_history": [
-  {
-   "adjustment": -0.05,
-   "city": "TOR",
-   "decision": "EXIT",
-   "rationale": "claude exit view",
-   "risk_factors": [
-    "gemini exit view"
-   ],
-   "signal": "[EXIT CHECK] edge_inversion: held",
-   "source": "exit_monitor"
-  }
- ],
+ "decision_history": [],
  "edge_calls": [],
  "events": [
   [
@@ -1066,19 +1054,6 @@
   [
    "exec.cancel_order",
    "sell-repl"
-  ],
-  [
-   "exec.place_sell_order",
-   {
-    "city_id": "tor",
-    "description": "EXIT: edge_inversion",
-    "force_taker": false,
-    "market_id": "p-repl",
-    "price": 0.55,
-    "reference_price": null,
-    "shares": 12.0,
-    "token_id": "a-repl"
-   }
   ]
  ],
  "forecast_cache_keys": [
