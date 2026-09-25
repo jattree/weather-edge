@@ -59,13 +59,13 @@ A later independent review ([`docs/PROVING_RUN_REVIEW.md`](docs/PROVING_RUN_REVI
 concluded that the proving run never actually tested the thesis (every day of
 it traded through at least one broken layer), so the honest verdict is
 "edge **unproven**", not "edge disproven". It also found the published repo
-still contradicted its own lessons in four ways, now fixed:
+still contradicted its own lessons. Fixed, by area:
 
 | Area | Fix |
 |------|-----|
 | Safety | The rail-less **hail-mary configuration was the shipped default** (no horizon filter, no agreement gate, no dedupe, AI vetoes ignored, no exposure caps, exit monitor dead-gated). All rails restored; the hail-mary is preserved verbatim behind `HAIL_MARY_MODE` (default off, never enable with real money) |
 | Paper honesty | Paper fills crossed nothing and paid nothing (the lesson-2 fiction, again). Paper entries now cross the spread and pay the dynamic taker fee; early exits pay a taker fee on proceeds |
-| Signal | The dynamic bias correction now applies only when the measured bias clears a 2-standard-error significance gate (the uniform correction damaged already-good cities, London -302%); Kelly sizes at the effective fill price (mid + half-spread) instead of the frictionless midpoint; the HIGH-tier spread gate is real instead of a hardcoded `True` |
+| Signal | The dynamic bias correction now applies only when the measured bias clears a 2-standard-error significance gate (a uniform correction damages already-good cities: the 2026-04-01 validation of the Layer-2 station offsets made London's MAE 302% worse); Kelly sizes at the effective fill price (mid + half-spread) instead of the frictionless midpoint; the HIGH-tier spread gate is real instead of a hardcoded `True` |
 
 ## How it works
 
@@ -115,7 +115,7 @@ src/weather_edge/
   scheduler.py   the main cycle (fetch → consensus → edge → trade → resolve)
   config.py      24 cities: ICAO station, timezone, unit, model weights
 scripts/         hindcast/bias-table builders, ops helpers
-tests/           pytest suite (190 tests)
+tests/           pytest suite (no network or keys needed)
 OPEN_SOURCE_ARCHIVE.md   the post-mortem (read this)
 docs/PROVING_RUN_REVIEW.md   what the proving run did and did not prove
 ```
@@ -183,7 +183,7 @@ commands. Add keys to unlock more:
 | `GEMINI_API_KEY` | Gemini "Risk Quant" review | <https://aistudio.google.com/app/apikey> |
 | `OPENMETEO_API_KEY` + `OPENMETEO_PAID_TIER=true` | Faster, parallel model fetches (free tier works without) | <https://open-meteo.com/en/pricing> |
 | `GRIBSTREAM_API_KEY` | Extra AI models (GraphCast/AIFS) | <https://gribstream.com> |
-| `DATABASE_URL`, `REDIS_*` | Live scheduler + dashboard persistence | your own Postgres/Redis |
+| `REDIS_*` | Live scheduler cache, kill switch, heartbeats (persistence itself is a local SQLite file) | your own Redis |
 
 **Live trading (not recommended).** To place real orders you also need Polymarket
 credentials: `POLYMARKET_PRIVATE_KEY` (wallet key, the one true secret here,
@@ -194,8 +194,9 @@ redemption.
 
 > **Security:** `.env` is gitignored, keep it that way; never commit real keys.
 > Use a dedicated wallet with limited funds for any live experiment, and rotate
-> any key you suspect has leaked. There are **no secrets in this repository's
-> history**, it was scanned before publication; keep it that way.
+> any key you suspect has leaked. The history was rewritten on 2026-09-25 to
+> remove a leaked Open-Meteo API key (since rotated). If you find anything else,
+> report it privately via [`SECURITY.md`](SECURITY.md).
 
 ## Cities (24)
 
