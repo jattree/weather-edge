@@ -430,32 +430,75 @@ class AIReviewMemory:
     def __init__(self, persist: bool = True):
         self._persist = persist
         self._loaded = not persist
+        self._cutoff = ""  # target dates before this were evicted; never re-merge them
         self._vetoes: dict[tuple[str, str], ReviewVerdict] = {}
         self._approvals: dict[tuple[str, str, str], ReviewVerdict] = {}
 
     # Persistence covers vetoes only; approvals are re-earned after a restart.
-    def _load(self) -> None:
-        if self._loaded:
-            return
-        self._loaded = True
+    @staticmethod
+    def _read_persisted() -> dict | None:
+        """Persisted vetoes, {} if none, or None if the store could not be read.
+
+        A failed read must not look like "no vetoes": that would let a vetoed
+        market be approved again and let the next save overwrite the snapshot.
+        """
         try:
-            from weather_edge.live_state import get_json
-            raw = get_json(_VETO_STATE_KEY) or {}
-            for k, v in raw.items():
-                market_id, _, target_date = k.partition("|")
-                self._vetoes.setdefault((market_id, target_date), ReviewVerdict(
+            from weather_edge.live_state import get_value_strict
+            raw = get_value_strict(_VETO_STATE_KEY)
+        except Exception:
+            logger.warning("AI review memory unavailable, will retry", exc_info=True)
+            return None
+        if not raw:
+            return {}
+        try:
+            data = json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            logger.warning("AI review memory snapshot unreadable, ignoring it")
+            return {}
+        return data if isinstance(data, dict) else {}
+
+    def _merge(self, raw: dict) -> None:
+        for k, v in raw.items():
+            market_id, _, target_date = k.partition("|")
+            if self._cutoff and target_date and target_date < self._cutoff:
+                continue
+            try:
+                verdict = ReviewVerdict(
                     approved=False,
                     size_multiplier=0.0,
                     reason=str(v.get("reason", "")),
                     source=str(v.get("source", "")),
                     recorded_at=float(v.get("recorded_at", 0.0)),
-                ))
-        except Exception:
-            logger.debug("AI review memory load failed", exc_info=True)
+                )
+            except (AttributeError, TypeError, ValueError):
+                continue
+            self._vetoes.setdefault((market_id, target_date), verdict)
 
-    def _save(self) -> None:
+    def _load(self) -> None:
+        """Load persisted vetoes; stays unloaded (retried next call) on failure."""
+        if self._loaded:
+            return
+        raw = self._read_persisted()
+        if raw is None:
+            return
+        self._merge(raw)
+        self._loaded = True
+
+    def _save(self, merge: bool = True) -> None:
+        """Write vetoes back, merging in any persisted ones first.
+
+        If the store can't be read the save is skipped (vetoes stay in memory
+        and are written on a later save) rather than overwriting a snapshot
+        this process never saw.
+        """
         if not self._persist:
             return
+        if merge:
+            raw = self._read_persisted()
+            if raw is None:
+                return
+            self._merge(raw)
+            self._loaded = True
         try:
             from weather_edge.live_state import set_json
             set_json(_VETO_STATE_KEY, {
@@ -465,7 +508,7 @@ class AIReviewMemory:
                 for (m, d), v in self._vetoes.items()
             }, ttl=_VETO_STATE_TTL)
         except Exception:
-            logger.debug("AI review memory save failed", exc_info=True)
+            logger.warning("AI review memory save failed", exc_info=True)
 
     def record_veto(self, signal: Signal, reason: str, source: str) -> None:
         self._load()
@@ -503,6 +546,7 @@ class AIReviewMemory:
         """Drop entries whose target date is before ``today``."""
         self._load()
         cutoff = today.isoformat()
+        self._cutoff = max(self._cutoff, cutoff)
         stale_v = [k for k in self._vetoes if k[1] and k[1] < cutoff]
         stale_a = [k for k in self._approvals if k[2] and k[2] < cutoff]
         for k in stale_v:
@@ -516,7 +560,7 @@ class AIReviewMemory:
     def clear(self) -> None:
         self._vetoes.clear()
         self._approvals.clear()
-        self._save()
+        self._save(merge=False)
 
 
 _review_memory: AIReviewMemory | None = None
