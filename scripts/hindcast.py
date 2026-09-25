@@ -56,8 +56,6 @@ HIST_FORECAST_URL = "https://historical-forecast-api.open-meteo.com/v1/forecast"
 ARCHIVE_URL = "https://archive-api.open-meteo.com/v1/archive"
 # IEM ASOS, actual METAR station observations (same as Wunderground)
 IEM_ASOS_URL = "https://mesonet.agron.iastate.edu/cgi-bin/request/asos.py"
-# Paid API key (optional, speeds up requests, no rate-limit risk)
-OPENMETEO_API_KEY = "REDACTED_OPENMETEO_KEY"
 
 # Models to hindcast (use the Open-Meteo model IDs)
 MODELS_TO_HINDCAST = [m.value for m in GLOBAL_MODELS]
