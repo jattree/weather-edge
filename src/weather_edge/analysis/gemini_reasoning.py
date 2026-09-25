@@ -263,22 +263,9 @@ def parse_gemini_response(data: object) -> dict | str:
     response was rejected. Unknown sizing / verdict values and out-of-range
     dissent are rejections, not silently defaulted to "full"/"AGREE".
     """
-    try:
-        text = data["candidates"][0]["content"]["parts"][-1]["text"]  # type: ignore[index]
-    except (KeyError, IndexError, TypeError):
-        return "response has no text part"
-    if not isinstance(text, str):
-        return "response text is not a string"
-    text = re.sub(r"```(?:json)?\s*", "", text)
-    match = re.search(r"\{.*\}", text.strip(), re.DOTALL)
-    if not match:
-        return f"non-JSON reply: {text[:100]}"
-    try:
-        result = json.loads(match.group())
-    except json.JSONDecodeError:
-        return f"unparseable JSON: {text[:100]}"
-    if not isinstance(result, dict):
-        return "JSON reply is not an object"
+    result = _gemini_json_object(data)
+    if isinstance(result, str):
+        return result
 
     try:
         dissent = float(result.get("dissent_strength"))
@@ -308,6 +295,30 @@ def parse_gemini_response(data: object) -> dict | str:
         "sizing_recommendation": sizing,
         "model": "gemini",
     }
+
+
+def _gemini_json_object(data: object) -> dict | str:
+    """The JSON object in a generateContent reply's last text part.
+
+    Returns the decoded dict, or a string describing why it was rejected.
+    """
+    try:
+        text = data["candidates"][0]["content"]["parts"][-1]["text"]  # type: ignore[index]
+    except (KeyError, IndexError, TypeError):
+        return "response has no text part"
+    if not isinstance(text, str):
+        return "response text is not a string"
+    text = re.sub(r"```(?:json)?\s*", "", text)
+    match = re.search(r"\{.*\}", text.strip(), re.DOTALL)
+    if not match:
+        return f"non-JSON reply: {text[:100]}"
+    try:
+        result = json.loads(match.group())
+    except json.JSONDecodeError:
+        return f"unparseable JSON: {text[:100]}"
+    if not isinstance(result, dict):
+        return "JSON reply is not an object"
+    return result
 
 
 def _gemini_failure(signal: Signal, why: str) -> dict:
