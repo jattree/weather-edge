@@ -835,7 +835,7 @@
             transition: width 0.8s ease, background 0.4s ease;
         }
 
-        /* ---- vs TopTrader ---- */
+        /* ---- vs benchmark ---- */
         .vs-block {
             padding: 10px 12px;
             border: 1px solid var(--border-subtle);
@@ -2080,7 +2080,7 @@
                         </div>
                     </div>
 
-                    <!-- vs TopTrader -->
+                    <!-- vs benchmark -->
                     <div class="vs-block" id="vsBlock">
                         <div class="vs-header">
                             <span class="vs-title">Benchmark</span>
@@ -3238,7 +3238,7 @@
         }
 
         /* ================================================================
-         *  BENCHMARK TRACKER (vs TopTrader's 49% monthly pace)
+         *  BENCHMARK TRACKER (vs a top trader's 49% monthly pace)
          * ================================================================ */
         function updateCompetitors(comp) {
             var block = document.getElementById('vsBlock');
@@ -3249,7 +3249,7 @@
             var ourPnl = (comp && comp.our_pnl) ? comp.our_pnl : (prevState.total_pnl || 0);
             var bankroll = prevState.bankroll || 2000;
 
-            // TopTrader benchmark: 49% monthly = ~1.6% daily
+            // Benchmark (a top trader's pace): 49% monthly = ~1.6% daily
             var dailyTargetPct = 0.016;
             var dailyTarget = bankroll * dailyTargetPct;
 
@@ -3294,7 +3294,7 @@
             var paceLabel = el('div');
             setStyle(paceLabel, { fontSize: '9px', color: 'var(--text-muted)', marginTop: '4px', textAlign: 'right' });
             if (ourPnl >= dailyTarget) {
-                paceLabel.textContent = 'Beating TopTrader pace';
+                paceLabel.textContent = 'Beating benchmark pace';
                 paceLabel.style.color = 'var(--green)';
             } else if (ourPnl > 0) {
                 paceLabel.textContent = (pctOfTarget * 100).toFixed(0) + '% of daily target';

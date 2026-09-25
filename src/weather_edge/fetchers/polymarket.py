@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import re
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
@@ -172,6 +173,21 @@ class MarketInfo:
     slug: str = ""
     volume_24h: float = 0.0
     liquidity: float = 0.0
+    # YES top of book from Gamma (bestBid/bestAsk/spread); None when absent
+    best_bid: float | None = None
+    best_ask: float | None = None
+    spread: float | None = None
+
+
+def _optional_float(value) -> float | None:
+    """float(value), or None when missing, unparseable or non-finite."""
+    if value is None or value == "":
+        return None
+    try:
+        result = float(value)
+    except (ValueError, TypeError):
+        return None
+    return result if math.isfinite(result) else None
 
 
 @dataclass
@@ -500,6 +516,10 @@ async def discover_weather_markets(
                     parsed.liquidity = float(liq)
                 except (ValueError, TypeError):
                     pass
+                # Real top of book, used by estimate_market_spread
+                parsed.best_bid = _optional_float(mkt.get("bestBid"))
+                parsed.best_ask = _optional_float(mkt.get("bestAsk"))
+                parsed.spread = _optional_float(mkt.get("spread"))
                 markets.append(parsed)
 
         logger.info(

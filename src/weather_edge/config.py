@@ -384,6 +384,9 @@ class Settings(BaseSettings):
     polygonscan_api_key: str = ""  # Etherscan V2 key (covers Polygon, chainid=137)
     # Comma-separated wallet addresses to watch, optionally labelled: "label=0xabc..,0xdef.."
     whale_wallets: str = ""
+    # Comma-separated Polymarket usernames for the dashboard's competitor
+    # comparison (analysis/competitor_tracker.py). Empty = track no one.
+    competitor_usernames: str = ""
 
     # Trading modes, can run both, either, or neither
     paper_mode: bool = True  # Run paper trading (simulated)

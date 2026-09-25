@@ -27,12 +27,14 @@ BIAS_WINDOW_DATES = 90
 
 # Significance gate: only apply a correction whose mean bias is
 # distinguishable from sampling noise (|bias| > t * standard error).
-# The 2026-04-01 station-offset validation showed why a uniform
-# correction is a wash: it helped cities with large real offsets
-# (HKG -1.32C, +49% MAE) while actively damaging cities whose raw
-# forecast was already excellent (London raw MAE 0.11C, correction
-# made it 302% worse). Gating on significance keeps the HKG-style
-# wins without the London-style damage.
+# This gate is a precaution; it has not itself been validated. It is
+# motivated by the 2026-04-01 validation of a DIFFERENT layer, the
+# static station offsets (Layer 2): applied uniformly, those offsets
+# helped cities with large real offsets (HKG -1.32C, +49% MAE) but
+# damaged cities whose raw forecast was already excellent (London raw
+# MAE 0.11C, 302% worse). The same failure mode is plausible for this
+# dynamic per-model correction (Layer 1), so only significant biases
+# are applied.
 BIAS_SIGNIFICANCE_T = 2.0
 
 

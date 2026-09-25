@@ -1,4 +1,4 @@
-"""FastAPI web dashboard, dark terminal aesthetic matching TopTrader's Claude Trader."""
+"""FastAPI web dashboard, dark terminal aesthetic."""
 from __future__ import annotations
 
 import asyncio
@@ -136,15 +136,16 @@ live_executor = None
 
 # Load saved risk profile
 from weather_edge.analysis.risk_controls import (
+    DEFAULT_PROFILE_NAME,
     _circuit_breaker,
     set_active_profile,
 )
 
-_saved_profile = paper_trader.store.get_state("risk_profile", "aggressive")
+_saved_profile = paper_trader.store.get_state("risk_profile", DEFAULT_PROFILE_NAME)
 try:
     set_active_profile(_saved_profile)
 except ValueError:
-    set_active_profile("aggressive")
+    set_active_profile(DEFAULT_PROFILE_NAME)
 # Init circuit breaker high-water mark from current NAV
 _circuit_breaker.high_water_mark = paper_trader.bankroll + paper_trader.total_pnl
 _cycle_lock = asyncio.Lock()  # Prevent concurrent cycles from corrupting state
@@ -1464,6 +1465,7 @@ async def api_update_settings(body: dict):
         RISK_PROFILES,
         _circuit_breaker,
         get_active_profile,
+        reset_live_circuit_breaker,
         set_active_profile,
     )
 
@@ -1486,6 +1488,9 @@ async def api_update_settings(body: dict):
         _circuit_breaker.kill_reason = ""
         nav = (paper_trader.bankroll + paper_trader.total_pnl) if settings.paper_mode else settings.bankroll
         _circuit_breaker.high_water_mark = nav
+        # Also clear the live breaker (the next observed exchange NAV becomes
+        # its HWM). An already-active kill switch stays active.
+        reset_live_circuit_breaker()
         logger.info("SETTINGS: Circuit breaker reset, HWM=$%.0f", nav)
 
     return {"status": "ok", "profile": get_active_profile().name}

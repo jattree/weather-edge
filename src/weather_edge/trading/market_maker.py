@@ -1,4 +1,4 @@
-"""Market-making spread capture strategy, TopTrader's safety net.
+"""Market-making spread capture strategy, a top trader's safety net.
 
 Earns the bid-ask spread on both sides of a bucket while optionally
 holding directional exposure. Works alongside the directional strategy.

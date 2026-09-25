@@ -4,6 +4,8 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import date, datetime, timedelta, timezone
+from types import SimpleNamespace
+from zoneinfo import ZoneInfo
 
 from weather_edge.analysis.arbitrage import (
     check_bucket_parity,
@@ -224,7 +226,9 @@ def filter_dates_by_horizon(
 
     A market for date ``d`` resolves at 00:00 UTC on ``d + 1``; it is kept
     only if that is at least ``min_horizon_hours`` away. HAIL MARY mode uses a
-    0h horizon.
+    0h horizon. This is a coarse, city-agnostic pre-filter; run_cycle also
+    applies the horizon per market against the city's local end of day
+    (hours_to_local_end_of_day).
     """
     if now_utc is None:
         now_utc = datetime.now(timezone.utc)
@@ -238,6 +242,23 @@ def filter_dates_by_horizon(
         )
         (kept if resolves - now_utc >= min_horizon else blocked).append(d)
     return kept, blocked, min_horizon_hours
+
+
+def hours_to_local_end_of_day(
+    city_id: City, target_date: date, now_utc: datetime | None = None,
+) -> float:
+    """Hours from ``now_utc`` to the end of ``target_date`` in the city's zone.
+
+    The daily high is fixed at local midnight, which for an Asian or Pacific
+    city is up to 13h before 00:00 UTC on the next day (and after it in the
+    Americas). Falls back to UTC for a city without config. Never negative.
+    """
+    if now_utc is None:
+        now_utc = datetime.now(timezone.utc)
+    city = CITIES.get(city_id)
+    tz = ZoneInfo(city.timezone) if city else timezone.utc
+    end_local = datetime.combine(target_date + timedelta(days=1), datetime.min.time(), tzinfo=tz)
+    return max(0.0, (end_local - now_utc).total_seconds() / 3600)
 
 
 def default_target_dates(today: date | None = None, days: int = 4) -> list[date]:
@@ -285,6 +306,26 @@ def model_context_for_signal(
     vals = list(model_vals.values())
     mean = sum(vals) / len(vals)
     std = (max(vals) - min(vals)) / 2 if len(vals) > 1 else 0.5
+    return model_vals, mean, std
+
+
+def exit_model_context(
+    trade, forecast_cache: dict[tuple, list], market_dates: dict[str, date],
+) -> tuple[dict[str, float], float, float]:
+    """(model_values, mean, std) for an exit review of ``trade``.
+
+    Positions carry no target date, so it comes from the trade itself when
+    present, else from the discovered market with the same market_id. Uses
+    only that date's forecasts (see model_context_for_signal); with no known
+    date or no forecasts it returns empty context and std 1.0.
+    """
+    target = getattr(trade, "target_date", None) or market_dates.get(trade.market_id)
+    model_vals, mean, std = {}, 0.0, 1.0
+    if target is not None:
+        ctx = SimpleNamespace(city_id=trade.city_id, target_date=target)
+        model_vals, mean, std = model_context_for_signal(ctx, forecast_cache)
+    if not model_vals:
+        return {}, 0.0, 1.0
     return model_vals, mean, std
 
 
@@ -906,13 +947,13 @@ async def run_cycle(
                 if model_prob is None:
                     continue
 
-                # Hours to resolution
-                now = datetime.now(timezone.utc)
-                resolution_dt = datetime.combine(
-                    market.target_date + timedelta(days=1),
-                    datetime.min.time(),
-                ).replace(tzinfo=timezone.utc)
-                hours_to = max(0, (resolution_dt - now).total_seconds() / 3600)
+                # Hours to resolution: end of the target date in the city's
+                # local time, not 00:00 UTC.
+                hours_to = hours_to_local_end_of_day(city_id, market.target_date)
+                # The date-level horizon filter above assumes UTC midnight;
+                # enforce it per city too (Asia/Pacific resolve earlier).
+                if hours_to < min_horizon_hours:
+                    continue
 
                 # Apply pattern-based confidence boost + forecast trend stability
                 adjusted_conf = min(1.0, consensus.confidence * pattern_conf_mult * trend_mult)
@@ -1683,6 +1724,8 @@ async def run_cycle(
         current_no_prices = {
             m.market_id: m.no_price for m in markets if getattr(m, "no_price", 0) > 0
         }
+        # Target date per market, so exit reviews use the trade's own date
+        market_dates = {m.market_id: m.target_date for m in markets}
         current_model_probs = {}
         for signal in all_signals:
             current_model_probs[signal.market_id] = signal.model_prob
@@ -1698,23 +1741,9 @@ async def run_cycle(
             if paper_candidates:
                 logger.info("PAPER EXIT MONITOR: %d candidates", len(paper_candidates))
                 for candidate in paper_candidates[:3]:
-                    model_vals = {}
-                    c_mean, c_std = 0.0, 1.0
-                    for (cid, td), f_list in _forecast_cache.items():
-                        if cid.value == candidate.trade.city_id:
-                            model_vals = {
-                                f.model_name: f.temp_max_c
-                                for f in f_list
-                                if f.temp_max_c is not None
-                            }
-                            if model_vals:
-                                vals = list(model_vals.values())
-                                c_mean = sum(vals) / len(vals)
-                                c_std = (
-                                    (max(vals) - min(vals)) / 2
-                                    if len(vals) > 1 else 0.5
-                                )
-                            break
+                    model_vals, c_mean, c_std = exit_model_context(
+                        candidate.trade, _forecast_cache, market_dates,
+                    )
                     candidate = await ai_review_exit(
                         candidate, model_vals, c_mean, c_std,
                     )
@@ -1772,23 +1801,9 @@ async def run_cycle(
                 if live_candidates:
                     logger.info("LIVE EXIT MONITOR: %d candidates", len(live_candidates))
                     for candidate in live_candidates[:3]:
-                        model_vals = {}
-                        c_mean, c_std = 0.0, 1.0
-                        for (cid, td), f_list in _forecast_cache.items():
-                            if cid.value == candidate.trade.city_id:
-                                model_vals = {
-                                    f.model_name: f.temp_max_c
-                                    for f in f_list
-                                    if f.temp_max_c is not None
-                                }
-                                if model_vals:
-                                    vals = list(model_vals.values())
-                                    c_mean = sum(vals) / len(vals)
-                                    c_std = (
-                                        (max(vals) - min(vals)) / 2
-                                        if len(vals) > 1 else 0.5
-                                    )
-                                break
+                        model_vals, c_mean, c_std = exit_model_context(
+                            candidate.trade, _forecast_cache, market_dates,
+                        )
                         candidate = await ai_review_exit(
                             candidate, model_vals, c_mean, c_std,
                         )

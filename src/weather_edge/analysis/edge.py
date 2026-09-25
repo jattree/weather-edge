@@ -152,7 +152,7 @@ def calculate_edge(
 
     # Detect if this is a penny sweep opportunity
     # Penny bet: effective entry price is cheap (YES at <5¢ OR NO where YES > 95¢)
-    # TopTrader's edge: cheap NO trades on high-YES markets are functionally
+    # A top trader's edge: cheap NO trades on high-YES markets are functionally
     # identical to cheap YES bets, both have tiny cost and huge upside
     if side == TradeSide.NO:
         effective_entry = 1.0 - market_prob

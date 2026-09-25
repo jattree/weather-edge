@@ -244,7 +244,8 @@ class ModelSniper:
                         "longitude": city.longitude,
                         "daily": "temperature_2m_max",
                         "models": model_id,
-                        "timezone": "UTC",
+                        # City's local day, like fetchers/openmeteo.py
+                        "timezone": city.timezone,
                         "start_date": str(target_date),
                         "end_date": str(target_date),
                     }
