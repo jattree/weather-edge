@@ -1,7 +1,8 @@
 """Track competitor performance from public Polymarket profiles.
 
 Snapshots public stats (positions value, predictions count) each cycle
-so we can compare our paper P&L growth rate against TopTrader's.
+so we can compare our paper P&L growth rate against the tracked traders'.
+Tracked usernames come from COMPETITOR_USERNAMES (empty by default).
 """
 from __future__ import annotations
 
@@ -12,11 +13,14 @@ from datetime import datetime, timezone
 
 import httpx
 
+from weather_edge.config import settings
+
 logger = logging.getLogger(__name__)
 
-COMPETITORS = {
-    "toptrader": "https://polymarket.com/@toptrader",
-}
+# Usernames to track, from settings (empty by default)
+COMPETITORS: list[str] = [
+    u.strip().lstrip("@") for u in settings.competitor_usernames.split(",") if u.strip()
+]
 
 
 @dataclass

@@ -1,4 +1,4 @@
-"""FastAPI web dashboard, dark terminal aesthetic matching TopTrader's Claude Trader."""
+"""FastAPI web dashboard, dark terminal aesthetic."""
 from __future__ import annotations
 
 import asyncio

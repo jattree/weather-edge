@@ -24,9 +24,9 @@ class City(str, Enum):
     MUC = "muc"
     WAR = "war"
     SZN = "szn"
-    AUS = "aus"  # Austin, TopTrader trades this actively
-    WLG = "wlg"  # Wellington, TopTrader's $7K+ wins, thin market
-    LKO = "lko"  # Lucknow, TopTrader's $6.8K win at 0.1c, thin market
+    AUS = "aus"  # Austin, actively traded by top traders
+    WLG = "wlg"  # Wellington, a top trader's $7K+ wins, thin market
+    LKO = "lko"  # Lucknow, a top trader's $6.8K win at 0.1c, thin market
 
 
 class WeatherModel(str, Enum):
