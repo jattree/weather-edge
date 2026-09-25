@@ -24,12 +24,17 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 _redis_client = None
+_redis_ever_connected = False  # True once a Redis ping has succeeded in this process
 _fallback_cache: dict[str, Any] = {}  # In-memory fallback if Redis is down
+
+
+class LiveStateUnavailableError(RuntimeError):
+    """Raised by strict reads when Redis is in use but cannot be read."""
 
 
 def _get_redis():
     """Lazy Redis connection, only connects when first used."""
-    global _redis_client
+    global _redis_client, _redis_ever_connected
     if _redis_client is not None:
         return _redis_client
     try:
@@ -45,6 +50,7 @@ def _get_redis():
             socket_timeout=2,
         )
         _redis_client.ping()
+        _redis_ever_connected = True
         logger.info(
             "Redis connected (%s:%d/%d)",
             settings.redis_host, settings.redis_port, settings.redis_db,
@@ -88,6 +94,36 @@ def get_value(key: str) -> str | None:
         except Exception:
             logger.debug("Redis get failed for %s, using fallback", key)
     return _fallback_cache.get(key)
+
+
+def get_value_strict(key: str) -> str | None:
+    """Read a value WITHOUT silently degrading to the fallback cache.
+
+    Safety-critical readers (the kill switch) must not treat "Redis errored"
+    the same as "key not set". Semantics:
+
+    - Redis connected: return the Redis value; any Redis error propagates.
+    - Redis was connected earlier in this process but the client is gone:
+      raise LiveStateUnavailableError.
+    - Redis never reachable in this process (local, no-Redis mode): return
+      the in-memory fallback value.
+    """
+    r = _get_redis()
+    if r is not None:
+        return r.get(key)
+    if _redis_ever_connected:
+        raise LiveStateUnavailableError(f"Redis connection lost reading {key}")
+    return _fallback_cache.get(key)
+
+
+def get_fallback_value(key: str) -> str | None:
+    """Return the in-memory fallback value only (writes made while Redis was down)."""
+    return _fallback_cache.get(key)
+
+
+def redis_connected() -> bool:
+    """True if a Redis client is currently held (no reconnect attempt)."""
+    return _redis_client is not None
 
 
 def set_json(key: str, data: dict | list, ttl: int | None = None) -> None:

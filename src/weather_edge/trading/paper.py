@@ -1,13 +1,14 @@
 """Paper trading logger, records what we WOULD have traded."""
 from __future__ import annotations
 
+import dataclasses
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from weather_edge.analysis.contracts import validate_pool_budget, validate_reserve_pot
 from weather_edge.analysis.edge import Signal
-from weather_edge.models.enums import SignalTier, TradeStatus
+from weather_edge.models.enums import SignalTier, TradeSide, TradeStatus
 from weather_edge.models.position import Position
 from weather_edge.trading.fees import calculate_taker_fee
 
@@ -25,6 +26,7 @@ class PaperTrade(Position):
     fee_usd: float = 0.0  # Taker fee charged at entry (deducted from P&L)
 
     def __post_init__(self):
+        super().__post_init__()
         if not self.source:
             self.source = "paper"
 
@@ -74,37 +76,51 @@ class PaperTrader:
         return self.penny_at_risk
 
     @property
-    def available_capital(self) -> float:
-        """Capital remaining to deploy.
+    def open_fees(self) -> float:
+        """Entry fees already paid on still-open positions (cash is gone)."""
+        return sum(t.fee_usd or 0.0 for t in self.open_trades)
 
-        Uses stepped compounding: deployment base = bankroll + (profits * compound_factor).
-        Factor 0.0 = original bankroll only (conservative)
-        Factor 0.5 = reinvest 50% of profits (balanced)
-        Factor 1.0 = full NAV compounding (aggressive)
+    @property
+    def deployment_base(self) -> float:
+        """Capital base for sizing: bankroll + realized P&L.
+
+        Realized LOSSES always reduce the base in full. Realized profits are
+        added via stepped compounding (risk profile ``compound_factor``):
+        0.0 = original bankroll only, 0.5 = half of profits, 1.0 = full NAV.
         """
         try:
             from weather_edge.analysis.risk_controls import get_active_profile
             compound_factor = get_active_profile().compound_factor
         except Exception:
             compound_factor = 0.5
-        profit = max(0, self.total_pnl)
-        deployment_base = self.bankroll + (profit * compound_factor)
-        return max(0, deployment_base - self.capital_at_risk)
+        realized = self.total_pnl
+        if realized >= 0:
+            return self.bankroll + realized * compound_factor
+        return max(0.0, self.bankroll + realized)
+
+    @property
+    def available_capital(self) -> float:
+        """Capital remaining to deploy.
+
+        deployment_base (bankroll + realized P&L, losses in full) minus open
+        exposure (cost of open positions plus their already-paid entry fees).
+        """
+        return max(0.0, self.deployment_base - self.capital_at_risk - self.open_fees)
 
     @property
     def today_budget(self) -> float:
         """60%, same-day markets, recycles nightly."""
-        return self.bankroll * self._pool_today_pct
+        return self.deployment_base * self._pool_today_pct
 
     @property
     def tomorrow_budget(self) -> float:
         """30%, tomorrow conviction bets."""
-        return self.bankroll * self._pool_tomorrow_pct
+        return self.deployment_base * self._pool_tomorrow_pct
 
     @property
     def penny_budget(self) -> float:
         """10%, penny sweep tail bets."""
-        return self.bankroll * self._pool_penny_pct
+        return self.deployment_base * self._pool_penny_pct
 
     # Legacy aliases
     @property
@@ -125,8 +141,8 @@ class PaperTrader:
         if signal.recommended_size <= 0:
             return False
 
-        # Contract: total capital at risk must not exceed bankroll
-        budget_check = validate_pool_budget(self.capital_at_risk, self.bankroll)
+        # Contract: total capital at risk must not exceed the (loss-adjusted) base
+        budget_check = validate_pool_budget(self.capital_at_risk, self.deployment_base)
         if not budget_check.valid:
             logger.warning("CONTRACT [%s]: %s", budget_check.code, budget_check.error)
             return False
@@ -189,7 +205,7 @@ class PaperTrader:
         tier_name = signal.confidence_tier.value
         effective_reserve = profile.reserve_pct
         reserve_check = validate_reserve_pot(
-            self.available_capital, self.bankroll, effective_reserve, tier_name
+            self.available_capital, self.deployment_base, effective_reserve, tier_name
         )
         available = self.available_capital
         if not reserve_check.valid:
@@ -197,7 +213,7 @@ class PaperTrader:
             available = 0
 
         if signal.confidence_tier != SignalTier.HIGH:
-            reserve = self.bankroll * effective_reserve
+            reserve = self.deployment_base * effective_reserve
             available = max(0, available - reserve)
 
         remaining = min(remaining, available)
@@ -312,30 +328,57 @@ class PaperTrader:
     def place_spread_trade(self, signal: Signal, hedge) -> PaperTrade | None:
         """Log a spread/hedge paper trade paired with a directional trade.
 
-        This simulates TopTrader's spread capture: buy the opposite side
-        so if both fill, we can merge for guaranteed profit.
+        Simulates the spread-capture leg: buy the opposite side so that, if
+        both fill, matched shares pay exactly $1 at resolution. The leg goes
+        through the same risk gates as any trade (``should_trade``), pays the
+        paper taker fee, and uses the YES-equivalent entry convention.
+        ``hedge.limit_price`` is the price of the hedge side's own token.
         """
-        remaining = self.available_capital
-        size = min(hedge.cost, remaining)
+        hedge_side = str(getattr(hedge, "side", "")).upper()
+        if hedge_side not in ("YES", "NO"):
+            return None
+        token_price = float(hedge.limit_price)
+        if not 0.0 < token_price < 1.0:
+            return None
+
+        size = min(hedge.cost, self.available_capital)
         if size < 1.0:
             return None
+
+        # Risk gates on a copy so the directional signal is untouched
+        gate = dataclasses.replace(
+            signal,
+            recommended_side=TradeSide(hedge_side),
+            recommended_size=round(size, 2),
+            strategy="spread",
+        )
+        if not self.should_trade(gate):
+            return None
+        size = min(size, gate.recommended_size)
+        if size < 1.0:
+            return None
+
+        entry_yes = token_price if hedge_side == "YES" else 1.0 - token_price
+        fee_usd = calculate_taker_fee(token_price, size)
 
         trade = PaperTrade(
             trade_id=self._next_id,
             market_id=hedge.market_id,
             city_id=hedge.city_id,
-            side=hedge.side,
+            side=hedge_side,
             size_usd=size,
-            entry_price=hedge.limit_price,
+            entry_price=entry_yes,
+            fee_usd=round(fee_usd, 4),
             description=f"[SPREAD] {hedge.description}",
+            strategy="spread",
         )
         self._next_id += 1
         self.trades.append(trade)
 
         logger.info(
-            "SPREAD TRADE: %s %s $%.0f @ %.2f | guaranteed=$%.2f | %s",
+            "SPREAD TRADE: %s %s $%.0f @ %.2f (fee $%.2f) | est guaranteed=$%.2f | %s",
             trade.side, trade.city_id, trade.size_usd,
-            trade.entry_price, hedge.guaranteed_profit,
+            token_price, trade.fee_usd, hedge.guaranteed_profit,
             trade.description[:50],
         )
         return trade
@@ -344,46 +387,12 @@ class PaperTrader:
         """Resolve a paper trade based on market outcome."""
         trade.resolved_at = datetime.now(timezone.utc)
 
-        # Spread trades: find the paired directional trade and simulate merge
-        if "[SPREAD]" in (trade.description or ""):
-            # Find the directional trade on the same market
-            paired = None
-            for t in self.trades:
-                same_mkt = t.market_id == trade.market_id
-                diff_id = t.trade_id != trade.trade_id
-                not_spread = "[SPREAD]" not in (t.description or "")
-                if same_mkt and diff_id and not_spread:
-                    paired = t
-                    break
-
-            if paired:
-                # Merge simulation: YES cost + NO cost, payout = $1/share
-                # Both sides together always pay $1, so profit = shares - total_cost
-                total_cost = trade.entry_price + paired.entry_price
-                if total_cost < 1.0:
-                    # Guaranteed spread profit, split evenly between both legs
-                    t_shares = trade.size_usd / trade.entry_price if trade.entry_price > 0 else 0
-                    p_shares = paired.size_usd / paired.entry_price if paired.entry_price > 0 else 0
-                    shares = min(t_shares, p_shares)
-                    total_profit = (1.0 - total_cost) * shares
-                    half_profit = total_profit / 2
-
-                    trade.pnl = half_profit
-                    trade.status = TradeStatus.WON
-                    trade.exit_price = 1.0
-
-                    # Also update the paired trade so full P&L is captured
-                    paired.pnl = half_profit
-                    paired.status = TradeStatus.WON
-                    paired.exit_price = 1.0
-                    paired.resolved_at = trade.resolved_at
-
-                    logger.info(
-                        "MERGE SIM: %s %s, spread profit $%.2f (cost %.2f + %.2f = %.2f < $1)",
-                        trade.city_id, trade.market_id[:20],
-                        total_profit, trade.entry_price, paired.entry_price, total_cost,
-                    )
-                    return
+        # Spread legs resolve exactly like any binary position. At resolution
+        # a merged YES+NO pair and two independently redeemed legs pay the
+        # same: matched shares return $1 per pair, unmatched shares on either
+        # leg win or lose with the outcome, and each leg's entry fee is sunk.
+        # (The old merge shortcut overwrote the directional leg's P&L with
+        # half the spread profit, ignored unmatched shares and fees.)
 
         # Entry taker fee is sunk cost either way. Redemption of a resolved
         # position is fee-free, so no exit fee here.

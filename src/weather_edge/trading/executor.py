@@ -14,6 +14,8 @@ Corrected integration based on py-clob-client v0.34.6:
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import contextvars
 import logging
 import math
 from dataclasses import dataclass, field
@@ -44,6 +46,98 @@ def _round_price(price: float) -> float:
 def _floor_shares(shares: float) -> float:
     """Floor shares to 2 decimal places to prevent API rejection."""
     return math.floor(shares * 100) / 100.0
+
+
+def chase_limit_price(old_price: float, side_mid: float, tick: float = 0.01) -> float | None:
+    """Next price-chase limit: one tick above ``old_price``, capped at the mid.
+
+    Returns None when a one-tick improvement is not possible (already at the
+    mid cap), so the caller keeps the resting order instead of cancelling and
+    re-placing it at the same price.
+    """
+    cap = math.floor(round(side_mid / tick, 6)) * tick
+    new = round(min(old_price + tick, cap, 0.99), 2)
+    if new <= round(old_price, 2):
+        return None
+    return new
+
+
+def script_dry_run(execute: bool, live_mode: bool | None = None) -> bool:
+    """Dry-run decision for operator scripts that can trade.
+
+    Scripts default to dry run. A real order requires BOTH the explicit
+    ``--execute`` flag AND ``LIVE_MODE=true`` in settings. Returns True when
+    the script must stay in dry run.
+    """
+    if live_mode is None:
+        from weather_edge.config import settings
+        live_mode = bool(settings.live_mode)
+    if not execute:
+        logger.warning("DRY RUN: pass --execute (with LIVE_MODE=true) to place real orders")
+        return True
+    if not live_mode:
+        logger.warning("DRY RUN: --execute given but LIVE_MODE is off, refusing real orders")
+        return True
+    return False
+
+
+# When set (per asyncio task/context), every exchange-mutating call on any
+# TradeExecutor becomes a no-op. Used so that operator "refresh" requests made
+# while trading is STOPPED run analysis/paper only and cannot place, cancel or
+# redeem anything live. Context-local: other concurrent requests (close-all,
+# kill switch) are unaffected.
+_live_orders_suppressed: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "live_orders_suppressed", default=False,
+)
+
+
+@contextlib.contextmanager
+def suppress_live_orders():
+    """Block live order placement/cancel/redeem inside this context."""
+    token = _live_orders_suppressed.set(True)
+    try:
+        yield
+    finally:
+        _live_orders_suppressed.reset(token)
+
+
+def live_orders_suppressed() -> bool:
+    return _live_orders_suppressed.get()
+
+
+_REJECT_STATUSES = {"REJECTED", "POST_ONLY_VIOLATION", "INVALID", "CANCELED", "CANCELLED"}
+
+
+def classify_post_response(response) -> tuple[bool, str, str]:
+    """Decide whether a CLOB post_order response is a rejection.
+
+    py-clob-client returns ``{"success": bool, "errorMsg": str, "orderID": str,
+    "status": ...}``. A response is treated as rejected when ``success`` is
+    false, ``errorMsg`` is non-empty, the status is a reject status, or no
+    order id came back.
+
+    Returns:
+        (rejected, result_status, reason) where result_status is
+        "post_only_reject", "rejected" or "pending".
+    """
+    if not isinstance(response, dict):
+        return True, "rejected", f"unparseable response: {response!r}"[:200]
+    status = str(response.get("status") or "").upper()
+    err = str(response.get("errorMsg") or response.get("error") or "")
+    reason = response.get("reason") or err or status
+    order_id = response.get("orderID") or response.get("id")
+    post_only = "POST_ONLY" in status or "post-only" in err.lower() or "post only" in err.lower()
+    if post_only:
+        return True, "post_only_reject", reason
+    if (
+        response.get("success") is False
+        or err
+        or status in _REJECT_STATUSES
+        or not order_id
+        or order_id == "unknown"
+    ):
+        return True, "rejected", reason or "no order id returned"
+    return False, "pending", ""
 
 
 @dataclass
@@ -196,12 +290,33 @@ class TradeExecutor:
             improve_price_by: How much to improve the limit price vs midpoint.
             force_taker: If True, cross the spread as taker (pays fee, guarantees fill).
         """
+        if live_orders_suppressed():
+            logger.info(
+                "LIVE ORDERS SUPPRESSED (trading stopped), not placing %s %s",
+                signal.city_id, signal.description[:40],
+            )
+            return None
+
         # === KILL SWITCH CHECK ===
         if is_kill_switch_active():
             logger.warning(
                 "KILL SWITCH ACTIVE, blocking order for %s %s",
                 signal.city_id, signal.description[:40],
             )
+            return None
+
+        # === LIVE CIRCUIT BREAKER ===
+        # Tripped breaker also activates the kill switch (risk_controls), this
+        # is the in-process backstop in case that write failed.
+        try:
+            from weather_edge.analysis.risk_controls import live_circuit_breaker_multiplier
+            if live_circuit_breaker_multiplier() <= 0:
+                logger.warning(
+                    "LIVE CIRCUIT BREAKER KILLED, blocking order for %s", signal.city_id,
+                )
+                return None
+        except Exception:
+            logger.error("Circuit breaker check failed, blocking order (fail-closed)")
             return None
 
         # Calculate the taker fee we'd avoid by being maker
@@ -324,22 +439,20 @@ class TradeExecutor:
                 ),
             )
 
-            # Parse response
+            # Parse response, detect rejection BEFORE tracking/persisting
+            rejected, result_status, reason = classify_post_response(response)
             if not isinstance(response, dict):
                 response = {"raw": str(response)}
+            order_id = response.get("orderID") or response.get("id") or "unknown"
 
-            order_id = response.get("orderID", response.get("id", "unknown"))
-            status = response.get("status", "pending")
-
-            # Detect rejection
-            if status in ("REJECTED", "POST_ONLY_VIOLATION"):
+            if rejected:
                 logger.warning(
                     "ORDER REJECTED: %s %s %.0f shares @ %.3f, %s",
                     signal.recommended_side.value,
                     signal.city_id,
                     shares,
                     limit_price,
-                    response.get("reason", status),
+                    reason,
                 )
                 return OrderResult(
                     order_id=order_id,
@@ -348,9 +461,9 @@ class TradeExecutor:
                     size_usd=actual_usd,
                     size_shares=shares,
                     limit_price=limit_price,
-                    status="post_only_reject" if "POST_ONLY" in status else "rejected",
+                    status=result_status,
                     is_maker=False,
-                    reject_reason=response.get("reason", status),
+                    reject_reason=reason,
                     raw_response=response,
                 )
 
@@ -362,7 +475,7 @@ class TradeExecutor:
             # This MUST succeed, a ghost trade (on exchange but not in DB)
             # breaks position tracking, duplicate prevention, and tax records.
             from weather_edge.persistence import PersistentStore
-            from weather_edge.retry import retry_sync
+            from weather_edge.retry import retry_async
 
             def _persist_trade():
                 s = PersistentStore()
@@ -383,9 +496,13 @@ class TradeExecutor:
                 finally:
                     s.close()
 
+            async def _persist_trade_async():
+                # SQLite write off the event loop; backoff uses asyncio.sleep
+                await asyncio.to_thread(_persist_trade)
+
             try:
-                retry_sync(
-                    _persist_trade,
+                await retry_async(
+                    _persist_trade_async,
                     attempts=3,
                     base_delay=0.5,
                     label=f"persist_trade:{order_id[:16]}",
@@ -484,6 +601,9 @@ class TradeExecutor:
 
     async def cancel_order(self, order_id: str) -> bool:
         """Cancel a single order."""
+        if live_orders_suppressed():
+            logger.info("LIVE ORDERS SUPPRESSED, not cancelling %s", order_id)
+            return False
         if self.dry_run or self._client is None:
             return True
 
@@ -522,7 +642,7 @@ class TradeExecutor:
 
     async def cancel_stale_orders(self, max_age_seconds: int = 300) -> int:
         """Cancel orders that haven't filled within max_age_seconds."""
-        if self.dry_run or self._client is None:
+        if live_orders_suppressed() or self.dry_run or self._client is None:
             return 0
 
         try:
@@ -594,26 +714,51 @@ class TradeExecutor:
             market_id: The market condition_id (for DB persistence).
             city_id: For logging.
             description: For logging.
-            reference_price: Current market price for slippage check.
+            reference_price: An INDEPENDENT mark for the token being sold
+                (e.g. last known Gamma price of that token). Must be the
+                price of the same token as ``price``. When omitted in live
+                mode the executor fetches the token's CLOB midpoint instead;
+                if no reference can be obtained the live sell is refused.
             force_taker: If True, skip post_only to guarantee fill (pays ~2% taker fee).
         """
+        if live_orders_suppressed():
+            logger.info("LIVE ORDERS SUPPRESSED (trading stopped), not selling %s", city_id)
+            return None
+
         if is_kill_switch_active():
             logger.warning("KILL SWITCH ACTIVE, blocking sell for %s", city_id)
             return None
 
         shares = _floor_shares(shares)
         price = _round_price(price)
+        is_live = not (self.dry_run or self._client is None)
 
-        # Slippage guard: reject if limit price drifted too far from mark
-        if reference_price is not None:
-            from weather_edge.config import settings
-            max_slip = settings.max_slippage_pct
-            if reference_price > 0 and (reference_price - price) / reference_price > max_slip:
+        # Slippage guard: reject if the limit is too far BELOW an independent
+        # mark of this token. Live mode also checks the live CLOB midpoint of
+        # the token, so a caller that passes its own price as the reference
+        # (or the wrong token's price) cannot silence the guard.
+        from weather_edge.config import settings
+        max_slip = settings.max_slippage_pct
+        references: list[tuple[str, float]] = []
+        if reference_price is not None and reference_price > 0:
+            references.append(("caller", float(reference_price)))
+        if is_live:
+            mid = await self.get_token_midpoint(token_id)
+            if mid is not None and mid > 0:
+                references.append(("clob_mid", mid))
+            if not references:
                 logger.warning(
-                    "SELL BLOCKED (slippage): %s price=%.3f ref=%.3f drift=%.1f%% > max=%.1f%%",
-                    city_id, price, reference_price,
-                    (reference_price - price) / reference_price * 100,
-                    max_slip * 100,
+                    "SELL BLOCKED (no reference price): %s token %s, cannot "
+                    "verify limit %.3f", city_id, token_id[:16], price,
+                )
+                return None
+        for ref_name, ref in references:
+            drift = (ref - price) / ref
+            if drift > max_slip:
+                logger.warning(
+                    "SELL BLOCKED (slippage vs %s): %s price=%.3f ref=%.3f "
+                    "drift=%.1f%% > max=%.1f%%",
+                    ref_name, city_id, price, ref, drift * 100, max_slip * 100,
                 )
                 return None
 
@@ -667,18 +812,37 @@ class TradeExecutor:
                     city_id,
                 )
 
+            rejected, result_status, reason = classify_post_response(response)
             if not isinstance(response, dict):
                 response = {"raw": str(response)}
+            order_id = response.get("orderID") or response.get("id") or "unknown"
 
-            order_id = response.get("orderID", response.get("id", "unknown"))
-            status = response.get("status", "pending")
+            if rejected:
+                # Never track or persist a rejected sell: it is not on the book,
+                # and a phantom 'open' SELL row would block re-exit and poison
+                # the exit cooldown.
+                logger.warning(
+                    "SELL REJECTED: %s %.0f shares @ %.3f, %s",
+                    city_id, shares, price, reason,
+                )
+                return OrderResult(
+                    order_id=order_id,
+                    market_id=market_id,
+                    side="SELL",
+                    size_usd=round(shares * price, 2),
+                    size_shares=shares,
+                    limit_price=price,
+                    status=result_status,
+                    is_maker=False,
+                    reject_reason=reason,
+                    raw_response=response,
+                )
 
-            if order_id and order_id != "unknown":
-                track_open_order(order_id)
+            track_open_order(order_id)
 
             # Persist to SQLite
             from weather_edge.persistence import PersistentStore
-            from weather_edge.retry import retry_sync
+            from weather_edge.retry import retry_async
 
             def _persist_sell():
                 s = PersistentStore()
@@ -699,9 +863,12 @@ class TradeExecutor:
                 finally:
                     s.close()
 
+            async def _persist_sell_async():
+                await asyncio.to_thread(_persist_sell)
+
             try:
-                retry_sync(
-                    _persist_sell,
+                await retry_async(
+                    _persist_sell_async,
                     attempts=3,
                     base_delay=0.5,
                     label=f"persist_sell:{order_id[:16]}",
@@ -730,7 +897,8 @@ class TradeExecutor:
                 size_usd=round(shares * price, 2),
                 size_shares=shares,
                 limit_price=price,
-                status="pending" if status != "REJECTED" else "rejected",
+                status="pending",
+                is_maker=use_post_only,
                 raw_response=response,
             )
 
@@ -742,6 +910,24 @@ class TradeExecutor:
             return None
         except (ValueError, KeyError, TypeError) as e:
             logger.error("LIVE SELL PARSE ERROR: %s, %s", city_id, e)
+            return None
+
+    async def get_token_midpoint(self, token_id: str) -> float | None:
+        """Live CLOB midpoint for one token (YES or NO), or None."""
+        if self._client is None or not token_id:
+            return None
+        fn = getattr(self._client, "get_midpoint", None)
+        if fn is None:
+            return None
+        try:
+            loop = asyncio.get_running_loop()
+            result = await loop.run_in_executor(None, fn, token_id)
+            if isinstance(result, dict):
+                result = result.get("mid", result.get("midpoint"))
+            mid = float(result)
+            return mid if 0 < mid < 1 else None
+        except Exception as e:
+            logger.debug("Midpoint fetch failed for %s: %s", token_id[:16], e)
             return None
 
     async def send_heartbeat(self) -> bool:
@@ -804,21 +990,21 @@ class TradeExecutor:
         8. Submit with builder API key auth headers
         9. Poll for confirmation
 
-        Returns number of positions redeemed.
+        Returns number of positions whose redemption was CONFIRMED on-chain.
+        Submitted-but-unconfirmed or failed relayer transactions are not
+        counted.
         """
-        if self.dry_run or not self.private_key:
+        if live_orders_suppressed() or self.dry_run or not self.private_key:
             return 0
 
         try:
             import json as _json
 
             import httpx
-            from eth_abi import encode as abi_encode
             from eth_abi.packed import encode_packed
             from eth_account import Account
             from eth_account.messages import encode_defunct
             from eth_utils import keccak, to_bytes, to_checksum_address
-            from hexbytes import HexBytes
             from web3 import Web3
 
             from weather_edge.config import settings as cfg
@@ -1055,12 +1241,13 @@ class TradeExecutor:
                             logger.warning(
                                 "REDEEM CONFIRMED: %s, tx: %s", title, str(tx_id)[:24]
                             )
+                            # Only confirmed (mined) redemptions count
+                            redeemed += 1
                         else:
                             logger.warning(
-                                "REDEEM PENDING (not confirmed in 60s): %s", title
+                                "REDEEM NOT CONFIRMED (failed or pending after 60s): %s",
+                                title,
                             )
-
-                        redeemed += 1
                     else:
                         logger.error(
                             "REDEEM REJECTED: %s, %d %s",

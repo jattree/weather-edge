@@ -19,7 +19,8 @@ import asyncio
 import logging
 from datetime import datetime, timezone
 
-from weather_edge.live_state import get_value, set_value, set_json, get_json
+from weather_edge import live_state
+from weather_edge.live_state import get_json, set_json, set_value
 
 logger = logging.getLogger(__name__)
 
@@ -27,15 +28,43 @@ KILL_SWITCH_KEY = "kill_switch:active"
 KILL_SWITCH_META_KEY = "kill_switch:meta"
 
 
+def _live_mode_enabled() -> bool:
+    try:
+        from weather_edge.config import settings
+        return bool(settings.live_mode)
+    except Exception:
+        return True  # Can't tell: assume live, fail closed
+
+
 def is_kill_switch_active() -> bool:
     """Check if kill switch is engaged. Called before every order.
 
-    This must be fast (<10ms) and safe, returns True (blocked) on
-    any Redis error to fail closed.
+    Fail-closed semantics (returns True = orders blocked):
+
+    - The in-memory flag is set (activated while Redis was unreachable).
+    - Redis is connected and the flag is "1".
+    - Redis is in use (connected earlier in this process) but the read
+      errors or the connection is lost.
+    - Redis has never been reachable in this process AND LIVE_MODE is on:
+      a flag persisted by a previous process cannot be verified, so real
+      orders are refused. Start Redis to trade live.
+
+    Local no-Redis mode (Redis never reachable, LIVE_MODE off) uses the
+    in-memory flag only, so paper/dry-run work without Redis.
     """
     try:
-        val = get_value(KILL_SWITCH_KEY)
-        return val == "1"
+        if live_state.get_fallback_value(KILL_SWITCH_KEY) == "1":
+            return True
+        val = live_state.get_value_strict(KILL_SWITCH_KEY)
+        if val == "1":
+            return True
+        if not live_state.redis_connected() and _live_mode_enabled():
+            logger.error(
+                "Kill switch state unverifiable (Redis unreachable) in LIVE_MODE, "
+                "blocking orders (fail-closed)",
+            )
+            return True
+        return False
     except Exception:
         # Fail closed, if we can't check, assume killed
         logger.error("Kill switch check failed, blocking orders (fail-closed)")
@@ -80,6 +109,15 @@ def deactivate_kill_switch(cleared_by: str = "manual") -> dict:
         Kill switch state dict.
     """
     set_value(KILL_SWITCH_KEY, "0")
+    # Clear any flag written to the in-memory fallback while Redis was down
+    live_state._fallback_cache.pop(KILL_SWITCH_KEY, None)
+    # Explicit operator reset also re-arms the live drawdown breaker with a
+    # fresh high-water mark (otherwise it would keep blocking / re-trip).
+    try:
+        from weather_edge.analysis.risk_controls import reset_live_circuit_breaker
+        reset_live_circuit_breaker()
+    except Exception:
+        logger.error("Failed to reset live circuit breaker", exc_info=True)
 
     meta = {
         "active": False,

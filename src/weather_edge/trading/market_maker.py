@@ -24,10 +24,78 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from datetime import datetime, timezone
 
 from weather_edge.analysis.edge import Signal
+from weather_edge.models.enums import SignalTier, TradeSide
 
 logger = logging.getLogger(__name__)
+
+
+# Assumed bid-ask spread when no real top-of-book is available for a market.
+# Polymarket weather books are typically 1-3c wide; assume the wide end so
+# the spread-aware sizing and spread gate stay conservative.
+DEFAULT_SPREAD_ESTIMATE = 0.03
+
+
+def estimate_market_spread(market) -> float:
+    """Best available bid-ask spread estimate for a market (YES book).
+
+    Uses real top-of-book fields when the market object carries them
+    (``best_bid``/``best_ask`` or ``spread``, e.g. Gamma bestBid/bestAsk),
+    otherwise DEFAULT_SPREAD_ESTIMATE. Never returns ~0 from complementary
+    outcomePrices.
+    """
+    bid = getattr(market, "best_bid", None)
+    ask = getattr(market, "best_ask", None)
+    try:
+        if bid is not None and ask is not None and 0 < bid < ask < 1:
+            return round(float(ask) - float(bid), 4)
+        raw = getattr(market, "spread", None)
+        if raw is not None and 0 < float(raw) < 1:
+            return float(raw)
+    except (TypeError, ValueError):
+        pass
+    overround = 1.0 - (
+        (getattr(market, "yes_price", 0) or 0) + (getattr(market, "no_price", 0) or 0)
+    )
+    return max(DEFAULT_SPREAD_ESTIMATE, overround)
+
+
+
+def build_hedge_signal(parent: Signal, hedge: "SpreadOrder") -> Signal:
+    """Synthetic Signal for placing a live spread hedge via place_limit_order.
+
+    ``Signal.market_prob`` is ALWAYS the YES probability; place_limit_order
+    derives a NO limit as ``1 - market_prob``. ``hedge.limit_price`` is the
+    price of the hedge token itself, so for a NO hedge the YES-equivalent is
+    ``1 - limit_price``. Place with ``improve_price_by=0`` so the resulting
+    limit is exactly ``hedge.limit_price``.
+    """
+    side = TradeSide(str(hedge.side).upper())
+    token_price = float(hedge.limit_price)
+    yes_prob = token_price if side == TradeSide.YES else 1.0 - token_price
+    return Signal(
+        market_id=hedge.market_id,
+        consensus_id=None,
+        computed_at=datetime.now(timezone.utc),
+        model_prob=parent.model_prob,
+        model_confidence=parent.model_confidence,
+        market_prob=yes_prob,
+        edge=0.0,  # Spread legs are not directional bets
+        net_edge=0.0,
+        edge_pct=0.0,
+        kelly_fraction=0.0,
+        half_kelly=0.0,
+        recommended_side=side,
+        recommended_size=hedge.cost,
+        confidence_tier=SignalTier.MEDIUM,
+        city_id=parent.city_id,
+        description=f"[SPREAD] {hedge.description}",
+        target_date=parent.target_date,
+        hours_to_resolution=parent.hours_to_resolution,
+        strategy="spread",
+    )
 
 
 @dataclass
@@ -88,7 +156,7 @@ class MarketMaker:
     ) -> list[SpreadOpportunity]:
         """Find buckets where buying both sides costs less than $1.00."""
         opportunities: list[SpreadOpportunity] = []
-        
+
         # Apply $5 cap if live
         max_usd = self.max_live_usd_per_bucket if is_live else self.max_position_per_bucket
 
@@ -206,13 +274,17 @@ class MarketMaker:
             cost=round(cost, 2),
             guaranteed_profit=round(max(0, guaranteed_profit), 2),
             paired_with=signal.market_id,
-            description=f"HEDGE {hedge_side} @ {limit_price:.2f} for {signal.city_id} {signal.description[:40]}",
+            description=(
+                f"HEDGE {hedge_side} @ {limit_price:.2f} for "
+                f"{signal.city_id} {signal.description[:40]}"
+            ),
         )
 
         self.orders.append(order)
 
         logger.info(
-            "SPREAD ORDER: %s %s %.0f shares @ %.2f ($%.2f), hedges %s %s | guaranteed profit: $%.2f",
+            "SPREAD ORDER: %s %s %.0f shares @ %.2f ($%.2f), hedges %s %s | "
+            "guaranteed profit: $%.2f",
             hedge_side, signal.city_id, shares, limit_price, cost,
             signal.recommended_side.value, signal.city_id, max(0, guaranteed_profit),
         )
@@ -232,7 +304,9 @@ class MarketMaker:
             "spread_orders": len(self.orders),
             "total_cost": round(total_cost, 2),
             "estimated_guaranteed_pnl": round(total_guaranteed, 2),
-            "avg_profit_per_order": round(total_guaranteed / len(self.orders), 2) if self.orders else 0,
+            "avg_profit_per_order": (
+                round(total_guaranteed / len(self.orders), 2) if self.orders else 0
+            ),
             "cities": list(set(o.city_id for o in self.orders)),
         }
 

@@ -584,8 +584,11 @@ async def run_cycle(
                 if ai_div:
                     adjusted_conf = min(1.0, adjusted_conf * ai_div["confidence_multiplier"])
 
-                # Estimate spread from Gamma prices
-                estimated_spread = max(0.0, 1.0 - (market.yes_price + market.no_price))
+                # Spread: real top-of-book if the market carries it, else a
+                # conservative default. Gamma outcomePrices are complementary
+                # (YES + NO ~= 1), so 1-(yes+no) is ~0 and hid the real cost.
+                from weather_edge.trading.market_maker import estimate_market_spread
+                estimated_spread = estimate_market_spread(market)
 
                 from weather_edge.analysis.risk_controls import get_active_profile
                 risk_profile = get_active_profile()
@@ -1157,10 +1160,29 @@ async def run_cycle(
                                 and signal.edge >= 0.02
                             )
 
+                            chase_price = None
                             if should_chase:
-                                # Price chase: improve by 0.1c toward midpoint
-                                chase_price = round(old_price + 0.001, 3)
-                                chase_price = max(0.01, min(0.99, chase_price))
+                                # Price chase: improve by ONE TICK toward the
+                                # midpoint. The executor rounds limits to the
+                                # 1c tick, so a sub-tick bump would re-place at
+                                # the same price (cancel for nothing, losing
+                                # queue priority). Never chase above the side's
+                                # midpoint (would cross as a post-only buy).
+                                side_mid = (
+                                    signal.market_prob
+                                    if signal.recommended_side.value == "YES"
+                                    else 1.0 - signal.market_prob
+                                )
+                                from weather_edge.trading.executor import chase_limit_price
+                                chase_price = chase_limit_price(old_price, side_mid)
+                                if chase_price is None:
+                                    logger.info(
+                                        "PRICE CHASE SKIP: %s @ %.2f already at "
+                                        "mid cap %.3f, keeping order",
+                                        signal.city_id, old_price, side_mid,
+                                    )
+                                    continue
+                            if chase_price is not None:
                                 old_id = existing.get("order_id")
                                 if old_id:
                                     try:
@@ -1229,9 +1251,25 @@ async def run_cycle(
                                 check_gross_exposure,
                                 check_yes_exposure_limit,
                                 get_active_profile,
+                                live_circuit_breaker_multiplier,
                             )
-                            from weather_edge.models.position import Position
+                            from weather_edge.models.position import Position, normalize_side
                             profile = get_active_profile()
+
+                            # 0. Live drawdown circuit breaker (fed real NAV by
+                            # fetch_polymarket_state; a kill also sets the
+                            # persistent kill switch).
+                            cb_mult = live_circuit_breaker_multiplier()
+                            if cb_mult <= 0:
+                                logger.warning(
+                                    "LIVE CIRCUIT BREAKER: killed, skipping %s",
+                                    signal.city_id,
+                                )
+                                continue
+                            if cb_mult < 1.0:
+                                signal.recommended_size = round(
+                                    signal.recommended_size * cb_mult, 2,
+                                )
 
                             # 1. Yes Exposure Cap
                             if signal.recommended_side.value == "YES":
@@ -1240,7 +1278,7 @@ async def run_cycle(
                                     Position(
                                         market_id=p.get("condition_id"),
                                         city_id=p.get("city_id"),
-                                        side=p.get("outcome", p.get("side")),
+                                        side=normalize_side(p.get("outcome") or p.get("side")),
                                         size_usd=p.get("cost_basis", 0),
                                         status="open" if p.get("total_shares", 0) > 0 else "closed"
                                     ) for p in raw_pos
@@ -1261,7 +1299,7 @@ async def run_cycle(
                                 Position(
                                     market_id=p.get("condition_id"),
                                     city_id=p.get("city_id"),
-                                    side=p.get("outcome", p.get("side")),
+                                    side=normalize_side(p.get("outcome") or p.get("side")),
                                     size_usd=p.get("cost_basis", 0),
                                     status="open" if p.get("total_shares", 0) > 0 else "closed"
                                 ) for p in raw_pos
@@ -1362,26 +1400,25 @@ async def run_cycle(
                                     if hedge:
                                         m = market_by_id.get(hedge.market_id)
                                         if m:
-                                            from weather_edge.models.enums import MarketType
-                                            h_side = MarketType.YES if hedge.side == "YES" else MarketType.NO
-                                            h_token_id = m.token_id_yes if hedge.side == "YES" else m.token_id_no
-
-                                            # Create synthetic signal for the hedge order
-                                            h_signal = Signal(
-                                                market_id=hedge.market_id,
-                                                city_id=signal.city_id,
-                                                recommended_side=h_side,
-                                                recommended_size=hedge.cost,
-                                                edge=0.0,  # Spread orders have guaranteed profit, not directional edge
-                                                confidence=1.0,
-                                                description=f"[SPREAD] {hedge.description}",
-                                                strategy="spread",
-                                                market_prob=hedge.limit_price,
+                                            from weather_edge.trading.market_maker import (
+                                                build_hedge_signal,
                                             )
+                                            h_token_id = (
+                                                m.token_id_yes if hedge.side == "YES"
+                                                else m.token_id_no
+                                            )
+                                            # Synthetic signal: market_prob is the
+                                            # YES-equivalent of the hedge token price
+                                            h_signal = build_hedge_signal(signal, hedge)
+                                            h_side = h_signal.recommended_side
 
                                             try:
                                                 import requests
-                                                h_result = await live_executor.place_limit_order(h_signal, h_token_id)
+                                                # improve_price_by=0: limit is exactly
+                                                # hedge.limit_price for the hedge token
+                                                h_result = await live_executor.place_limit_order(
+                                                    h_signal, h_token_id, improve_price_by=0.0,
+                                                )
                                                 if h_result:
                                                     logger.info(
                                                         "LIVE SPREAD HEDGE: %s %s %.0f shares @ %.3f, %s",
@@ -1408,18 +1445,24 @@ async def run_cycle(
     # === Early exit monitor ===
     # Paper and live scan independently, either can run alone
     try:
-        from weather_edge.analysis.exit_monitor import ai_review_exit, scan_for_exits
+        from weather_edge.analysis.exit_monitor import ai_review_exit, scan_for_exits_async
         current_market_prices = {m.market_id: m.yes_price for m in markets}
+        # NO token's own price (Gamma outcomePrices[1]); exit_monitor falls
+        # back to 1-YES when missing.
+        current_no_prices = {
+            m.market_id: m.no_price for m in markets if getattr(m, "no_price", 0) > 0
+        }
         current_model_probs = {}
         for signal in all_signals:
             current_model_probs[signal.market_id] = signal.model_prob
 
         # --- PAPER EXIT SCANNING ---
         if paper_trader:
-            paper_candidates = scan_for_exits(
+            paper_candidates = await scan_for_exits_async(
                 paper_trader.open_trades,
                 current_market_prices, current_model_probs,
                 forecast_cache=_forecast_cache,
+                no_prices=current_no_prices,
             )
             if paper_candidates:
                 logger.info("PAPER EXIT MONITOR: %d candidates", len(paper_candidates))
@@ -1466,7 +1509,7 @@ async def run_cycle(
             and not live_executor.dry_run
             and store
         ):
-            from weather_edge.models.position import Position
+            from weather_edge.models.position import PRICE_BASIS_TOKEN, Position
             positions = store.get_positions()
             live_positions: list[Position] = []
             for pos in positions:
@@ -1476,19 +1519,24 @@ async def run_cycle(
                     live_positions.append(Position(
                         market_id=pos.get("condition_id", ""),
                         city_id=pos.get("city_id", ""),
-                        side=pos.get("outcome", pos.get("side", "")),
+                        # positions.side is the fill side (BUY); the token
+                        # held is the outcome. Normalised to YES/NO.
+                        side=pos.get("outcome") or pos.get("side", ""),
                         size_usd=pos.get("cost_basis", 0),
+                        # avg_price is what we paid for the held token
                         entry_price=avg_price,
+                        price_basis=PRICE_BASIS_TOKEN,
                         total_shares=shares,
                         description=pos.get("description", ""),
                         source="live",
                     ))
 
             if live_positions:
-                live_candidates = scan_for_exits(
+                live_candidates = await scan_for_exits_async(
                     live_positions,
                     current_market_prices, current_model_probs,
                     forecast_cache=_forecast_cache,
+                    no_prices=current_no_prices,
                 )
                 if live_candidates:
                     logger.info("LIVE EXIT MONITOR: %d candidates", len(live_candidates))
@@ -1570,13 +1618,20 @@ async def run_cycle(
                                 and position.get("total_shares", 0) >= MIN_SELL_SHARES
                             ):
                                 asset_id = position.get("asset_id", "")
+                                # Sell the held token at ITS OWN price. The
+                                # candidate's current_market_price is always
+                                # the YES price, selling a NO token there
+                                # would dump it (or never fill).
+                                sell_price = (
+                                    candidate.token_price
+                                    if candidate.token_price is not None
+                                    else candidate.current_market_price
+                                )
                                 if asset_id:
                                     # Replace existing sell only if price drifted >1c
                                     if existing_sell:
                                         old_price = existing_sell.get("limit_price", 0)
-                                        new_price = _round_price(
-                                            candidate.current_market_price,
-                                        )
+                                        new_price = _round_price(sell_price)
                                         price_drift = abs(old_price - new_price)
 
                                         if price_drift <= 0.01:
@@ -1617,25 +1672,31 @@ async def run_cycle(
                                             if candidate.reason == "sell_half"
                                             else "EXIT"
                                         )
+                                        # reference_price=None: the executor
+                                        # checks the limit against the token's
+                                        # live CLOB midpoint (an independent
+                                        # mark), not against itself.
                                         sell_result = await live_executor.place_sell_order(
                                             token_id=asset_id,
                                             shares=sell_shares,
-                                            price=candidate.current_market_price,
+                                            price=sell_price,
                                             market_id=market_id,
                                             city_id=city_id_str,
                                             description=(
                                                 f"{exit_label}: {candidate.reason}"
                                             ),
-                                            reference_price=candidate.current_market_price,
+                                            reference_price=None,
                                             force_taker=urgent,
                                         )
-                                        if sell_result:
+                                        if sell_result and sell_result.status not in (
+                                            "rejected", "post_only_reject",
+                                        ):
                                             logger.warning(
                                                 "LIVE EXIT: %s %s %.0f shares "
                                                 "@ %.3f, %s",
                                                 city_id_str, candidate.trade.side,
-                                                position["total_shares"],
-                                                candidate.current_market_price,
+                                                sell_shares,
+                                                sell_price,
                                                 sell_result.order_id,
                                             )
                                     except Exception as e:

@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from weather_edge.analysis.contracts import validate_penny_no_exit
-from weather_edge.models.position import Position
+from weather_edge.models.position import Position, normalize_side
 
 logger = logging.getLogger(__name__)
 
@@ -48,97 +48,182 @@ class ExitCandidate:
     gemini_verdict: str | None = None  # "AGREE_EXIT" or "HOLD"
     gemini_rationale: str | None = None
     final_decision: str | None = None  # "EXIT" or "HOLD"
+    # Current price of the token actually held (NO token price for NO
+    # positions). Live sells must use this, never current_market_price.
+    token_price: float | None = None
+
+
+def _observation_context(trade: Position):
+    """Return (city_config, bucket) if the observation guard applies, else None.
+
+    Pure logic, no network: side, bucket parse, local date and peak-heat gates.
+    """
+    import re
+    import zoneinfo
+
+    from weather_edge.analysis.resolver import parse_bucket_from_description
+    from weather_edge.config import CITIES
+    from weather_edge.models.enums import City
+
+    # Only applies to YES positions, if actual is in bucket, YES wins.
+    # For NO positions, actual in bucket means we're LOSING, don't block exit.
+    if normalize_side(trade.side) != "YES":
+        return None
+
+    desc = trade.description or ""
+    bucket = parse_bucket_from_description(desc)
+    if not bucket:
+        return None
+
+    try:
+        city_enum = City(trade.city_id)
+    except ValueError:
+        return None
+    city_config = CITIES.get(city_enum)
+    if not city_config:
+        return None
+
+    # Use city's LOCAL date for comparison, not UTC
+    tz = zoneinfo.ZoneInfo(city_config.timezone)
+    local_now = datetime.now(tz)
+
+    # Only check positions resolving TODAY in the city's timezone
+    date_match = re.search(r"on (\w+ \d+)\??$", desc)
+    if date_match:
+        from dateutil.parser import parse as _parse_date
+        target_date = _parse_date(date_match.group(1) + f" {local_now.year}").date()
+        if target_date != local_now.date():
+            return None
+
+    if local_now.hour < PEAK_HEAT_HOUR:
+        return None  # Too early, high might not be set yet
+    return city_config, bucket
+
+
+def _observation_params(city_config) -> dict:
+    return {
+        "latitude": city_config.latitude,
+        "longitude": city_config.longitude,
+        "daily": "temperature_2m_max",
+        "timezone": city_config.timezone,
+        "forecast_days": 1,
+    }
+
+
+def _observation_in_bucket(trade: Position, bucket, resp) -> bool:
+    from weather_edge.analysis.resolver import actual_falls_in_bucket
+
+    if resp.status_code != 200:
+        return False
+    data = resp.json()
+    daily_max_c = data.get("daily", {}).get("temperature_2m_max", [None])[0]
+    if daily_max_c is None:
+        return False
+    in_bucket = actual_falls_in_bucket(daily_max_c, bucket)
+    if in_bucket:
+        logger.info(
+            "OBSERVATION GUARD: %s actual max %.1f°C is IN bucket %s, HOLD to resolution",
+            trade.city_id, daily_max_c, (trade.description or "")[:50],
+        )
+    return in_bucket
 
 
 def _check_observation_confirms_bucket(trade: Position) -> bool:
-    """Check if actual weather observation confirms our position's bucket.
+    """Synchronous observation guard (blocking HTTP).
 
-    After peak heat (3pm local), the daily high is locked. If the observed
-    max temperature falls in our bucket, models are irrelevant, hold to
-    resolution for the full $1 payout.
+    Kept for non-async callers only. Async code must use
+    ``check_observation_confirms_bucket_async`` so the event loop is not
+    blocked by a network call per position.
 
     Returns True if observation confirms our bucket (should HOLD).
     """
     try:
-        import re
-        import zoneinfo
-
+        ctx = _observation_context(trade)
+        if ctx is None:
+            return False
+        city_config, bucket = ctx
         import httpx
-
-        from weather_edge.analysis.resolver import (
-            actual_falls_in_bucket,
-            parse_bucket_from_description,
-        )
-        from weather_edge.config import CITIES
-        from weather_edge.models.enums import City
-
-        # Only applies to YES positions, if actual is in bucket, YES wins.
-        # For NO positions, actual in bucket means we're LOSING, don't block exit.
-        if trade.side == "NO":
-            return False
-
-        # Parse the bucket from description
-        desc = trade.description or ""
-        bucket = parse_bucket_from_description(desc)
-        if not bucket:
-            return False
-
-        # Find the city config for timezone and coordinates
-        try:
-            city_enum = City(trade.city_id)
-        except ValueError:
-            return False
-        city_config = CITIES.get(city_enum)
-        if not city_config:
-            return False
-
-        # Use city's LOCAL date for comparison, not UTC
-        tz = zoneinfo.ZoneInfo(city_config.timezone)
-        local_now = datetime.now(tz)
-
-        # Only check positions resolving TODAY in the city's timezone
-        date_match = re.search(r"on (\w+ \d+)\??$", desc)
-        if date_match:
-            from dateutil.parser import parse as _parse_date
-            target_date = _parse_date(date_match.group(1) + f" {local_now.year}").date()
-            if target_date != local_now.date():
-                return False  # Not today's market in this city's timezone
-
-        # Check if we're past peak heat
-        if local_now.hour < PEAK_HEAT_HOUR:
-            return False  # Too early, high might not be set yet
-
-        # Fetch current observation from Open-Meteo
         resp = httpx.get(
             "https://api.open-meteo.com/v1/forecast",
-            params={
-                "latitude": city_config.latitude,
-                "longitude": city_config.longitude,
-                "daily": "temperature_2m_max",
-                "timezone": city_config.timezone,
-                "forecast_days": 1,
-            },
+            params=_observation_params(city_config),
             timeout=10.0,
         )
-        if resp.status_code != 200:
-            return False
-
-        data = resp.json()
-        daily_max_c = data.get("daily", {}).get("temperature_2m_max", [None])[0]
-        if daily_max_c is None:
-            return False
-
-        in_bucket = actual_falls_in_bucket(daily_max_c, bucket)
-        if in_bucket:
-            logger.info(
-                "OBSERVATION GUARD: %s actual max %.1f°C is IN bucket %s, HOLD to resolution",
-                trade.city_id, daily_max_c, desc[:50],
-            )
-        return in_bucket
-
+        return _observation_in_bucket(trade, bucket, resp)
     except Exception:
         logger.debug("Observation check failed for %s", trade.city_id, exc_info=True)
         return False
+
+
+async def check_observation_confirms_bucket_async(trade: Position, client=None) -> bool:
+    """Non-blocking observation guard.
+
+    After peak heat (3pm local), the daily high is locked. If the observed
+    max temperature falls in our bucket, models are irrelevant, hold to
+    resolution for the full $1 payout.
+    """
+    try:
+        ctx = _observation_context(trade)
+        if ctx is None:
+            return False
+        city_config, bucket = ctx
+        import httpx
+        if client is None:
+            async with httpx.AsyncClient() as c:
+                resp = await c.get(
+                    "https://api.open-meteo.com/v1/forecast",
+                    params=_observation_params(city_config), timeout=10.0,
+                )
+        else:
+            resp = await client.get(
+                "https://api.open-meteo.com/v1/forecast",
+                params=_observation_params(city_config), timeout=10.0,
+            )
+        return _observation_in_bucket(trade, bucket, resp)
+    except Exception:
+        logger.debug("Observation check failed for %s", trade.city_id, exc_info=True)
+        return False
+
+
+def _safe_context(trade: Position) -> bool:
+    try:
+        return _observation_context(trade) is not None
+    except Exception:
+        return False
+
+
+async def observation_holds_async(open_trades: list[Position]) -> set[int]:
+    """Run the observation guard for all trades concurrently.
+
+    Returns the set of ``id(trade)`` that must be held to resolution.
+    """
+    import asyncio
+
+    import httpx
+
+    candidates = [t for t in open_trades if _safe_context(t)]
+    if not candidates:
+        return set()
+    async with httpx.AsyncClient() as client:
+        results = await asyncio.gather(
+            *(check_observation_confirms_bucket_async(t, client) for t in candidates),
+            return_exceptions=True,
+        )
+    return {id(t) for t, r in zip(candidates, results) if r is True}
+
+
+async def scan_for_exits_async(
+    open_trades: list[Position],
+    market_prices: dict[str, float],
+    model_probs: dict[str, float],
+    forecast_cache: dict[tuple, list] | None = None,
+    no_prices: dict[str, float] | None = None,
+) -> list[ExitCandidate]:
+    """Async scan: observation guard runs concurrently, off the blocking path."""
+    holds = await observation_holds_async(open_trades)
+    return scan_for_exits(
+        open_trades, market_prices, model_probs, forecast_cache,
+        no_prices=no_prices, observation_holds=holds,
+    )
 
 
 def scan_for_exits(
@@ -146,27 +231,38 @@ def scan_for_exits(
     market_prices: dict[str, float],
     model_probs: dict[str, float],
     forecast_cache: dict[tuple, list] | None = None,
+    no_prices: dict[str, float] | None = None,
+    observation_holds: set[int] | None = None,
 ) -> list[ExitCandidate]:
     """Scan open positions for early exit candidates.
 
     Args:
-        open_trades: Currently open paper trades
+        open_trades: Currently open paper or live positions
         market_prices: Current market YES prices by market_id
         model_probs: Current model probabilities by market_id
         forecast_cache: Optional cache mapping (city, date) -> forecasts
+        no_prices: Optional NO token prices by market_id (falls back to 1-YES)
+        observation_holds: Precomputed ``id(trade)`` set from
+            ``observation_holds_async``. When None the blocking sync guard
+            is used (non-async callers only).
     """
     candidates: list[ExitCandidate] = []
     now = datetime.now(timezone.utc)
 
     for trade in open_trades:
         # Contract: never exit penny bets (hold to resolution)
-        penny_check = validate_penny_no_exit(trade.entry_price, PENNY_ENTRY_MAX)
+        side = normalize_side(trade.side)
+        # Penny = the held token was cheap (<= 6c), whichever side it is.
+        penny_check = validate_penny_no_exit(trade.token_entry_price, PENNY_ENTRY_MAX)
         if not penny_check.valid:
             continue
 
         # Observation guard: if past peak heat and actual temp confirms
         # our bucket, hold to resolution, models are irrelevant at this point
-        if _check_observation_confirms_bucket(trade):
+        if observation_holds is not None:
+            if id(trade) in observation_holds:
+                continue
+        elif _check_observation_confirms_bucket(trade):
             continue
 
         # Skip spread trades
@@ -182,12 +278,17 @@ def scan_for_exits(
         # Calculate current edge from our position's perspective
         # Keep raw_market_price for ExitCandidate (close_position needs YES price)
         raw_market_price = market_price
-        if trade.side == "YES":
+        yes_entry = trade.yes_entry_price
+        token_entry = trade.token_entry_price
+        if side == "YES":
+            token_now = market_price
             current_edge = model_prob - market_price
-            original_edge = model_prob - trade.entry_price
+            original_edge = model_prob - yes_entry
         else:
+            no_px = (no_prices or {}).get(trade.market_id)
+            token_now = no_px if no_px and no_px > 0 else 1.0 - market_price
             current_edge = (1.0 - model_prob) - (1.0 - market_price)
-            original_edge = (1.0 - model_prob) - (1.0 - trade.entry_price)
+            original_edge = (1.0 - model_prob) - (1.0 - yes_entry)
 
         # Check exit triggers
         reason = None
@@ -203,12 +304,12 @@ def scan_for_exits(
                 cid_val = cid.value if hasattr(cid, "value") else str(cid)
                 if cid_val == trade.city_id:
                     city_forecasts.extend(f_list)
-            
+
             if city_forecasts:
                 for f in city_forecasts:
                     if hasattr(f, "fetched_at"):
                         oldest_fetch = min(oldest_fetch, f.fetched_at)
-                
+
                 hours_old = (now - oldest_fetch).total_seconds() / 3600
                 if hours_old > STALE_MODEL_THRESHOLD_HOURS:
                     stale = True
@@ -227,13 +328,13 @@ def scan_for_exits(
             urgency = "high" if current_edge < -0.15 else "medium"
 
         # 2. Profit cap: price ran up, lock in gains on core bets
-        elif (trade.side == "YES"
+        elif (side == "YES"
               and market_price >= PROFIT_CAP_PRICE
               and model_prob < PROFIT_CAP_MODEL_MAX):
             reason = "profit_cap"
             urgency = "low"
-        elif (trade.side == "NO"
-              and (1.0 - market_price) >= PROFIT_CAP_PRICE
+        elif (side == "NO"
+              and token_now >= PROFIT_CAP_PRICE
               and (1.0 - model_prob) < PROFIT_CAP_MODEL_MAX):
             reason = "profit_cap"
             urgency = "low"
@@ -242,12 +343,11 @@ def scan_for_exits(
         #    Only fires once per position, skips if shares < 2x minimum (already trimmed)
         if not reason:
             from weather_edge.config import settings as _cfg
-            unrealized_gain = (market_price - trade.entry_price) / trade.entry_price if trade.entry_price > 0 else 0
-            if trade.side == "NO":
-                unrealized_gain = ((1.0 - market_price) - (1.0 - trade.entry_price)) / (1.0 - trade.entry_price) if trade.entry_price < 1.0 else 0
-            sell_value = trade.total_shares * market_price * 0.5
-            if trade.side == "NO":
-                sell_value = trade.total_shares * (1.0 - market_price) * 0.5
+            # Both measured on the held token's own price
+            unrealized_gain = (
+                (token_now - token_entry) / token_entry if token_entry > 0 else 0
+            )
+            sell_value = trade.total_shares * token_now * 0.5
 
             # Guard: need enough shares to sell half and still hold minimum
             min_shares_for_half = 10.0  # 2x Polymarket minimum (5 shares)
@@ -266,6 +366,7 @@ def scan_for_exits(
                 current_model_prob=model_prob,
                 # Always YES price, close_position handles NO flip
                 current_market_price=raw_market_price,
+                token_price=round(token_now, 4),
                 original_edge=round(original_edge, 4),
                 current_edge=round(current_edge, 4),
                 urgency=urgency,
@@ -305,7 +406,8 @@ async def ai_review_exit(
             import httpx
             prompt = f"""EXIT REVIEW: Should we close this position early?
 
-Position: {trade.side} {trade.city_id} {trade.total_shares:.0f} shares (${trade.size_usd:.0f}) @ {trade.entry_price:.2f}
+Position: {trade.side} {trade.city_id} {trade.total_shares:.0f} shares \
+(${trade.size_usd:.0f}) @ {trade.token_entry_price:.2f}
 Reason flagged: {candidate.reason}
 Original edge: {candidate.original_edge:.1%}
 Current edge: {candidate.current_edge:.1%}
@@ -366,8 +468,13 @@ Respond JSON only: \
 
             import httpx
 
-            cost_basis = trade.total_shares * trade.entry_price
-            current_value = trade.total_shares * candidate.current_market_price
+            held_px = (
+                candidate.token_price
+                if candidate.token_price is not None
+                else candidate.current_market_price
+            )
+            cost_basis = trade.total_shares * trade.token_entry_price
+            current_value = trade.total_shares * held_px
             unrealized_pnl = current_value - cost_basis
             exit_fee_est = current_value * 0.02  # taker fee estimate
 
@@ -397,12 +504,16 @@ Respond JSON only: \
                                 ask_depth = sum(float(a.get("size", 0)) for a in asks[:5])
                                 best_bid = float(bids[0]["price"]) if bids else 0
                                 best_ask = float(asks[0]["price"]) if asks else 0
-                                spread = round(best_ask - best_bid, 3) if best_bid and best_ask else 0
+                                spread = (
+                                    round(best_ask - best_bid, 3)
+                                    if best_bid and best_ask else 0
+                                )
                                 book_context = (
                                     f"Best bid: ${best_bid:.3f} ({bid_depth:.0f} shares depth)\n"
                                     f"Best ask: ${best_ask:.3f} ({ask_depth:.0f} shares depth)\n"
                                     f"Spread: ${spread:.3f}\n"
-                                    f"Our shares vs bid depth: {trade.total_shares:.0f} vs {bid_depth:.0f}"
+                                    f"Our shares vs bid depth: "
+                                    f"{trade.total_shares:.0f} vs {bid_depth:.0f}"
                                 )
             except Exception:
                 pass  # book_context stays as "unavailable"
@@ -414,9 +525,9 @@ Focus ONLY on execution cost and portfolio impact.
 
 Position: {trade.side} {trade.city_id}
 Shares: {trade.total_shares:.0f}
-Entry price: ${trade.entry_price:.3f}
+Entry price (held token): ${trade.token_entry_price:.3f}
 Cost basis: ${cost_basis:.2f}
-Current market price: ${candidate.current_market_price:.3f}
+Current price (held token): ${held_px:.3f}
 Current value: ${current_value:.2f}
 Unrealized P&L: ${unrealized_pnl:+.2f}
 Edge: {candidate.current_edge:+.1%}

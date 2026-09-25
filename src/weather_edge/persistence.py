@@ -34,6 +34,12 @@ def _ensure_tables(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE fills ADD COLUMN gas_usd REAL DEFAULT 0.0")
     except sqlite3.OperationalError:
         pass
+    try:
+        # Paper taker fee charged at entry; without it a restart drops fees
+        # from P&L of positions resolved after the restart.
+        conn.execute("ALTER TABLE paper_trades ADD COLUMN fee_usd REAL DEFAULT 0.0")
+    except sqlite3.OperationalError:
+        pass
 
     conn.executescript("""
         CREATE TABLE IF NOT EXISTS sessions (
@@ -62,6 +68,7 @@ def _ensure_tables(conn: sqlite3.Connection) -> None:
             resolved_at TEXT,
             pnl REAL,
             status TEXT DEFAULT 'open',
+            fee_usd REAL DEFAULT 0.0,
             FOREIGN KEY (session_id) REFERENCES sessions(session_id)
         );
 
@@ -235,8 +242,10 @@ class PersistentStore:
     def save_trade(self, session_id: int, trade: PaperTrade) -> int:
         cur = self.conn.execute(
             """INSERT INTO paper_trades
-               (session_id, market_id, city_id, side, size_usd, entry_price, placed_at, description, strategy, exit_price, resolved_at, pnl, status)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               (session_id, market_id, city_id, side, size_usd, entry_price,
+                placed_at, description, strategy, exit_price, resolved_at, pnl,
+                status, fee_usd)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 session_id,
                 trade.market_id,
@@ -251,6 +260,7 @@ class PersistentStore:
                 trade.resolved_at.isoformat() if trade.resolved_at else None,
                 trade.pnl,
                 trade.status.value,
+                trade.fee_usd or 0.0,
             ),
         )
         self.conn.commit()
@@ -258,13 +268,15 @@ class PersistentStore:
 
     def update_trade(self, trade_id: int, trade: PaperTrade) -> None:
         self.conn.execute(
-            """UPDATE paper_trades SET exit_price = ?, resolved_at = ?, pnl = ?, status = ?
+            """UPDATE paper_trades
+               SET exit_price = ?, resolved_at = ?, pnl = ?, status = ?, fee_usd = ?
                WHERE trade_id = ?""",
             (
                 trade.exit_price,
                 trade.resolved_at.isoformat() if trade.resolved_at else None,
                 trade.pnl,
                 trade.status.value,
+                trade.fee_usd or 0.0,
                 trade_id,
             ),
         )
@@ -292,6 +304,7 @@ class PersistentStore:
                 resolved_at=datetime.fromisoformat(r["resolved_at"]) if r["resolved_at"] else None,
                 pnl=r["pnl"],
                 status=TradeStatus(r["status"]),
+                fee_usd=(r["fee_usd"] or 0.0) if "fee_usd" in r.keys() else 0.0,
             )
             trades.append(t)
         return trades
@@ -713,25 +726,53 @@ class PersistentPaperTrader(PaperTrader):
             self.session_id = self.store.create_session(bankroll)
             logger.info("Started new session %d", self.session_id)
 
+    def _insert(self, trade: PaperTrade) -> None:
+        if not self.session_id:
+            return
+        db_id = self.store.save_trade(self.session_id, trade)
+        if trade.trade_id is not None:
+            self._trade_id_map[trade.trade_id] = db_id
+
+    def _persist_update(self, trade: PaperTrade) -> None:
+        """Write a trade's new state to ITS OWN row.
+
+        Only the in-memory -> DB id map is trusted. A trade with no mapping
+        (its insert failed, or it was created outside place_trade) is
+        inserted as a new row instead of guessing ``db_id = trade_id``,
+        which could overwrite an unrelated row from another session.
+        """
+        if trade.trade_id is None:
+            return
+        db_id = self._trade_id_map.get(trade.trade_id)
+        if db_id is None:
+            logger.warning(
+                "Paper trade %s has no DB row mapping, inserting it", trade.trade_id,
+            )
+            self._insert(trade)
+            return
+        self.store.update_trade(db_id, trade)
+
     def place_trade(self, signal) -> PaperTrade | None:
         trade = super().place_trade(signal)
-        if trade and self.session_id:
-            db_id = self.store.save_trade(self.session_id, trade)
-            if trade.trade_id is not None:
-                self._trade_id_map[trade.trade_id] = db_id
+        if trade:
+            self._insert(trade)
         return trade
 
-    def close_position(self, trade: PaperTrade, current_price: float) -> None:
-        super().close_position(trade, current_price)
-        if trade.trade_id is not None:
-            db_id = self._trade_id_map.get(trade.trade_id, trade.trade_id)
-            self.store.update_trade(db_id, trade)
+    def place_spread_trade(self, signal, hedge) -> PaperTrade | None:
+        trade = super().place_spread_trade(signal, hedge)
+        if trade:
+            self._insert(trade)
+        return trade
+
+    def close_position(
+        self, trade: PaperTrade, current_price: float, volume_24h: float | None = None,
+    ) -> None:
+        super().close_position(trade, current_price, volume_24h=volume_24h)
+        self._persist_update(trade)
 
     def resolve_trade(self, trade: PaperTrade, outcome_yes: bool) -> None:
         super().resolve_trade(trade, outcome_yes)
-        if trade.trade_id is not None:
-            db_id = self._trade_id_map.get(trade.trade_id, trade.trade_id)
-            self.store.update_trade(db_id, trade)
+        self._persist_update(trade)
 
     def close_all_positions(self, current_prices: dict[str, float] | None = None) -> float:
         result = super().close_all_positions(current_prices)

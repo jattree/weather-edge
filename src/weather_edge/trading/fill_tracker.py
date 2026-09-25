@@ -16,6 +16,30 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+def fill_fee_usd(trade: dict, price: float, filled_shares: float) -> float:
+    """Fee on a fill: $0 for maker (post-only) orders, dynamic taker fee otherwise."""
+    from weather_edge.trading.fees import calculate_taker_fee
+
+    is_maker = trade.get("is_maker")
+    if is_maker is None or bool(is_maker):
+        return 0.0
+    return round(calculate_taker_fee(price, price * filled_shares), 6)
+
+
+def live_trade_won(side: str, outcome_yes: bool) -> bool | None:
+    """Whether a held BUY position on ``side`` won. None for non-position rows.
+
+    live_trades.side is the token bought ("YES"/"NO"); "SELL" rows are exits
+    and never resolve as positions.
+    """
+    s = (side or "").strip().upper()
+    if s == "YES":
+        return outcome_yes
+    if s == "NO":
+        return not outcome_yes
+    return None
+
+
 async def poll_fills(executor, interval: int = 15) -> None:
     """Background loop: poll order status for all open live trades.
 
@@ -55,7 +79,8 @@ async def poll_fills(executor, interval: int = 15) -> None:
                     if size_matched > 0 and order_status in ("MATCHED", "LIVE"):
                         is_full = size_matched >= original_size * 0.99  # 99% = full (rounding)
                         fill_status = "filled" if is_full else "partial"
-                        fee = 0.0  # Maker orders = $0 fee
+                        # Maker (post-only) = $0, taker fills pay the dynamic fee
+                        fee = fill_fee_usd(trade, price, size_matched)
 
                         store.update_live_trade_fill(
                             order_id=order_id,
@@ -115,8 +140,8 @@ async def resolve_live_trades(executor) -> int:
         return 0
 
     try:
-        from weather_edge.persistence import PersistentStore
         from weather_edge.analysis.resolver import fetch_resolved_markets
+        from weather_edge.persistence import PersistentStore
 
         store = PersistentStore()
         # Get filled (but not yet resolved) trades
@@ -144,17 +169,18 @@ async def resolve_live_trades(executor) -> int:
 
             outcome_yes = resolved_markets[market_id]
             side = trade.get("side", "")
-            filled = trade.get("filled_shares", 0)
+            won = live_trade_won(side, outcome_yes)
+            if won is None:
+                continue  # SELL/exit rows are not held positions
+            filled = trade.get("filled_shares", 0) or 0
+            # cost_basis already includes the entry fee (update_live_trade_fill)
             cost_basis = trade.get("cost_basis", 0) or 0
-            fee = trade.get("fee_usd", 0) or 0
 
-            # Winning token pays $1/share, losing pays $0
-            if (side == "BUY" and outcome_yes) or (side == "NO" and not outcome_yes):
-                # We bought the winning side
-                proceeds = filled * 1.0 - fee
+            # Winning token pays $1/share, losing pays $0; redemption is fee-free
+            if won:
+                proceeds = filled * 1.0
                 status = "won"
             else:
-                # We bought the losing side
                 proceeds = 0.0
                 status = "lost"
 

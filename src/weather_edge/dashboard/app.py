@@ -888,9 +888,11 @@ async def fast_exit_loop() -> None:
                 if shares < 5:  # Below Polymarket minimum
                     continue
 
-                # Calculate edge based on position side
-                outcome = pos.get("outcome", "Yes")
-                if outcome == "No":
+                # Calculate edge based on position side (outcome labels may be
+                # "Yes"/"No" from older rows or "YES"/"NO", normalise)
+                from weather_edge.models.position import normalize_side
+                outcome = normalize_side(pos.get("outcome") or "YES")
+                if outcome == "NO":
                     # NO position: we profit when event doesn't happen
                     edge = (1 - model_prob) - (1 - market_price)
                 else:
@@ -906,14 +908,15 @@ async def fast_exit_loop() -> None:
                     # confirms our bucket, the "bad edge" is just stale models
                     try:
                         from weather_edge.analysis.exit_monitor import (
-                            _check_observation_confirms_bucket,
+                            check_observation_confirms_bucket_async,
                         )
                         from weather_edge.models.position import Position
                         _pos_check = Position(
                             city_id=city,
+                            side=outcome,
                             description=pos.get("description", ""),
                         )
-                        if _check_observation_confirms_bucket(_pos_check):
+                        if await check_observation_confirms_bucket_async(_pos_check):
                             logger.info(
                                 "EMERGENCY BLOCKED: %s observation confirms bucket, holding",
                                 city,
@@ -928,21 +931,30 @@ async def fast_exit_loop() -> None:
                         city, edge * 100, EMERGENCY_EDGE_THRESHOLD * 100, shares,
                     )
 
+                    # Price the HELD token: its own CLOB book midpoint, falling
+                    # back to the Gamma mark (1-YES for a NO token). The Gamma
+                    # mark is passed as the independent slippage reference.
+                    gamma_token_px = market_price if outcome == "YES" else 1.0 - market_price
+                    book_px = await live_executor.get_token_midpoint(asset_id)
+                    sell_px = book_px if book_px is not None else gamma_token_px
+
                     try:
                         sell_result = await live_executor.place_sell_order(
                             token_id=asset_id,
                             shares=shares,
-                            price=market_price,
+                            price=sell_px,
                             market_id=cid,
                             city_id=city,
                             description=f"EMERGENCY: edge={edge:.1%}",
-                            reference_price=market_price,
+                            reference_price=gamma_token_px,
                             force_taker=True,
                         )
-                        if sell_result:
+                        if sell_result and sell_result.status not in (
+                            "rejected", "post_only_reject",
+                        ):
                             logger.warning(
-                                "EMERGENCY SELL PLACED: %s %.0f shares @ %.3f, %s",
-                                city, shares, market_price, sell_result.order_id,
+                                "EMERGENCY SELL PLACED: %s %s %.0f shares @ %.3f, %s",
+                                city, outcome, shares, sell_px, sell_result.order_id,
                             )
                     except Exception as e:
                         logger.error("EMERGENCY SELL FAILED: %s, %s", city, e)
@@ -1089,7 +1101,15 @@ async def _user_triggered_refresh() -> None:
         _last_ai_refresh_monotonic = now
     else:
         logger.info("Refresh: AI reasoning on cooldown, refreshing data only")
-    await run_dashboard_cycle(run_ai=run_ai)
+    if trading_active:
+        await run_dashboard_cycle(run_ai=run_ai)
+        return
+    # Trading STOPPED: refresh data/paper analysis only. Every live executor
+    # call (place/cancel/sell/redeem) made from this cycle is a no-op.
+    from weather_edge.trading.executor import suppress_live_orders
+    logger.info("Refresh while STOPPED: live execution suppressed for this cycle")
+    with suppress_live_orders():
+        await run_dashboard_cycle(run_ai=run_ai)
 
 
 @app.post("/api/refresh")
@@ -1188,6 +1208,10 @@ async def api_close_all():
     from weather_edge.fetchers.polymarket import discover_weather_markets
     markets = await discover_weather_markets()
     current_prices = {m.market_id: m.yes_price for m in markets if m.yes_price > 0}
+    # Each token's own price: live sells must price the token actually held
+    current_no_prices = {
+        m.market_id: m.no_price for m in markets if getattr(m, "no_price", 0) > 0
+    }
 
     closed_pnl = 0.0
     if settings.paper_mode:
@@ -1212,8 +1236,17 @@ async def api_close_all():
                 # an unvalidated price was the worst-case slippage hole. Pass
                 # reference_price so the executor's slippage guard is active
                 # (matches the emergency-exit caller).
+                # NO tokens are priced from the NO book, never the YES price.
+                from weather_edge.models.position import normalize_side
                 condition_id = pos.get("condition_id", "")
-                sell_price = current_prices.get(condition_id)
+                held = normalize_side(pos.get("outcome") or "YES")
+                yes_px = current_prices.get(condition_id)
+                if held == "NO":
+                    sell_price = current_no_prices.get(condition_id)
+                    if sell_price is None and yes_px is not None:
+                        sell_price = 1.0 - yes_px
+                else:
+                    sell_price = yes_px
                 if sell_price is None:
                     logger.warning(
                         "CLOSE ALL: no live price for %s (%s), skipping, "
@@ -1222,6 +1255,10 @@ async def api_close_all():
                     continue
                 if asset_id and shares >= 5:
                     try:
+                        # reference_price=None: the executor checks the limit
+                        # against this token's live CLOB midpoint, an
+                        # independent mark (passing sell_price as its own
+                        # reference made the guard a no-op).
                         result = await live_executor.place_sell_order(
                             token_id=asset_id,
                             shares=shares,
@@ -1229,10 +1266,10 @@ async def api_close_all():
                             market_id=condition_id,
                             city_id=city,
                             description="CLOSE ALL",
-                            reference_price=sell_price,
+                            reference_price=None,
                             force_taker=True,
                         )
-                        if result:
+                        if result and result.status not in ("rejected", "post_only_reject"):
                             live_sells += 1
                     except Exception as e:
                         logger.error("Failed to sell %s: %s", city, e)

@@ -181,8 +181,17 @@ class CircuitBreakerState:
 
 
 # Module-level state
-_active_profile_name: str = "aggressive"  # Current default, we're paper trading
+# Default is the moderate "balanced" profile (25% drawdown kill, 2x NAV gross
+# cap). "aggressive" (40% kill, 3x NAV) must be chosen explicitly.
+DEFAULT_PROFILE_NAME = "balanced"
+_active_profile_name: str = DEFAULT_PROFILE_NAME
+# Paper circuit breaker: tracks PAPER NAV and gates paper trades only.
 _circuit_breaker = CircuitBreakerState()
+# Live circuit breaker: tracks the real exchange NAV. Kept separate from the
+# paper breaker so paper NAV never pollutes the live high-water mark. When it
+# trips it activates the persistent kill switch (see update_live_circuit_breaker).
+_live_circuit_breaker = CircuitBreakerState()
+_LIVE_HWM_KEY = "circuit_breaker:live_hwm"
 
 
 def get_active_profile() -> RiskProfile:
@@ -197,6 +206,76 @@ def set_active_profile(name: str) -> None:
         raise ValueError(f"Unknown profile: {name}")
     _active_profile_name = name
     logger.info("Risk profile set to: %s", name)
+
+
+def _is_yes(t) -> bool:
+    side = str(getattr(t, "side", "") or getattr(t, "outcome", "") or "")
+    return side.strip().upper() == "YES"
+
+
+def update_live_circuit_breaker(nav: float) -> float:
+    """Feed the live exchange NAV to the live circuit breaker.
+
+    Must only be called with a NAV that was actually observed from the
+    exchange (not a fallback). The high-water mark is persisted in live state
+    so a restart does not reset the drawdown reference. When the drawdown
+    crosses the profile's kill threshold, the persistent kill switch is
+    activated, which blocks every subsequent live order until an operator
+    resets it.
+
+    Returns:
+        Position size multiplier for live orders (1.0, scale-back factor, or 0.0).
+    """
+    profile = get_active_profile()
+    cb = _live_circuit_breaker
+    try:
+        from weather_edge.live_state import get_value
+        if cb.high_water_mark <= 0:
+            stored = get_value(_LIVE_HWM_KEY)
+            if stored:
+                cb.high_water_mark = float(stored)
+    except Exception:
+        logger.debug("Live HWM load failed", exc_info=True)
+
+    was_killed = cb.is_killed
+    if nav <= 0:
+        # A zero/negative NAV is a data problem, not a 100% drawdown signal
+        logger.warning("Live circuit breaker: ignoring non-positive NAV %.2f", nav)
+        return cb.get_size_multiplier(profile)
+    cb.update(nav, profile)
+    try:
+        from weather_edge.live_state import set_value
+        set_value(_LIVE_HWM_KEY, str(cb.high_water_mark))
+    except Exception:
+        logger.debug("Live HWM save failed", exc_info=True)
+
+    if cb.is_killed and not was_killed:
+        from weather_edge.trading.kill_switch import activate_kill_switch
+        activate_kill_switch(
+            f"Live circuit breaker: {cb.kill_reason}", triggered_by="circuit_breaker",
+        )
+    return cb.get_size_multiplier(profile)
+
+
+def reset_live_circuit_breaker() -> None:
+    """Operator reset: clear the trip and restart the high-water mark.
+
+    The next observed NAV becomes the new high-water mark. Called when the
+    kill switch is explicitly deactivated, otherwise a tripped breaker would
+    keep blocking orders (or immediately re-trip from the stale HWM).
+    """
+    global _live_circuit_breaker
+    _live_circuit_breaker = CircuitBreakerState()
+    try:
+        from weather_edge.live_state import set_value
+        set_value(_LIVE_HWM_KEY, "0")
+    except Exception:
+        logger.debug("Live HWM reset failed", exc_info=True)
+
+
+def live_circuit_breaker_multiplier() -> float:
+    """Current live size multiplier without updating NAV."""
+    return _live_circuit_breaker.get_size_multiplier(get_active_profile())
 
 
 def check_correlation_limit(
@@ -259,7 +338,7 @@ def check_yes_exposure_limit(
     # Sum exposure in all YES positions
     yes_exposure = sum(
         t.size_usd for t in open_trades
-        if (getattr(t, "side", "") == "YES" or getattr(t, "outcome", "") == "YES")
+        if _is_yes(t)
         and getattr(t, "status", "") == "open"
     )
 

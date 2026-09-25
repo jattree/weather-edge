@@ -18,6 +18,8 @@ import asyncio
 import logging
 from datetime import datetime, timezone
 
+from weather_edge.models.position import normalize_side
+
 logger = logging.getLogger(__name__)
 
 # Polygon gas is cheap but not zero. Track for portfolio drag.
@@ -88,7 +90,8 @@ async def sync_portfolio(executor, store, market_lookup: dict | None = None) -> 
             matched = float(mo.get("matched_amount", 0))
             price = float(mo.get("price", 0))
             side = mo.get("side", "BUY")
-            outcome = mo.get("outcome", "")
+            # Canonical "YES"/"NO" at the boundary (exchange sends "Yes"/"No")
+            outcome = normalize_side(mo.get("outcome", ""))
             fee_bps = int(mo.get("fee_rate_bps", 0))
 
             # Unique fill ID: trade_id + order_id
@@ -122,7 +125,7 @@ async def sync_portfolio(executor, store, market_lookup: dict | None = None) -> 
                 outcome=outcome,
                 description=description,
             )
-            
+
             # Update live_trades record with gas cost
             if order_id:
                 store.conn.execute(
@@ -150,7 +153,7 @@ async def sync_portfolio(executor, store, market_lookup: dict | None = None) -> 
             size = float(trade.get("size", 0))
             price = float(trade.get("price", 0))
             side = trade.get("side", "BUY")
-            outcome = trade.get("outcome", "")
+            outcome = normalize_side(trade.get("outcome", ""))
             fill_id = f"{trade_id}:taker"
 
             city_id = ""
@@ -189,7 +192,7 @@ async def sync_portfolio(executor, store, market_lookup: dict | None = None) -> 
         WHERE (city_id = '' OR city_id IS NULL)
           AND asset_id IN (SELECT asset_id FROM market_map WHERE city_id != '')
     """)
-    
+
     # Step 2: Rebuild positions from fills
     store.rebuild_positions()
 
@@ -202,7 +205,10 @@ async def sync_portfolio(executor, store, market_lookup: dict | None = None) -> 
         async with _httpx.AsyncClient() as _client:
             _resp = await _client.get(
                 "https://data-api.polymarket.com/positions",
-                params={"user": (executor.wallet_address or our_address).lower(), "sizeThreshold": 0},
+                params={
+                    "user": (executor.wallet_address or our_address).lower(),
+                    "sizeThreshold": 0,
+                },
                 timeout=15.0,
             )
             if _resp.status_code == 200:
@@ -261,11 +267,12 @@ async def sync_portfolio(executor, store, market_lookup: dict | None = None) -> 
                     is_full = size_matched >= original_size * 0.99
                     if is_full and local_status != "filled":
                         price = float(status.get("price", trade.get("limit_price", 0)))
+                        from weather_edge.trading.fill_tracker import fill_fee_usd
                         store.update_live_trade_fill(
                             order_id=order_id,
                             avg_fill_price=price,
                             filled_shares=size_matched,
-                            fee_usd=0.0,
+                            fee_usd=fill_fee_usd(trade, price, size_matched),
                             status="filled",
                         )
                         logger.warning(
@@ -335,10 +342,16 @@ async def fetch_polymarket_state(executor, wallet: str) -> dict:
         "position_count": 0,
     }
 
+    # Track whether NAV inputs were actually observed, so the live circuit
+    # breaker is never fed a fabricated NAV (a failed fetch reads as $0).
+    balance_ok = False
+    positions_ok = False
+
     # 1. Cash balance from CLOB API (authenticated)
     try:
         balance = await executor.check_balance()
         result["balance"] = round(balance or 0, 2)
+        balance_ok = balance is not None
     except Exception:
         logger.warning("Failed to fetch balance from exchange")
 
@@ -352,6 +365,7 @@ async def fetch_polymarket_state(executor, wallet: str) -> dict:
             )
             if resp.status_code == 200:
                 result["positions"] = resp.json()
+                positions_ok = True
     except Exception:
         logger.warning("Failed to fetch positions from Polymarket Data API")
 
@@ -398,6 +412,18 @@ async def fetch_polymarket_state(executor, wallet: str) -> dict:
     from weather_edge.config import settings as _s
     result["total_pnl"] = round(result["portfolio_value"] - _s.bankroll, 2)
 
+    # Live drawdown circuit breaker: trips the persistent kill switch.
+    result["nav_observed"] = balance_ok and positions_ok
+    result["circuit_breaker_multiplier"] = None
+    if result["nav_observed"]:
+        try:
+            from weather_edge.analysis.risk_controls import update_live_circuit_breaker
+            result["circuit_breaker_multiplier"] = update_live_circuit_breaker(
+                result["portfolio_value"],
+            )
+        except Exception:
+            logger.error("Live circuit breaker update failed", exc_info=True)
+
     return result
 
 
@@ -419,7 +445,7 @@ async def sync_market_map_from_discovery(store, markets) -> int:
                 asset_id=m.token_id_yes,
                 condition_id=condition_id,
                 city_id=city,
-                outcome="Yes",
+                outcome="YES",
                 description=m.question[:80] if m.question else "",
                 token_side="YES",
             )
@@ -430,7 +456,7 @@ async def sync_market_map_from_discovery(store, markets) -> int:
                 asset_id=m.token_id_no,
                 condition_id=condition_id,
                 city_id=city,
-                outcome="No",
+                outcome="NO",
                 description=m.question[:80] if m.question else "",
                 token_side="NO",
             )

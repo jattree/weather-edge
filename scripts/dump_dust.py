@@ -1,24 +1,51 @@
 """Dump all dust positions (value < $5) to free up position slots.
 
-Sells at $0.01 (floor price) as taker to guarantee fill.
-Skips positions with < 5 shares (Polymarket minimum).
-The goal is clearing position count, not recovering value.
+Dry run by default: real sells require BOTH ``--execute`` and
+``LIVE_MODE=true``.
+
+Each token is sold as taker at its own current mark (Data API ``curPrice``),
+which is also passed as the slippage reference, so the executor refuses any
+limit more than max_slippage_pct below the mark (and below the live CLOB
+midpoint). Skips positions with < 5 shares (Polymarket minimum).
+
+    python scripts/dump_dust.py            # plan only
+    python scripts/dump_dust.py --execute  # real sells (LIVE_MODE only)
 """
+import argparse
 import asyncio
 import logging
 
-logging.basicConfig(level=logging.INFO, format="%(message)s")
 logger = logging.getLogger(__name__)
 
 MIN_SELL_SHARES = 5.0
 DUST_VALUE_THRESHOLD = 5.0  # Sell anything worth less than $5
 
 
-async def main():
+def parse_args(argv=None):
+    ap = argparse.ArgumentParser(description="Dump dust positions")
+    ap.add_argument(
+        "--execute", action="store_true",
+        help="Place real sell orders (also requires LIVE_MODE=true)",
+    )
+    return ap.parse_args(argv)
+
+
+def dust_sell_price(cur_price: float) -> float | None:
+    """Sell limit for a dust token: its own mark on the 1c tick, or None if unpriced."""
+    if not cur_price or cur_price <= 0:
+        return None
+    return max(0.01, min(0.99, round(cur_price, 2)))
+
+
+async def main(argv=None):
+    args = parse_args(argv)  # before heavy imports so --help always works
     import httpx
-    from weather_edge.trading.executor import TradeExecutor
+
     from weather_edge.config import settings
     from weather_edge.persistence import PersistentStore
+    from weather_edge.trading.executor import TradeExecutor, script_dry_run
+
+    dry_run = script_dry_run(args.execute)
 
     executor = TradeExecutor(
         private_key=settings.polymarket_private_key,
@@ -27,7 +54,7 @@ async def main():
         api_secret=settings.polymarket_api_secret,
         api_passphrase=settings.polymarket_api_passphrase,
         signature_type=settings.polymarket_signature_type,
-        dry_run=False,
+        dry_run=dry_run,
         post_only=True,
     )
     await executor.initialize()
@@ -96,8 +123,12 @@ async def main():
     recovered = 0.0
 
     for pos in sellable:
-        sell_price = max(0.01, round(pos["price"] - 0.02, 2))  # Below market to cross
+        sell_price = dust_sell_price(pos["price"])
         shares = pos["size"]
+        if sell_price is None:
+            logger.info("  SKIP: %s has no current price", pos["title"])
+            failed += 1
+            continue
 
         logger.info(
             "SELLING: %s %s, %.0f shares @ $%.2f (val $%.2f)",
@@ -117,9 +148,10 @@ async def main():
                 market_id=pos["condition_id"],
                 city_id=pos["city_id"],
                 description="DUST DUMP: %s" % pos["title"][:40],
+                reference_price=pos["price"],
                 force_taker=True,
             )
-            if result and result.status not in ("rejected",):
+            if result and result.status not in ("rejected", "post_only_reject"):
                 sold += 1
                 recovered += pos["value"]
                 logger.info("  OK: %s", result.order_id)
@@ -144,4 +176,6 @@ async def main():
     store.close()
 
 
-asyncio.run(main())
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
+    asyncio.run(main())
