@@ -400,7 +400,11 @@ async def ai_review_exit(
     async def _claude_review() -> tuple[str, str]:
         """Claude = Meteorologist. Looks at physics only."""
         try:
-            from weather_edge.analysis.claude_reasoning import ANTHROPIC_API_KEY
+            from weather_edge.analysis.claude_reasoning import (
+                ANTHROPIC_API_KEY,
+                CLAUDE_MAX_TOKENS,
+                CLAUDE_MODEL,
+            )
             if not ANTHROPIC_API_KEY:
                 return "HOLD", ""
             import httpx
@@ -435,16 +439,23 @@ Respond JSON only: \
                         "content-type": "application/json",
                     },
                     json={
-                        "model": "claude-sonnet-4-20250514",
-                        "max_tokens": 150,
+                        # Same configured model (settings.claude_model) and
+                        # token budget as the entry review
+                        "model": CLAUDE_MODEL,
+                        "max_tokens": CLAUDE_MAX_TOKENS,
                         "messages": [{"role": "user", "content": prompt}],
                     },
-                    timeout=15.0,
+                    timeout=60.0,
                 )
                 if resp.status_code == 200:
                     import json
                     import re
-                    text = resp.json()["content"][0]["text"]
+                    # Text blocks only (a thinking block may come first)
+                    text = "".join(
+                        b.get("text", "")
+                        for b in (resp.json().get("content") or [])
+                        if isinstance(b, dict) and b.get("type") == "text"
+                    )
                     match = re.search(r"\{.*\}", text, re.DOTALL)
                     if match:
                         result = json.loads(match.group())
