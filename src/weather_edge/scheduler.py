@@ -1327,6 +1327,103 @@ async def _compute_signals(ctx: CycleContext) -> None:
         await _signals_for_group(ctx, city_config, city_id, target_date, city_markets)
 
 
+def _hail_mary_entry_price(s: Signal) -> float:
+    """Price of the token a signal would buy (YES price, or 1 - YES for NO)."""
+    try:
+        if s.recommended_side.value == "YES":
+            entry_price = s.market_prob
+        else:
+            entry_price = 1.0 - s.market_prob
+    except Exception:
+        entry_price = s.market_prob
+    return entry_price
+
+
+def _hail_mary_basket(all_signals: list[Signal]) -> list[Signal]:
+    """HAIL MARY: penny lottery basket.
+
+    The normal strategy filters to one signal per city-date. The hail-mary
+    takes EVERY cheap signal, multi-bucket stacking is fine when each
+    ticket costs $1 because the math is "buy 30 lottery tickets, hope 1 hits."
+    """
+    hailmary_max_price = 0.10   # only buy stuff priced under 10¢
+    filtered_signals: list[Signal] = []
+    for s in all_signals:
+        # Penny ceiling, anything above 10¢ is "more of the same bs"
+        entry_price = _hail_mary_entry_price(s)
+        if entry_price > hailmary_max_price:
+            continue
+        # Require some directional edge, we're not buying random things
+        if s.edge <= 0:
+            continue
+        filtered_signals.append(s)
+
+    logger.info(
+        "HAILMARY BASKET: %d penny signals (price<=%.2f, edge>0) from %d raw",
+        len(filtered_signals), hailmary_max_price, len(all_signals),
+    )
+    return filtered_signals
+
+
+def _signal_score(sig: Signal) -> float:
+    """Strategy priority: tail_no > tail > core; within a strategy, highest |net_edge|."""
+    prio = {"tail_no": 300, "tail": 200, "core": 100}.get(sig.strategy, 0)
+    return prio + abs(sig.net_edge)
+
+
+def _best_signal_per_city_date(all_signals: list[Signal]) -> list[Signal]:
+    """STRATEGY REDESIGN: one signal per city-date.
+
+    Prevents "multi-bucket bleed" by picking only the highest-edge bucket.
+    Prioritizes tail_no (high-prob NO) and tail (penny) strategies.
+    """
+    signal_groups: dict[tuple[str, str], list[Signal]] = {}
+    for s in all_signals:
+        if s.confidence_tier.value == "low":
+            continue
+        key = (s.city_id, s.target_date)
+        signal_groups.setdefault(key, []).append(s)
+
+    filtered_signals: list[Signal] = []
+    for key, group in signal_groups.items():
+        best_signal = max(group, key=_signal_score)
+        filtered_signals.append(best_signal)
+
+        if len(group) > 1:
+            logger.info(
+                "MULTI-BUCKET FILTER: %s %s picked %s (edge=%.1f%%) over %d others",
+                key[0], key[1], best_signal.strategy,
+                best_signal.net_edge * 100, len(group) - 1,
+            )
+    return filtered_signals
+
+
+def _apply_cycle_limit(filtered_signals: list[Signal]) -> list[Signal]:
+    """Global max trades per cycle: keep the top N by absolute net_edge."""
+    if len(filtered_signals) > settings.max_trades_per_cycle:
+        limited = sorted(
+            filtered_signals,
+            key=lambda s: abs(s.net_edge),
+            reverse=True,
+        )[:settings.max_trades_per_cycle]
+
+        logger.info(
+            "CYCLE LIMIT: %d signals filtered down to top %d by net_edge (max_trades_per_cycle=%d)",
+            len(filtered_signals), len(limited), settings.max_trades_per_cycle,
+        )
+        filtered_signals = limited
+    return filtered_signals
+
+
+def _filter_signals(all_signals: list[Signal]) -> list[Signal]:
+    """Stage 3: reduce raw signals to the cycle's candidates (hail-mary or normal)."""
+    if settings.hail_mary_mode:
+        return _hail_mary_basket(all_signals)
+    if all_signals:
+        return _apply_cycle_limit(_best_signal_per_city_date(all_signals))
+    return []
+
+
 async def run_cycle(
     paper_trader: PaperTrader | None,
     target_dates: list[date] | None = None,
@@ -1363,6 +1460,15 @@ async def run_cycle(
     await _fetch_ai_forecasts(ctx)
     await _compute_signals(ctx)
 
+    ctx.all_signals = _filter_signals(ctx.all_signals)
+
+    # === Claude + Gemini reasoning layer ===
+    # Every cycle type (main, sniper, refresh) goes through the same gate: only
+    # signals the AI layer approved (this cycle, or earlier today) are executed.
+    ctx.executable_signals = await apply_ai_review(
+        ctx.all_signals, ctx.forecast_cache, ctx.run_ai_reasoning, ctx.store,
+    )
+
     store = ctx.store
     target_dates = ctx.target_dates
     all_signals = ctx.all_signals
@@ -1371,85 +1477,7 @@ async def run_cycle(
     markets = ctx.markets
     total_equity = ctx.total_equity
     city_volume = ctx.city_volume
-
-    filtered_signals: list[Signal] = []
-    if settings.hail_mary_mode:
-        # === HAIL MARY: penny lottery basket ===
-        # The normal strategy filters to one signal per city-date. The hail-mary
-        # takes EVERY cheap signal, multi-bucket stacking is fine when each
-        # ticket costs $1 because the math is "buy 30 lottery tickets, hope 1 hits."
-        hailmary_max_price = 0.10   # only buy stuff priced under 10¢
-        for s in all_signals:
-            # Penny ceiling, anything above 10¢ is "more of the same bs"
-            try:
-                if s.recommended_side.value == "YES":
-                    entry_price = s.market_prob
-                else:
-                    entry_price = 1.0 - s.market_prob
-            except Exception:
-                entry_price = s.market_prob
-            if entry_price > hailmary_max_price:
-                continue
-            # Require some directional edge, we're not buying random things
-            if s.edge <= 0:
-                continue
-            filtered_signals.append(s)
-
-        logger.info(
-            "HAILMARY BASKET: %d penny signals (price<=%.2f, edge>0) from %d raw",
-            len(filtered_signals), hailmary_max_price, len(all_signals),
-        )
-    elif all_signals:
-        # === STRATEGY REDESIGN: One signal per city-date filter ===
-        # Prevents "multi-bucket bleed" by picking only the highest-edge bucket.
-        # Prioritizes tail_no (high-prob NO) and tail (penny) strategies.
-        signal_groups: dict[tuple[str, str], list[Signal]] = {}
-        for s in all_signals:
-            if s.confidence_tier.value == "low":
-                continue
-            key = (s.city_id, s.target_date)
-            signal_groups.setdefault(key, []).append(s)
-
-        for key, group in signal_groups.items():
-            # Strategy priority: tail_no > tail > core
-            # Within same strategy, pick highest absolute net_edge
-            def _signal_score(sig: Signal) -> float:
-                prio = {"tail_no": 300, "tail": 200, "core": 100}.get(sig.strategy, 0)
-                return prio + abs(sig.net_edge)
-
-            best_signal = max(group, key=_signal_score)
-            filtered_signals.append(best_signal)
-
-            if len(group) > 1:
-                logger.info(
-                    "MULTI-BUCKET FILTER: %s %s picked %s (edge=%.1f%%) over %d others",
-                    key[0], key[1], best_signal.strategy,
-                    best_signal.net_edge * 100, len(group) - 1,
-                )
-
-        # Apply global max trades per cycle limit
-        # Sort by absolute net_edge descending, take top N
-        if len(filtered_signals) > settings.max_trades_per_cycle:
-            limited = sorted(
-                filtered_signals,
-                key=lambda s: abs(s.net_edge),
-                reverse=True,
-            )[:settings.max_trades_per_cycle]
-
-            logger.info(
-                "CYCLE LIMIT: %d signals filtered down to top %d by net_edge (max_trades_per_cycle=%d)",
-                len(filtered_signals), len(limited), settings.max_trades_per_cycle,
-            )
-            filtered_signals = limited
-
-    all_signals = filtered_signals
-
-    # === Claude + Gemini reasoning layer ===
-    # Every cycle type (main, sniper, refresh) goes through the same gate: only
-    # signals the AI layer approved (this cycle, or earlier today) are executed.
-    executable_signals = await apply_ai_review(
-        all_signals, _forecast_cache, run_ai_reasoning, store,
-    )
+    executable_signals = ctx.executable_signals
 
     # Place trades for all signals + generate spread capture orders
     from weather_edge.fetchers.polymarket import fetch_book_prices
