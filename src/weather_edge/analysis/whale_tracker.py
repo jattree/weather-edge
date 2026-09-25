@@ -1,41 +1,61 @@
 """On-chain whale tracking via Polygon/Polygonscan.
 
-Tracks known weather market traders (TopTrader, etc.) by monitoring their
+Tracks weather market traders you configure by monitoring their
 wallet addresses for CTF (Conditional Token Framework) token transfers
 on the Polygon blockchain.
 
-Dormant by default, activate via WHALE_TRACKING=true in .env when going live.
+Dormant by default. It activates only when both POLYGONSCAN_API_KEY and
+WHALE_WALLETS are set (see .env.example). No wallets ship with the repo.
 
 How it works:
 1. Query Polygonscan API for recent token transfers from known wallets
 2. Parse transfer amounts and token IDs to determine position changes
 3. Map token IDs back to Polymarket markets via Gamma API
-4. Return a feed of whale trades: "TopTrader bought 500 YES on Dallas 84-85°F"
+4. Return a feed of whale trades: "whale-1 bought 500 YES on Dallas 84-85°F"
 
 This is the "pro" way to track competitors, raw on-chain data, not profile scraping.
 """
 from __future__ import annotations
 
 import logging
-import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
 import httpx
 
+from weather_edge.config import settings
+
 logger = logging.getLogger(__name__)
 
-# Known whale wallets, add more as we identify them
-TRACKED_WALLETS: dict[str, str] = {
-    "toptrader": "0xTRACKED_WALLET",
-}
+
+def parse_wallets(raw: str) -> dict[str, str]:
+    """Parse WHALE_WALLETS into {label: address}.
+
+    Entries are comma-separated, each either "label=0xaddr" or a bare
+    "0xaddr" (labelled whale-1, whale-2, ... by position).
+    """
+    wallets: dict[str, str] = {}
+    for i, entry in enumerate((e.strip() for e in raw.split(",")), start=1):
+        if not entry:
+            continue
+        label, sep, address = entry.partition("=")
+        if not sep:
+            label, address = f"whale-{i}", entry
+        label, address = label.strip(), address.strip()
+        if address:
+            wallets[label or f"whale-{i}"] = address
+    return wallets
+
+
+# Wallets to watch, from settings (empty by default)
+TRACKED_WALLETS: dict[str, str] = parse_wallets(settings.whale_wallets)
 
 # Polymarket CTF contract on Polygon
 CTF_CONTRACT = "0x4D97DCd97eC945f40cF65F87097ACe5EA0476045"
 
 # Etherscan V2 API (supports Polygon via chainid=137, free tier: 5 calls/sec)
 POLYGONSCAN_API = "https://api.etherscan.io/v2/api"
-POLYGONSCAN_KEY = os.environ.get("POLYGONSCAN_API_KEY", "")  # Free key from polygonscan.com
+POLYGONSCAN_KEY = settings.polygonscan_api_key  # Free key from etherscan.io (covers Polygon)
 
 
 @dataclass

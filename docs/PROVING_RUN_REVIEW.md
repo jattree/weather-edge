@@ -72,17 +72,24 @@ four ways. Fixed, each with regression tests:
 
 2. **Paper trading still embodied lesson 2.** Paper fills executed at the
    Gamma midpoint with zero fees (the precise fiction that made the
-   +$8,470 pre-launch paper P&L meaningless) while the real fee model
+   +$8,470.70 pre-launch paper P&L meaningless) while the real fee model
    (`fees.py`) and the per-signal spread sat unwired. Paper entries now
    cross the spread and pay the dynamic taker fee; early exits pay a taker
    fee on proceeds; `summary()` reports `total_fees`.
 
 3. **The bias correction applied below the noise floor.** The Layer-1
    dynamic correction applied whenever 14 samples existed, even when the
-   measured bias was statistically indistinguishable from zero. This is the
-   uniform-correction failure the 2026-04-01 validation quantified (helped
-   HKG +49%, damaged London -302%). Corrections now require
-   |mean bias| > 2 standard errors.
+   measured bias was statistically indistinguishable from zero. The
+   2026-04-01 backtest did not measure this Layer-1 correction directly: it
+   validated the Layer-2 per-city *station offsets*, applying each city's
+   average offset uniformly. That test shows what an ungated uniform
+   correction does: it helped cities with a large real offset (Hong Kong
+   MAE +49%) and damaged cities whose raw forecast was already good (London
+   raw MAE 0.11 °C became 0.46 °C, -302%), and overall it was a wash (MAE
+   -0.7% across 95 city-dates). The Layer-1 gate is motivated by that
+   pattern, not proven by it. Corrections now require
+   |mean bias| > 2 standard errors. (That run found offsets for 23 of the
+   24 configured cities; Austin had none, and its correction was 0.)
 
 4. **Kelly sizing ignored execution costs, and the spread gate was a
    placeholder.** Kelly now prices the entry at mid + half-spread (it was
@@ -92,7 +99,7 @@ four ways. Fixed, each with regression tests:
 
 ## Provenance
 
-Review conducted with Claude (Fable 5) against the post-`9262e5e` codebase,
+Review conducted against the post-`9262e5e` codebase,
 the git history, `OPEN_SOURCE_ARCHIVE.md`, and the surviving 2026-04-01
 backtest output (`docs/backtest_results_2026-04-01.txt`). The as-it-died
 state remains at tag `v1.0-as-it-died`.

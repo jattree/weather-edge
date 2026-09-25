@@ -43,8 +43,10 @@ The test suite needs no API keys or network access.
 
 ## Code style
 
-- `ruff` is the source of truth (line length 100, target py311). Run
-  `ruff check .` before submitting.
+- `ruff` is the source of truth (line length 100, target py311). The tree is
+  not fully ruff-clean yet: `ruff check .` still reports pre-existing issues
+  that are being cleaned up separately. Run `ruff check` on the files you
+  touch and do not add new errors.
 - Match the surrounding code. Keep changes minimal and well scoped.
 
 ## High-scrutiny areas
