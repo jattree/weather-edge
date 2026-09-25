@@ -1214,6 +1214,27 @@ async def api_kill_switch_state():
     return get_kill_switch_state()
 
 
+def _close_all_sell_price(
+    pos: dict, current_prices: dict, current_no_prices: dict,
+) -> float | None:
+    """Live mark of the token a position holds, or None if unpriced.
+
+    NO tokens are priced from the NO book, never the YES price; falls back
+    to 1 - YES only when the NO book has no price.
+    """
+    from weather_edge.models.position import normalize_side
+    condition_id = pos.get("condition_id", "")
+    held = normalize_side(pos.get("outcome") or "YES")
+    yes_px = current_prices.get(condition_id)
+    if held == "NO":
+        sell_price = current_no_prices.get(condition_id)
+        if sell_price is None and yes_px is not None:
+            sell_price = 1.0 - yes_px
+    else:
+        sell_price = yes_px
+    return sell_price
+
+
 @app.post("/api/close-all")
 async def api_close_all():
     """Close all open positions at current market prices."""
@@ -1252,17 +1273,8 @@ async def api_close_all():
                 # an unvalidated price was the worst-case slippage hole. Pass
                 # reference_price so the executor's slippage guard is active
                 # (matches the emergency-exit caller).
-                # NO tokens are priced from the NO book, never the YES price.
-                from weather_edge.models.position import normalize_side
                 condition_id = pos.get("condition_id", "")
-                held = normalize_side(pos.get("outcome") or "YES")
-                yes_px = current_prices.get(condition_id)
-                if held == "NO":
-                    sell_price = current_no_prices.get(condition_id)
-                    if sell_price is None and yes_px is not None:
-                        sell_price = 1.0 - yes_px
-                else:
-                    sell_price = yes_px
+                sell_price = _close_all_sell_price(pos, current_prices, current_no_prices)
                 if sell_price is None:
                     logger.warning(
                         "CLOSE ALL: no live price for %s (%s), skipping, "

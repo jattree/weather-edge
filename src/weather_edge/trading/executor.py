@@ -140,6 +140,100 @@ def classify_post_response(response) -> tuple[bool, str, str]:
     return False, "pending", ""
 
 
+def _parse_post_response(response) -> tuple[bool, str, str, dict, str]:
+    """Classify a post_order response and normalise it for OrderResult.
+
+    Returns (rejected, result_status, reason, response_dict, order_id); a
+    non-dict response is wrapped as ``{"raw": str(response)}`` and a missing
+    order id becomes "unknown".
+    """
+    rejected, result_status, reason = classify_post_response(response)
+    if not isinstance(response, dict):
+        response = {"raw": str(response)}
+    order_id = response.get("orderID") or response.get("id") or "unknown"
+    return rejected, result_status, reason, response, order_id
+
+
+def _live_circuit_breaker_blocks(city_id: str) -> bool:
+    """LIVE CIRCUIT BREAKER: True (and logged) when orders must be blocked.
+
+    Tripped breaker also activates the kill switch (risk_controls), this
+    is the in-process backstop in case that write failed. Fails closed.
+    """
+    try:
+        from weather_edge.analysis.risk_controls import live_circuit_breaker_multiplier
+        if live_circuit_breaker_multiplier() <= 0:
+            logger.warning(
+                "LIVE CIRCUIT BREAKER KILLED, blocking order for %s", city_id,
+            )
+            return True
+    except Exception:
+        logger.error("Circuit breaker check failed, blocking order (fail-closed)")
+        return True
+    return False
+
+
+def _buy_limit_price(signal: Signal, improve_price_by: float, force_taker: bool) -> float:
+    """Limit price for a buy, rounded to tick.
+
+    Taker: price ABOVE midpoint to cross the spread and guarantee fill.
+    Maker: improve below market to rest on the book.
+    """
+    side_price = (
+        signal.market_prob if signal.recommended_side.value == "YES"
+        else 1.0 - signal.market_prob
+    )
+    if force_taker:
+        # Price aggressively above midpoint to guarantee crossing the ask.
+        # Weather market spreads are typically 1-3¢. Using +3¢ ensures we
+        # cross even wider spreads. On Polymarket, limit buys fill at the
+        # ask price (not our limit), so overshoot just means guaranteed fill.
+        limit_price = side_price + 0.03
+    else:
+        limit_price = side_price - improve_price_by
+    return _round_price(limit_price)
+
+
+async def _persist_live_trade(label: str, ghost_msg: str, **trade) -> None:
+    """Persist a placed live order to SQLite, retrying off the event loop.
+
+    On final failure the order is on the exchange but not in the DB: log
+    ``ghost_msg`` (formatted with order id and error) at CRITICAL.
+    """
+    from weather_edge.persistence import PersistentStore
+    from weather_edge.retry import retry_async
+
+    def _persist():
+        s = PersistentStore()
+        try:
+            s.save_live_trade(**trade)
+        finally:
+            s.close()
+
+    async def _persist_async():
+        # SQLite write off the event loop; backoff uses asyncio.sleep
+        await asyncio.to_thread(_persist)
+
+    try:
+        await retry_async(
+            _persist_async,
+            attempts=3,
+            base_delay=0.5,
+            label=label,
+        )
+    except Exception as e:
+        logger.critical(ghost_msg, trade["order_id"], e)
+
+
+def _record_clob_success() -> None:
+    """Record CLOB health (best effort)."""
+    try:
+        from weather_edge.analysis.service_health import record_service_call
+        record_service_call("polymarket_clob", True)
+    except Exception:
+        pass
+
+
 @dataclass
 class OrderResult:
     """Result of an order placement."""
@@ -305,18 +399,7 @@ class TradeExecutor:
             )
             return None
 
-        # === LIVE CIRCUIT BREAKER ===
-        # Tripped breaker also activates the kill switch (risk_controls), this
-        # is the in-process backstop in case that write failed.
-        try:
-            from weather_edge.analysis.risk_controls import live_circuit_breaker_multiplier
-            if live_circuit_breaker_multiplier() <= 0:
-                logger.warning(
-                    "LIVE CIRCUIT BREAKER KILLED, blocking order for %s", signal.city_id,
-                )
-                return None
-        except Exception:
-            logger.error("Circuit breaker check failed, blocking order (fail-closed)")
+        if _live_circuit_breaker_blocks(signal.city_id):
             return None
 
         # Calculate the taker fee we'd avoid by being maker
@@ -324,36 +407,8 @@ class TradeExecutor:
             signal.market_prob, signal.recommended_size,
         )
 
-        # Calculate limit price
-        # Taker: price ABOVE midpoint to cross the spread and guarantee fill
-        # Maker: improve below market to rest on the book
-        if force_taker:
-            # Price aggressively above midpoint to guarantee crossing the ask.
-            # Weather market spreads are typically 1-3¢. Using +3¢ ensures we
-            # cross even wider spreads. On Polymarket, limit buys fill at the
-            # ask price (not our limit), so overshoot just means guaranteed fill.
-            if signal.recommended_side.value == "YES":
-                limit_price = signal.market_prob + 0.03
-            else:
-                limit_price = (1.0 - signal.market_prob) + 0.03
-        else:
-            if signal.recommended_side.value == "YES":
-                limit_price = signal.market_prob - improve_price_by
-            else:
-                limit_price = (1.0 - signal.market_prob) - improve_price_by
-
-        limit_price = _round_price(limit_price)
-
-        # Calculate shares from USD size, floor to 2dp
-        shares = _floor_shares(signal.recommended_size / limit_price)
-
-        # Enforce graduated testing cap
-        if self.max_shares is not None and shares > self.max_shares:
-            shares = _floor_shares(self.max_shares)
-            logger.info(
-                "GRADUATED CAP: capped %s to %.0f shares (max=%s)",
-                signal.city_id, shares, self.max_shares,
-            )
+        limit_price = _buy_limit_price(signal, improve_price_by, force_taker)
+        shares = self._buy_shares(signal, limit_price)
 
         # Enforce Polymarket minimum
         if shares < MIN_ORDER_SHARES:
@@ -375,29 +430,7 @@ class TradeExecutor:
         actual_usd = round(shares * limit_price, 2)
 
         if self.dry_run:
-            logger.info(
-                "DRY RUN: %s %s %.0f shares @ %.3f ($%.2f) on %s "
-                "(post_only=%s, taker_fee_avoided=$%.2f)",
-                "MAKER" if self.post_only else "TAKER",
-                signal.recommended_side.value,
-                shares,
-                limit_price,
-                actual_usd,
-                signal.city_id,
-                self.post_only,
-                taker_fee_avoided,
-            )
-            return OrderResult(
-                order_id="dry_run",
-                market_id=signal.market_id,
-                side=signal.recommended_side.value,
-                size_usd=actual_usd,
-                size_shares=shares,
-                limit_price=limit_price,
-                status="dry_run",
-                is_maker=self.post_only,
-                taker_fee_avoided=round(taker_fee_avoided, 4),
-            )
+            return self._dry_run_buy(signal, limit_price, shares, actual_usd, taker_fee_avoided)
 
         if self._client is None:
             logger.error("Client not initialized, cannot place order")
@@ -408,42 +441,79 @@ class TradeExecutor:
             logger.warning("KILL SWITCH activated during order prep, aborting")
             return None
 
+        return await self._place_live_buy(
+            signal, token_id,
+            limit_price=limit_price, shares=shares, actual_usd=actual_usd,
+            taker_fee_avoided=taker_fee_avoided, force_taker=force_taker,
+        )
+
+    def _buy_shares(self, signal: Signal, limit_price: float) -> float:
+        """Shares for a buy: USD size / price floored to 2dp, graduated cap applied."""
+        shares = _floor_shares(signal.recommended_size / limit_price)
+
+        # Enforce graduated testing cap
+        if self.max_shares is not None and shares > self.max_shares:
+            shares = _floor_shares(self.max_shares)
+            logger.info(
+                "GRADUATED CAP: capped %s to %.0f shares (max=%s)",
+                signal.city_id, shares, self.max_shares,
+            )
+        return shares
+
+    def _dry_run_buy(
+        self,
+        signal: Signal,
+        limit_price: float,
+        shares: float,
+        actual_usd: float,
+        taker_fee_avoided: float,
+    ) -> OrderResult:
+        logger.info(
+            "DRY RUN: %s %s %.0f shares @ %.3f ($%.2f) on %s "
+            "(post_only=%s, taker_fee_avoided=$%.2f)",
+            "MAKER" if self.post_only else "TAKER",
+            signal.recommended_side.value,
+            shares,
+            limit_price,
+            actual_usd,
+            signal.city_id,
+            self.post_only,
+            taker_fee_avoided,
+        )
+        return OrderResult(
+            order_id="dry_run",
+            market_id=signal.market_id,
+            side=signal.recommended_side.value,
+            size_usd=actual_usd,
+            size_shares=shares,
+            limit_price=limit_price,
+            status="dry_run",
+            is_maker=self.post_only,
+            taker_fee_avoided=round(taker_fee_avoided, 4),
+        )
+
+    async def _place_live_buy(
+        self,
+        signal: Signal,
+        token_id: str,
+        *,
+        limit_price: float,
+        shares: float,
+        actual_usd: float,
+        taker_fee_avoided: float,
+        force_taker: bool,
+    ) -> OrderResult | None:
+        """Sign, post, track and persist a live BUY. None on exchange errors."""
         try:
-            from py_clob_client.clob_types import OrderArgs, OrderType
-            from py_clob_client.order_builder.constants import BUY
-
-            order_args = OrderArgs(
-                token_id=token_id,
-                price=limit_price,
-                size=shares,
-                side=BUY,
-            )
-
-            loop = asyncio.get_running_loop()
-
-            # Step 1: Create/sign the order (CPU-bound, fast)
-            signed_order = await loop.run_in_executor(
-                None, self._client.create_order, order_args,
-            )
-
-            # Step 2: Post to exchange (network-bound)
             # post_only=True ensures maker status; orderType=GTC keeps it resting
             # force_taker overrides to cross the spread (pays fee, guarantees fill)
             use_post_only = False if force_taker else self.post_only
-            response = await loop.run_in_executor(
-                None,
-                lambda: self._client.post_order(
-                    signed_order,
-                    orderType=OrderType.GTC,
-                    post_only=use_post_only,
-                ),
+            response = await self._post_limit_order(
+                token_id, limit_price, shares, "BUY", use_post_only,
             )
 
             # Parse response, detect rejection BEFORE tracking/persisting
-            rejected, result_status, reason = classify_post_response(response)
-            if not isinstance(response, dict):
-                response = {"raw": str(response)}
-            order_id = response.get("orderID") or response.get("id") or "unknown"
+            rejected, result_status, reason, response, order_id = _parse_post_response(response)
 
             if rejected:
                 logger.warning(
@@ -474,54 +544,26 @@ class TradeExecutor:
             # Persist to SQLite for tax compliance and dashboard.
             # This MUST succeed, a ghost trade (on exchange but not in DB)
             # breaks position tracking, duplicate prevention, and tax records.
-            from weather_edge.persistence import PersistentStore
-            from weather_edge.retry import retry_async
+            # If all retries fail the order is ON the exchange but NOT in our
+            # DB, logged at CRITICAL so this is impossible to miss.
+            await _persist_live_trade(
+                f"persist_trade:{order_id[:16]}",
+                "GHOST TRADE: order %s placed on exchange but DB write "
+                "failed after 3 retries, %s. Manual reconciliation needed.",
+                order_id=order_id,
+                market_id=signal.market_id,
+                token_id=token_id,
+                city_id=signal.city_id,
+                side=signal.recommended_side.value,
+                limit_price=limit_price,
+                size_shares=shares,
+                size_usd=actual_usd,
+                description=signal.description[:80],
+                strategy=getattr(signal, "strategy", "core"),
+                is_maker=use_post_only,
+            )
 
-            def _persist_trade():
-                s = PersistentStore()
-                try:
-                    s.save_live_trade(
-                        order_id=order_id,
-                        market_id=signal.market_id,
-                        token_id=token_id,
-                        city_id=signal.city_id,
-                        side=signal.recommended_side.value,
-                        limit_price=limit_price,
-                        size_shares=shares,
-                        size_usd=actual_usd,
-                        description=signal.description[:80],
-                        strategy=getattr(signal, "strategy", "core"),
-                        is_maker=use_post_only,
-                    )
-                finally:
-                    s.close()
-
-            async def _persist_trade_async():
-                # SQLite write off the event loop; backoff uses asyncio.sleep
-                await asyncio.to_thread(_persist_trade)
-
-            try:
-                await retry_async(
-                    _persist_trade_async,
-                    attempts=3,
-                    base_delay=0.5,
-                    label=f"persist_trade:{order_id[:16]}",
-                )
-            except Exception as e:
-                # All retries failed. Order is ON the exchange but NOT in our DB.
-                # Log at CRITICAL so this is impossible to miss.
-                logger.critical(
-                    "GHOST TRADE: order %s placed on exchange but DB write "
-                    "failed after 3 retries, %s. Manual reconciliation needed.",
-                    order_id, e,
-                )
-
-            # Record CLOB health
-            try:
-                from weather_edge.analysis.service_health import record_service_call
-                record_service_call("polymarket_clob", True)
-            except Exception:
-                pass
+            _record_clob_success()
 
             logger.info(
                 "LIVE ORDER PLACED: %s %s %.0f shares @ %.3f ($%.2f) | "
@@ -567,6 +609,40 @@ class TradeExecutor:
                 signal.city_id, signal.description[:40], e,
             )
             return None
+
+    async def _post_limit_order(
+        self, token_id: str, price: float, shares: float, side: str, post_only: bool,
+    ):
+        """Sign and post a GTC limit order, returning the raw post_order response.
+
+        ``side`` is "BUY" or "SELL". Exceptions propagate to the caller.
+        """
+        from py_clob_client.clob_types import OrderArgs, OrderType
+        from py_clob_client.order_builder.constants import BUY, SELL
+
+        order_args = OrderArgs(
+            token_id=token_id,
+            price=price,
+            size=shares,
+            side={"BUY": BUY, "SELL": SELL}[side],
+        )
+
+        loop = asyncio.get_running_loop()
+
+        # Step 1: Create/sign the order (CPU-bound, fast)
+        signed_order = await loop.run_in_executor(
+            None, self._client.create_order, order_args,
+        )
+
+        # Step 2: Post to exchange (network-bound)
+        return await loop.run_in_executor(
+            None,
+            lambda: self._client.post_order(
+                signed_order,
+                orderType=OrderType.GTC,
+                post_only=post_only,
+            ),
+        )
 
     async def get_order_status(self, order_id: str) -> dict | None:
         """Poll order status for fill tracking. Retries on transient errors."""
@@ -733,34 +809,10 @@ class TradeExecutor:
         price = _round_price(price)
         is_live = not (self.dry_run or self._client is None)
 
-        # Slippage guard: reject if the limit is too far BELOW an independent
-        # mark of this token. Live mode also checks the live CLOB midpoint of
-        # the token, so a caller that passes its own price as the reference
-        # (or the wrong token's price) cannot silence the guard.
-        from weather_edge.config import settings
-        max_slip = settings.max_slippage_pct
-        references: list[tuple[str, float]] = []
-        if reference_price is not None and reference_price > 0:
-            references.append(("caller", float(reference_price)))
-        if is_live:
-            mid = await self.get_token_midpoint(token_id)
-            if mid is not None and mid > 0:
-                references.append(("clob_mid", mid))
-            if not references:
-                logger.warning(
-                    "SELL BLOCKED (no reference price): %s token %s, cannot "
-                    "verify limit %.3f", city_id, token_id[:16], price,
-                )
-                return None
-        for ref_name, ref in references:
-            drift = (ref - price) / ref
-            if drift > max_slip:
-                logger.warning(
-                    "SELL BLOCKED (slippage vs %s): %s price=%.3f ref=%.3f "
-                    "drift=%.1f%% > max=%.1f%%",
-                    ref_name, city_id, price, ref, drift * 100, max_slip * 100,
-                )
-                return None
+        if await self._sell_slippage_blocked(
+            token_id, price, city_id, reference_price=reference_price, is_live=is_live,
+        ):
+            return None
 
         if shares < MIN_ORDER_SHARES:
             logger.info(
@@ -781,29 +833,70 @@ class TradeExecutor:
                 status="dry_run",
             )
 
+        return await self._place_live_sell(
+            token_id, shares, price,
+            market_id=market_id, city_id=city_id, description=description,
+            force_taker=force_taker,
+        )
+
+    async def _sell_slippage_blocked(
+        self,
+        token_id: str,
+        price: float,
+        city_id: str,
+        *,
+        reference_price: float | None,
+        is_live: bool,
+    ) -> bool:
+        """Slippage guard: True (and logged) when the sell must be refused.
+
+        Rejects a limit too far BELOW an independent mark of this token. Live
+        mode also checks the live CLOB midpoint of the token, so a caller that
+        passes its own price as the reference (or the wrong token's price)
+        cannot silence the guard.
+        """
+        from weather_edge.config import settings
+        max_slip = settings.max_slippage_pct
+        references: list[tuple[str, float]] = []
+        if reference_price is not None and reference_price > 0:
+            references.append(("caller", float(reference_price)))
+        if is_live:
+            mid = await self.get_token_midpoint(token_id)
+            if mid is not None and mid > 0:
+                references.append(("clob_mid", mid))
+            if not references:
+                logger.warning(
+                    "SELL BLOCKED (no reference price): %s token %s, cannot "
+                    "verify limit %.3f", city_id, token_id[:16], price,
+                )
+                return True
+        for ref_name, ref in references:
+            drift = (ref - price) / ref
+            if drift > max_slip:
+                logger.warning(
+                    "SELL BLOCKED (slippage vs %s): %s price=%.3f ref=%.3f "
+                    "drift=%.1f%% > max=%.1f%%",
+                    ref_name, city_id, price, ref, drift * 100, max_slip * 100,
+                )
+                return True
+        return False
+
+    async def _place_live_sell(
+        self,
+        token_id: str,
+        shares: float,
+        price: float,
+        *,
+        market_id: str,
+        city_id: str,
+        description: str,
+        force_taker: bool,
+    ) -> OrderResult | None:
+        """Sign, post, track and persist a live SELL. None on exchange errors."""
         try:
-            from py_clob_client.clob_types import OrderArgs, OrderType
-            from py_clob_client.order_builder.constants import SELL
-
-            order_args = OrderArgs(
-                token_id=token_id,
-                price=price,
-                size=shares,
-                side=SELL,
-            )
-
-            loop = asyncio.get_running_loop()
-            signed_order = await loop.run_in_executor(
-                None, self._client.create_order, order_args,
-            )
             use_post_only = self.post_only and not force_taker
-            response = await loop.run_in_executor(
-                None,
-                lambda: self._client.post_order(
-                    signed_order,
-                    orderType=OrderType.GTC,
-                    post_only=use_post_only,
-                ),
+            response = await self._post_limit_order(
+                token_id, price, shares, "SELL", use_post_only,
             )
 
             if force_taker:
@@ -812,10 +905,7 @@ class TradeExecutor:
                     city_id,
                 )
 
-            rejected, result_status, reason = classify_post_response(response)
-            if not isinstance(response, dict):
-                response = {"raw": str(response)}
-            order_id = response.get("orderID") or response.get("id") or "unknown"
+            rejected, result_status, reason, response, order_id = _parse_post_response(response)
 
             if rejected:
                 # Never track or persist a rejected sell: it is not on the book,
@@ -841,49 +931,24 @@ class TradeExecutor:
             track_open_order(order_id)
 
             # Persist to SQLite
-            from weather_edge.persistence import PersistentStore
-            from weather_edge.retry import retry_async
+            await _persist_live_trade(
+                f"persist_sell:{order_id[:16]}",
+                "GHOST SELL: sell order %s placed on exchange but DB write "
+                "failed, %s",
+                order_id=order_id,
+                market_id=market_id,
+                token_id=token_id,
+                city_id=city_id,
+                side="SELL",
+                limit_price=price,
+                size_shares=shares,
+                size_usd=round(shares * price, 2),
+                description=description[:80],
+                strategy="exit",
+                is_maker=use_post_only,
+            )
 
-            def _persist_sell():
-                s = PersistentStore()
-                try:
-                    s.save_live_trade(
-                        order_id=order_id,
-                        market_id=market_id,
-                        token_id=token_id,
-                        city_id=city_id,
-                        side="SELL",
-                        limit_price=price,
-                        size_shares=shares,
-                        size_usd=round(shares * price, 2),
-                        description=description[:80],
-                        strategy="exit",
-                        is_maker=use_post_only,
-                    )
-                finally:
-                    s.close()
-
-            async def _persist_sell_async():
-                await asyncio.to_thread(_persist_sell)
-
-            try:
-                await retry_async(
-                    _persist_sell_async,
-                    attempts=3,
-                    base_delay=0.5,
-                    label=f"persist_sell:{order_id[:16]}",
-                )
-            except Exception as e:
-                logger.critical(
-                    "GHOST SELL: sell order %s placed on exchange but DB write "
-                    "failed, %s", order_id, e,
-                )
-
-            try:
-                from weather_edge.analysis.service_health import record_service_call
-                record_service_call("polymarket_clob", True)
-            except Exception:
-                pass
+            _record_clob_success()
 
             logger.info(
                 "LIVE SELL PLACED: %s %.0f shares @ %.3f ($%.2f) | order_id=%s",

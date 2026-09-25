@@ -71,6 +71,38 @@ async def main(argv=None):
 
     store = PersistentStore()
 
+    sellable, too_small, zero_size = plan_dust(positions)
+
+    logger.info("=== DUST DUMP PLAN ===")
+    logger.info("Sellable (>= 5 shares): %d positions", len(sellable))
+    logger.info("Too small (< 5 shares): %d positions (will resolve naturally)", len(too_small))
+    logger.info("Zero size: %d positions", len(zero_size))
+    logger.info("")
+
+    sold = 0
+    failed = 0
+    recovered = 0.0
+
+    for pos in sellable:
+        if await sell_dust(executor, pos):
+            sold += 1
+            recovered += pos["value"]
+        else:
+            failed += 1
+
+    logger.info("")
+    logger.info("=== DUST DUMP COMPLETE ===")
+    logger.info("Sold: %d positions (~$%.2f recovered)", sold, recovered)
+    logger.info("Failed: %d", failed)
+    logger.info("Too small to sell: %d (resolve naturally)", len(too_small))
+    for title, size, mv in too_small:
+        logger.info("  %.1f shares ($%.2f), %s", size, mv, title)
+
+    store.close()
+
+
+def plan_dust(positions) -> tuple[list[dict], list[tuple], list[str]]:
+    """Split Data API positions into (sellable, too_small, zero_size) dust."""
     sellable = []
     too_small = []
     zero_size = []
@@ -112,68 +144,49 @@ async def main(argv=None):
         else:
             too_small.append((title, size, mv))
 
-    logger.info("=== DUST DUMP PLAN ===")
-    logger.info("Sellable (>= 5 shares): %d positions", len(sellable))
-    logger.info("Too small (< 5 shares): %d positions (will resolve naturally)", len(too_small))
-    logger.info("Zero size: %d positions", len(zero_size))
-    logger.info("")
+    return sellable, too_small, zero_size
 
-    sold = 0
-    failed = 0
-    recovered = 0.0
 
-    for pos in sellable:
-        sell_price = dust_sell_price(pos["price"])
-        shares = pos["size"]
-        if sell_price is None:
-            logger.info("  SKIP: %s has no current price", pos["title"])
-            failed += 1
-            continue
+async def sell_dust(executor, pos: dict) -> bool:
+    """Try to sell one dust position as taker at its own mark. True if placed."""
+    sell_price = dust_sell_price(pos["price"])
+    shares = pos["size"]
+    if sell_price is None:
+        logger.info("  SKIP: %s has no current price", pos["title"])
+        return False
 
-        logger.info(
-            "SELLING: %s %s, %.0f shares @ $%.2f (val $%.2f)",
-            pos["city_id"], pos["title"], shares, sell_price, pos["value"],
+    logger.info(
+        "SELLING: %s %s, %.0f shares @ $%.2f (val $%.2f)",
+        pos["city_id"], pos["title"], shares, sell_price, pos["value"],
+    )
+
+    if not pos["condition_id"]:
+        logger.info("  SKIP: no condition_id mapping")
+        return False
+
+    sold = False
+    try:
+        result = await executor.place_sell_order(
+            token_id=pos["asset_id"],
+            shares=shares,
+            price=sell_price,
+            market_id=pos["condition_id"],
+            city_id=pos["city_id"],
+            description="DUST DUMP: {}".format(pos["title"][:40]),
+            reference_price=pos["price"],
+            force_taker=True,
         )
+        if result and result.status not in ("rejected", "post_only_reject"):
+            sold = True
+            logger.info("  OK: %s", result.order_id)
+        else:
+            logger.info("  FAILED: %s", result.status if result else "no result")
+    except Exception as e:
+        logger.info("  ERROR: %s", e)
 
-        if not pos["condition_id"]:
-            logger.info("  SKIP: no condition_id mapping")
-            failed += 1
-            continue
-
-        try:
-            result = await executor.place_sell_order(
-                token_id=pos["asset_id"],
-                shares=shares,
-                price=sell_price,
-                market_id=pos["condition_id"],
-                city_id=pos["city_id"],
-                description="DUST DUMP: {}".format(pos["title"][:40]),
-                reference_price=pos["price"],
-                force_taker=True,
-            )
-            if result and result.status not in ("rejected", "post_only_reject"):
-                sold += 1
-                recovered += pos["value"]
-                logger.info("  OK: %s", result.order_id)
-            else:
-                failed += 1
-                logger.info("  FAILED: %s", result.status if result else "no result")
-        except Exception as e:
-            failed += 1
-            logger.info("  ERROR: %s", e)
-
-        # Small delay to avoid rate limiting
-        await asyncio.sleep(0.5)
-
-    logger.info("")
-    logger.info("=== DUST DUMP COMPLETE ===")
-    logger.info("Sold: %d positions (~$%.2f recovered)", sold, recovered)
-    logger.info("Failed: %d", failed)
-    logger.info("Too small to sell: %d (resolve naturally)", len(too_small))
-    for title, size, mv in too_small:
-        logger.info("  %.1f shares ($%.2f), %s", size, mv, title)
-
-    store.close()
+    # Small delay to avoid rate limiting
+    await asyncio.sleep(0.5)
+    return sold
 
 
 if __name__ == "__main__":

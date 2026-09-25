@@ -392,7 +392,22 @@ async def fetch_polymarket_state(executor, wallet: str) -> dict:
     except Exception:
         logger.warning("Failed to fetch activity from Polymarket Data API")
 
-    # Compute aggregates from Polymarket's own calculations
+    _aggregate_positions(result)
+    # True P&L = what you have now - what you put in. Can't lie.
+    from weather_edge.config import settings as _s
+    result["total_pnl"] = round(result["portfolio_value"] - _s.bankroll, 2)
+
+    # Live drawdown circuit breaker: trips the persistent kill switch.
+    result["nav_observed"] = balance_ok and positions_ok
+    result["circuit_breaker_multiplier"] = None
+    if result["nav_observed"]:
+        _update_live_breaker(result)
+
+    return result
+
+
+def _aggregate_positions(result: dict) -> None:
+    """Compute aggregates in place from Polymarket's own calculations."""
     for p in result["positions"]:
         size = float(p.get("size", 0))
         if size > 0:
@@ -408,23 +423,17 @@ async def fetch_polymarket_state(executor, wallet: str) -> dict:
     result["cash_pnl"] = round(result["cash_pnl"], 2)
     result["realized_pnl"] = round(result["realized_pnl"], 2)
     result["portfolio_value"] = round(result["balance"] + result["market_value"], 2)
-    # True P&L = what you have now - what you put in. Can't lie.
-    from weather_edge.config import settings as _s
-    result["total_pnl"] = round(result["portfolio_value"] - _s.bankroll, 2)
 
-    # Live drawdown circuit breaker: trips the persistent kill switch.
-    result["nav_observed"] = balance_ok and positions_ok
-    result["circuit_breaker_multiplier"] = None
-    if result["nav_observed"]:
-        try:
-            from weather_edge.analysis.risk_controls import update_live_circuit_breaker
-            result["circuit_breaker_multiplier"] = update_live_circuit_breaker(
-                result["portfolio_value"],
-            )
-        except Exception:
-            logger.error("Live circuit breaker update failed", exc_info=True)
 
-    return result
+def _update_live_breaker(result: dict) -> None:
+    """Feed the observed NAV to the live drawdown circuit breaker."""
+    try:
+        from weather_edge.analysis.risk_controls import update_live_circuit_breaker
+        result["circuit_breaker_multiplier"] = update_live_circuit_breaker(
+            result["portfolio_value"],
+        )
+    except Exception:
+        logger.error("Live circuit breaker update failed", exc_info=True)
 
 
 async def sync_market_map_from_discovery(store, markets) -> int:
