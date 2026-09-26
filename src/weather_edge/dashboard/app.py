@@ -15,6 +15,10 @@ logging.basicConfig(
     stream=sys.stdout,
     force=True,
 )
+# httpx logs every request URL at INFO. Open-Meteo only accepts its API key
+# as a query parameter, so at INFO the paid key would land in the journal.
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
 from pathlib import Path
 
 import httpx

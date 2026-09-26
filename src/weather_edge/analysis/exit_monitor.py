@@ -119,7 +119,11 @@ def _observation_in_bucket(trade: Position, bucket, resp) -> bool:
     daily_max_c = data.get("daily", {}).get("temperature_2m_max", [None])[0]
     if daily_max_c is None:
         return False
-    in_bucket = actual_falls_in_bucket(daily_max_c, bucket)
+    # Same bucket rule the resolver settles on: Hong Kong labels are the
+    # integer part of the 0.1 C value, not a rounded whole degree.
+    in_bucket = actual_falls_in_bucket(
+        daily_max_c, bucket, is_hkg=str(trade.city_id).lower() == "hkg",
+    )
     if in_bucket:
         logger.info(
             "OBSERVATION GUARD: %s actual max %.1f°C is IN bucket %s, HOLD to resolution",
@@ -563,13 +567,16 @@ Respond JSON only:
 {{"verdict": "AGREE_EXIT" or "HOLD", \
 "rationale": "brief cost/risk justification"}}"""
 
-            url = (
-                f"{GEMINI_API_URL}/{GEMINI_MODEL}"
-                f":generateContent?key={GEMINI_API_KEY}"
-            )
+            # Key in the header, never the URL: httpx logs request URLs at
+            # INFO and embeds them in error messages.
+            url = f"{GEMINI_API_URL}/{GEMINI_MODEL}:generateContent"
             async with httpx.AsyncClient() as client:
                 resp = await client.post(
                     url,
+                    headers={
+                        "x-goog-api-key": GEMINI_API_KEY,
+                        "content-type": "application/json",
+                    },
                     json={
                         "contents": [{
                             "role": "user",
