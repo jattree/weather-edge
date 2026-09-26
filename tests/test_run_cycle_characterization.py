@@ -27,14 +27,16 @@ import json
 import logging
 import os
 import re
-from datetime import UTC, date, datetime, timedelta
+import sys
+from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 from weather_edge import scheduler
-from weather_edge.analysis import claude_reasoning
+from weather_edge.analysis import claude_reasoning, model_timing
+from weather_edge.analysis import edge as edge_module
 from weather_edge.analysis.edge import Signal
 from weather_edge.models.enums import City, SignalTier, TradeSide
 
@@ -231,12 +233,46 @@ def _trend(city, mean):
 
 
 # ---------------------------------------------------------------------------
+# frozen clock
+# ---------------------------------------------------------------------------
+# run_cycle's horizon filter and trading_today() depend on the time of day,
+# so an unfrozen clock makes the goldens change around UTC midnight. Every
+# cycle runs at 15:00 UTC on the real current date (dates are normalised to
+# <D0>.. placeholders, so the date itself doesn't matter).
+
+_REAL_DATETIME = datetime
+FROZEN_NOW = _REAL_DATETIME.combine(
+    _REAL_DATETIME.now(UTC).date(), time(15, 0), tzinfo=UTC,
+)
+
+
+class _FrozenMeta(type):
+    # Code under test does isinstance(x, datetime) on real datetimes; keep
+    # that true while `datetime` names this subclass.
+    def __instancecheck__(cls, obj):
+        return isinstance(obj, _REAL_DATETIME)
+
+
+class FrozenDatetime(_REAL_DATETIME, metaclass=_FrozenMeta):
+    @classmethod
+    def now(cls, tz=None):
+        return FROZEN_NOW.astimezone(tz) if tz else FROZEN_NOW.replace(tzinfo=None)
+
+    @classmethod
+    def utcnow(cls):
+        return FROZEN_NOW.replace(tzinfo=None)
+
+
+# ---------------------------------------------------------------------------
 # harness
 # ---------------------------------------------------------------------------
 
 class Harness:
     def __init__(self, monkeypatch, tmp_path, caplog):
         self.mp = monkeypatch
+        for mod in (scheduler, edge_module, model_timing):
+            monkeypatch.setattr(mod, "datetime", FrozenDatetime)
+        monkeypatch.setattr(sys.modules[__name__], "datetime", FrozenDatetime)
         self.tmp_path = tmp_path
         self.caplog = caplog
         self.d = [scheduler.trading_today() + timedelta(days=i) for i in range(5)]
