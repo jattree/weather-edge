@@ -336,3 +336,20 @@ def test_successful_cancel_is_recorded():
     ok = asyncio.run(scheduler._cancel_and_record(ctx, "order-1", "fail %s: %s"))
     assert ok is True
     assert ctx.store.cancelled == ["order-1"]
+
+
+# ---------------------------------------------------------------------------
+# Gemini "skip" always vetoes
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("dissent", [0.0, 0.5, 0.8, 0.95])
+def test_gemini_skip_is_a_veto_at_any_dissent(dissent):
+    assert scheduler._gemini_size_multiplier(dissent, "skip") == 0.0
+
+
+@pytest.mark.parametrize("dissent,sizing,mult", [
+    (0.8, "full", 0.5), (0.2, "half", 0.5), (0.4, "reduce_20pct", 0.8),
+    (0.2, "reduce_20pct", 1.0), (0.1, "full", 1.0),
+])
+def test_gemini_size_cuts_unchanged(dissent, sizing, mult):
+    assert scheduler._gemini_size_multiplier(dissent, sizing) == mult

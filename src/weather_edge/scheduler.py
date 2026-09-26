@@ -355,13 +355,15 @@ def exit_model_context(
 
 
 def _gemini_size_multiplier(dissent: float, sizing: str) -> float:
-    """Position-size multiplier from a Gemini red-team verdict (1.0 = no cut)."""
-    if dissent >= 0.7 or sizing in ("half", "skip"):
-        if sizing == "skip" and dissent >= 0.9:
-            return 0.0
-        if sizing == "half" or dissent >= 0.7:
-            return 0.5
-        return 1.0 - (dissent * 0.5)
+    """Position-size multiplier from a Gemini red-team verdict (1.0 = no cut).
+
+    An explicit "skip" is a veto whatever the dissent strength: halving it
+    instead let the $5 live minimum turn a skipped trade into an order.
+    """
+    if sizing == "skip":
+        return 0.0
+    if dissent >= 0.7 or sizing == "half":
+        return 0.5
     if dissent >= 0.3 and sizing == "reduce_20pct":
         return 0.8
     return 1.0
