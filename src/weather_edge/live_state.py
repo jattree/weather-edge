@@ -129,6 +129,25 @@ def get_value_strict(key: str) -> str | None:
     return _fallback_cache.get(key)
 
 
+def get_value_persisted(key: str) -> str | None:
+    """Read a value that must come from Redis itself, never the fallback.
+
+    For state that is loaded once and then written back (the live drawdown
+    high-water mark, the AI veto memory). If it were read from the empty
+    fallback while Redis is down, the next write would overwrite the real
+    persisted value. Returns the Redis value (None if the key is unset).
+    Raises LiveStateUnavailableError when Redis is not connected, including
+    when it has never connected in this process; Redis errors propagate.
+    """
+    r = _get_redis()
+    if r is None:
+        raise LiveStateUnavailableError(
+            f"Redis not connected reading {key}"
+            + ("" if _redis_ever_connected else " (never connected)")
+        )
+    return r.get(key)
+
+
 def get_fallback_value(key: str) -> str | None:
     """Return the in-memory fallback value only (writes made while Redis was down)."""
     return _fallback_cache.get(key)

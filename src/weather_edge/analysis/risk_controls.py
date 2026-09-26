@@ -136,6 +136,9 @@ class CircuitBreakerState:
     is_scaled_back: bool = False
     is_killed: bool = False
     kill_reason: str = ""
+    # Live breaker only: True once the persisted high-water mark has been
+    # read from Redis (see _sync_live_hwm). Until then it is never written.
+    hwm_synced: bool = False
 
     def update(self, nav: float, profile: RiskProfile) -> None:
         """Update circuit breaker state based on current NAV."""
@@ -213,6 +216,30 @@ def _is_yes(t) -> bool:
     return side.strip().upper() == "YES"
 
 
+def _sync_live_hwm(cb: CircuitBreakerState) -> bool:
+    """Merge the persisted high-water mark into ``cb`` once Redis is readable.
+
+    Until it has been read, the HWM lives in memory only and is NOT written
+    back: writing it after a restart during a Redis outage would replace the
+    real peak with a lower one and hide the drawdown. Retried every call.
+    """
+    if cb.hwm_synced:
+        return True
+    try:
+        from weather_edge.live_state import get_value_persisted
+        stored = get_value_persisted(_LIVE_HWM_KEY)
+    except Exception as e:  # noqa: BLE001 - Redis down or erroring: retry later
+        logger.warning("Live HWM not loaded yet (%s); keeping it in memory", e)
+        return False
+    if stored:
+        try:
+            cb.high_water_mark = max(cb.high_water_mark, float(stored))
+        except ValueError:
+            logger.warning("Live HWM in Redis unreadable: %r", stored)
+    cb.hwm_synced = True
+    return True
+
+
 def update_live_circuit_breaker(nav: float) -> float:
     """Feed the live exchange NAV to the live circuit breaker.
 
@@ -228,14 +255,7 @@ def update_live_circuit_breaker(nav: float) -> float:
     """
     profile = get_active_profile()
     cb = _live_circuit_breaker
-    try:
-        from weather_edge.live_state import get_value
-        if cb.high_water_mark <= 0:
-            stored = get_value(_LIVE_HWM_KEY)
-            if stored:
-                cb.high_water_mark = float(stored)
-    except Exception:
-        logger.debug("Live HWM load failed", exc_info=True)
+    synced = _sync_live_hwm(cb)
 
     was_killed = cb.is_killed
     if nav <= 0:
@@ -243,11 +263,12 @@ def update_live_circuit_breaker(nav: float) -> float:
         logger.warning("Live circuit breaker: ignoring non-positive NAV %.2f", nav)
         return cb.get_size_multiplier(profile)
     cb.update(nav, profile)
-    try:
-        from weather_edge.live_state import set_value
-        set_value(_LIVE_HWM_KEY, str(cb.high_water_mark))
-    except Exception:
-        logger.debug("Live HWM save failed", exc_info=True)
+    if synced:
+        try:
+            from weather_edge.live_state import set_value
+            set_value(_LIVE_HWM_KEY, str(cb.high_water_mark))
+        except Exception:  # noqa: BLE001 - best-effort persistence
+            logger.warning("Live HWM save failed", exc_info=True)
 
     if cb.is_killed and not was_killed:
         from weather_edge.trading.kill_switch import activate_kill_switch
@@ -265,7 +286,8 @@ def reset_live_circuit_breaker() -> None:
     keep blocking orders (or immediately re-trip from the stale HWM).
     """
     global _live_circuit_breaker
-    _live_circuit_breaker = CircuitBreakerState()
+    # The operator chose a fresh reference: never re-merge the old peak.
+    _live_circuit_breaker = CircuitBreakerState(hwm_synced=True)
     try:
         from weather_edge.live_state import set_value
         set_value(_LIVE_HWM_KEY, "0")

@@ -12,14 +12,14 @@ from weather_edge.analysis.claude_reasoning import _VETO_STATE_KEY, AIReviewMemo
 
 
 class FlakyStore:
-    """Stands in for get_value_strict / set_json with a switchable outage."""
+    """Stands in for get_value_persisted / set_json with a switchable outage."""
 
     def __init__(self, snapshot: dict | None = None):
         self.raw = json.dumps(snapshot) if snapshot is not None else None
         self.down = False
         self.writes = 0
 
-    def get_value_strict(self, key):
+    def get_value_persisted(self, key):
         assert key == _VETO_STATE_KEY
         if self.down:
             raise live_state.LiveStateUnavailableError("redis down")
@@ -42,7 +42,7 @@ def _signal(market_id: str, target_date: str = "2026-09-26"):
 def store(monkeypatch):
     s = FlakyStore({"m-old|2026-09-26": {"reason": "bust risk", "source": "claude",
                                          "recorded_at": 1.0}})
-    monkeypatch.setattr(live_state, "get_value_strict", s.get_value_strict)
+    monkeypatch.setattr(live_state, "get_value_persisted", s.get_value_persisted)
     monkeypatch.setattr(live_state, "set_json", s.set_json)
     return s
 
@@ -81,3 +81,16 @@ def test_evicted_dates_are_not_resurrected(store):
     mem.record_veto(_signal("m-new", "2026-09-28"), "outlier", "claude")
     assert set(json.loads(store.raw)) == {"m-new|2026-09-28"}
 
+
+
+def test_persisted_reader_never_serves_the_fallback(monkeypatch):
+    # Cold start with Redis never connected: the fallback may hold a value,
+    # but a persisted read must refuse rather than return it.
+    monkeypatch.setattr(live_state, "_get_redis", lambda: None)
+    monkeypatch.setattr(live_state, "_redis_ever_connected", False)
+    monkeypatch.setattr(live_state, "_fallback_cache", {_VETO_STATE_KEY: "{}"})
+    with pytest.raises(live_state.LiveStateUnavailableError):
+        live_state.get_value_persisted(_VETO_STATE_KEY)
+    mem = AIReviewMemory()
+    assert mem.veto_for(_signal("m-old")) is None
+    assert mem._loaded is False  # retried on the next call

@@ -373,10 +373,45 @@ class TestLiveCircuitBreaker:
         meta = kill_switch.get_kill_switch_state()
         assert meta["triggered_by"] == "circuit_breaker"
 
-    def test_hwm_survives_restart(self):
-        risk_controls.update_live_circuit_breaker(1000.0)
+    @staticmethod
+    def _redis(monkeypatch, data: dict):
+        """Dict-backed Redis; set data['down'] = True to make it unreachable."""
+        class R:
+            def get(self, k):
+                return data.get(k)
+
+            def set(self, k, v, *a, **kw):
+                data[k] = v
+
+            def setex(self, k, ttl, v):
+                data[k] = v
+        client = R()
+        monkeypatch.setattr(live_state, "_get_redis",
+                            lambda: None if data.get("down") else client)
+        return data
+
+    @staticmethod
+    def _restart():
         risk_controls._live_circuit_breaker = risk_controls.CircuitBreakerState()
+
+    def test_hwm_survives_restart(self, monkeypatch):
+        self._redis(monkeypatch, {})
+        risk_controls.update_live_circuit_breaker(1000.0)
+        self._restart()
         assert risk_controls.update_live_circuit_breaker(700.0) == 0.0
+
+    def test_restart_during_outage_keeps_persisted_peak(self, monkeypatch):
+        # Persisted peak $100; restart while Redis is down; NAV $60 observed.
+        data = self._redis(monkeypatch, {risk_controls._LIVE_HWM_KEY: "100.0"})
+        self._restart()
+        data["down"] = True
+        risk_controls.update_live_circuit_breaker(60.0)
+        assert data[risk_controls._LIVE_HWM_KEY] == "100.0"   # not overwritten
+        data["down"] = False
+        # Recovery merges the real peak: 40% drawdown trips the breaker.
+        assert risk_controls.update_live_circuit_breaker(60.0) == 0.0
+        assert kill_switch.is_kill_switch_active() is True
+        assert data[risk_controls._LIVE_HWM_KEY] == "100.0"
 
     def test_operator_reset_rearms_breaker(self):
         risk_controls.update_live_circuit_breaker(1000.0)

@@ -442,11 +442,14 @@ class AIReviewMemory:
         A failed read must not look like "no vetoes": that would let a vetoed
         market be approved again and let the next save overwrite the snapshot.
         """
+        # get_value_persisted raises unless Redis itself answered: reading the
+        # empty fallback during a cold-start outage would look like "no
+        # vetoes" and the next save would overwrite the real snapshot.
         try:
-            from weather_edge.live_state import get_value_strict
-            raw = get_value_strict(_VETO_STATE_KEY)
-        except Exception:
-            logger.warning("AI review memory unavailable, will retry", exc_info=True)
+            from weather_edge.live_state import get_value_persisted
+            raw = get_value_persisted(_VETO_STATE_KEY)
+        except Exception as e:  # noqa: BLE001 - store down or erroring: retry later
+            logger.warning("AI review memory not loaded yet (%s), will retry", e)
             return None
         if not raw:
             return {}
