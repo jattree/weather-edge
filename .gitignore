@@ -23,3 +23,6 @@ notebooks/.ipynb_checkpoints/
 
 # deepsec security-scanner workspace (local tooling, not part of the project)
 .deepsec/
+
+# score_vs_market.py forecast/observation cache
+score_vs_market_cache.json
