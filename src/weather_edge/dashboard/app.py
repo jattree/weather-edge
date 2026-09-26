@@ -8,11 +8,16 @@ import sys
 import time
 from datetime import UTC, date, datetime, timedelta
 
-# Ensure all loggers output to stdout so systemd/journald captures them
+from weather_edge.retry import RedactingFilter  # noqa: E402
+
+# Ensure all loggers output to stdout so systemd/journald captures them.
+# The filter keeps keys in request URLs out of the journal.
+_stdout_handler = logging.StreamHandler(sys.stdout)
+_stdout_handler.addFilter(RedactingFilter())
 logging.basicConfig(
     level=logging.INFO,
     format="%(name)s: %(message)s",
-    stream=sys.stdout,
+    handlers=[_stdout_handler],
     force=True,
 )
 # httpx logs every request URL at INFO; keep request URLs out of the journal.
@@ -346,10 +351,14 @@ async def _run_dashboard_cycle_inner(run_ai: bool = True) -> None:
             "trend": trend,
         }
 
-        # Use cached forecasts from run_cycle
-        forecasts = forecast_cache.get((city_id, tomorrow), [])
-        if not forecasts:
-            forecasts = forecast_cache.get((city_id, today), [])
+        # Use cached forecasts from run_cycle: the nearest date that has them.
+        # The 36h horizon filter usually removes today and tomorrow, so the
+        # cycle only fetches later dates.
+        forecasts = next(
+            (forecast_cache[(city_id, d)] for d in target_dates
+             if forecast_cache.get((city_id, d))),
+            [],
+        )
         if forecasts:
             oldest_fetch = min((f.fetched_at for f in forecasts if hasattr(f, 'fetched_at')), default=None)
             if oldest_fetch:
