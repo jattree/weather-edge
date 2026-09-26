@@ -209,7 +209,7 @@ def compute_model_prob_for_market(market: MarketInfo, consensus) -> float | None
 
     Handles the multi-bucket format with EMOS probability cap:
     - A single 2°F bucket should never exceed 70% at >12h horizon
-    - Per Gemini: >90% on a single bucket is "likely broken"
+    - >90% on a single bucket is almost certainly a model error
     """
     prob = _raw_bucket_probability(market, consensus)
     # Apply bucket probability cap for range/lte buckets (narrow temperature ranges)
@@ -1619,7 +1619,7 @@ async def _prepare_execution(ctx: CycleContext) -> None:
     ctx.market_maker = MarketMaker()
 
     # Build market prices dict using real order book asks (not midpoints)
-    # Per Gemini: spread only exists if YES_ask + NO_ask < 1.00
+    # A spread only exists if YES_ask + NO_ask < 1.00
     ctx.market_prices = {}
     ctx.market_by_id = {m.market_id: m for m in ctx.markets}
     await _fetch_book_prices(ctx, fetch_book_prices)

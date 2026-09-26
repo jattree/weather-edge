@@ -15,7 +15,7 @@ from weather_edge.models.enums import City, WeatherModel
 logger = logging.getLogger(__name__)
 
 # === EMOS / CALIBRATION CONSTANTS ===
-# Per Gemini analysis: raw ensemble spread underestimates true uncertainty.
+# Raw ensemble spread underestimates true uncertainty.
 # Models are correlated (shared physics + initial conditions) so spread is artificially narrow.
 
 # Spread inflation factor: multiply raw std_dev by this before computing probabilities.
@@ -31,7 +31,7 @@ SPREAD_INFLATION_FACTOR = 1.3
 BIAS_SHRINKAGE = 0.9
 
 # Probability cap: never assign more than this to a single 2°F bucket >12h out.
-# A >90% single-bucket probability is "likely broken" per Gemini.
+# A >90% single-bucket probability is almost certainly a model error.
 MAX_BUCKET_PROBABILITY = 0.70
 
 # Extreme event override: when models are tightly clustered (low std) AND

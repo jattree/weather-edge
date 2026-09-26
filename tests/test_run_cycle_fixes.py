@@ -373,7 +373,7 @@ def _two_token_store(tmp_path):
 
 
 def test_exit_sells_the_flagged_token_not_the_bigger_hedge(tmp_path):
-    # Codex's scenario: 100 YES hedge + 20 directional NO on one market,
+    # 100 YES hedge + 20 directional NO on one market,
     # NO flagged for exit -> must sell 20 NO, never 100 YES.
     store = _two_token_store(tmp_path)
     live = {p.asset_id: p for p in scheduler._live_exit_positions(store)}

@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 # Peak heat hours, after this local time, daily high is essentially locked
 PEAK_HEAT_HOUR = 15  # 3pm local
 
-# Thresholds (per Gemini validation)
+# Thresholds
 EDGE_INVERSION_THRESHOLD = -0.07  # Exit when edge flips worse than -7%
 PROFIT_CAP_PRICE = 0.88  # Take profit above this price
 PROFIT_CAP_MODEL_MAX = 0.94  # Only take profit if model < 94%

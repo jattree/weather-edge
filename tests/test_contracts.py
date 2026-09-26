@@ -48,7 +48,7 @@ class TestValidateEmosActive:
         assert "spread_inflation" in result.error
 
     def test_bucket_cap_disabled(self):
-        """cap=1.0 allows 100% on a single 2F bucket, 'likely broken' per Gemini."""
+        """cap=1.0 allows 100% on a single 2F bucket, almost certainly a model error."""
         result = validate_emos_active(2.0, 1.0, 1.2)
         assert result.valid is False
         assert result.code == "EMOS_DISABLED"
