@@ -26,3 +26,4 @@ notebooks/.ipynb_checkpoints/
 
 # score_vs_market.py forecast/observation cache
 score_vs_market_cache.json
+score_jev_cache.json
