@@ -98,6 +98,7 @@ python -m weather_edge forecast     # consensus forecasts per city
 python -m weather_edge markets      # discovered Polymarket weather markets
 python -m weather_edge run          # one paper cycle
 python -m weather_edge dashboard    # http://127.0.0.1:8000
+python -m weather_edge log-prices --interval 15   # record prices to prices.db, never trades
 ```
 
 - **Paper by default.** Live execution needs the `[execution]` extra, wallet

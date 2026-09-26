@@ -190,6 +190,37 @@ def markets() -> None:
     asyncio.run(_markets())
 
 
+@cli.command("log-prices")
+@click.option("--interval", default=0.0, show_default=True, type=click.FloatRange(0),
+              help="Minutes between snapshots; 0 = take one snapshot and exit")
+@click.option("--db", type=click.Path(dir_okay=False), default=None,
+              help="SQLite file (default: prices.db in the repo root)")
+@click.option("--books/--no-books", default=True, show_default=True,
+              help="Also record YES order-book depth for near-dated markets")
+@click.option("--book-days", default=3, show_default=True, type=click.IntRange(0),
+              help="Only fetch books for markets resolving within this many days")
+@click.option("--book-every", default=4, show_default=True, type=click.IntRange(1),
+              help="Record book depth on every Nth snapshot (top of book is every one)")
+def log_prices(
+    interval: float, db: str | None, books: bool, book_days: int, book_every: int,
+) -> None:
+    """Record market prices (and outcomes) over time for later scoring. Never trades."""
+    from weather_edge.price_logger import DEFAULT_PRICE_DB, PriceLogStore, run_logger
+
+    store = PriceLogStore(db or DEFAULT_PRICE_DB)
+    console.print(f"[bold cyan]Price logger[/] -> {store.path}"
+                  + (f", every {interval:g} min" if interval else ", one snapshot"))
+    try:
+        asyncio.run(run_logger(
+            store, interval_min=interval, books=books, book_days=book_days,
+            book_every=book_every, iterations=None if interval else 1,
+        ))
+    except KeyboardInterrupt:
+        console.print("[yellow]Stopped.[/]")
+    finally:
+        store.close()
+
+
 @cli.command()
 def dashboard() -> None:
     """Launch the web dashboard."""
