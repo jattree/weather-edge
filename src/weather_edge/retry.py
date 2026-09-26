@@ -124,6 +124,24 @@ def redact(text: object) -> str:
     return s
 
 
+class RedactingFilter(logging.Filter):
+    """Redact a log record's text and traceback (attach to output handlers).
+
+    httpx exception text embeds the request URL, and some APIs (Open-Meteo)
+    only take their key as a query parameter, so any ``logger.x("%s", e)``
+    or ``exc_info=True`` anywhere could print a key. The record is shared by
+    every handler, so it is only ever made safer: the message is rendered
+    and redacted, and a redacted traceback is pre-rendered into exc_text
+    (formatters use exc_text when it is set); exc_info is left in place.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        record.msg, record.args = redact(record.getMessage()), None
+        if record.exc_info and not record.exc_text:
+            record.exc_text = redact(logging.Formatter().formatException(record.exc_info))
+        return True
+
+
 # ---------------------------------------------------------------------------
 # Retry loops
 # ---------------------------------------------------------------------------

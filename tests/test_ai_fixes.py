@@ -709,3 +709,23 @@ def test_service_health_does_not_recurse_when_redis_down(monkeypatch):
 
 def test_batch_analyze_signals_removed():
     assert not hasattr(claude_reasoning, "batch_analyze_signals")
+
+
+def test_log_redaction_filter_strips_url_keys_and_tracebacks():
+    import logging
+
+    from weather_edge.retry import RedactingFilter
+
+    url = "https://customer-api.open-meteo.com/v1/forecast?latitude=1&apikey=SECRETKEY123"
+    try:
+        raise RuntimeError(f"Client error '400 Bad Request' for url '{url}'")
+    except RuntimeError:
+        import sys
+        record = logging.LogRecord("t", logging.WARNING, __file__, 1,
+                                   "HTTP %s batch fetch: %s", (400, url), sys.exc_info())
+    assert RedactingFilter().filter(record) is True
+    text = record.getMessage()
+    assert "SECRETKEY123" not in text and "apikey" not in text
+    assert "HTTP 400 batch fetch" in text
+    assert "RuntimeError" in record.exc_text and "SECRETKEY123" not in record.exc_text
+    assert "SECRETKEY123" not in logging.Formatter().format(record)

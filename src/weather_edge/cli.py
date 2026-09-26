@@ -14,17 +14,27 @@ from rich.logging import RichHandler
 console = Console()
 
 
+def _redacting(handler: logging.Handler) -> logging.Handler:
+    """Keys in request URLs never reach the terminal (see retry.RedactingFilter)."""
+    from weather_edge.retry import RedactingFilter
+    handler.addFilter(RedactingFilter())
+    return handler
+
+
 def setup_logging(verbose: bool = False) -> None:
     level = logging.DEBUG if verbose else logging.INFO
     logging.basicConfig(
         level=level,
         format="%(message)s",
         datefmt="[%X]",
-        handlers=[RichHandler(rich_tracebacks=True, show_path=False)],
+        # Plain tracebacks: Rich's renderer reads the live exception, which
+        # would bypass the redacted text the filter prepares.
+        handlers=[_redacting(RichHandler(rich_tracebacks=False, show_path=False))],
     )
     # Quiet noisy libraries
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("httpcore").setLevel(logging.WARNING)
+
 
 
 @click.group()
