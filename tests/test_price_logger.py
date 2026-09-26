@@ -133,3 +133,70 @@ def test_loop_survives_a_failed_pass(store, monkeypatch):
     monkeypatch.setattr(price_logger.asyncio, "sleep", no_sleep)
     asyncio.run(price_logger.run_logger(store, interval_min=1, iterations=5, book_every=4))
     assert calls == [True, False, False, False, True]  # books on every 4th pass
+
+
+# ---------------------------------------------------------------------------
+# backfill of resolved markets
+# ---------------------------------------------------------------------------
+
+def _event(day: str, city_q: str, yes_won: bool, cid: str) -> dict:
+    return {
+        "title": f"Highest temperature in NYC on {day}?", "endDate": f"2026-{day}T12:00:00Z",
+        "markets": [{
+            "question": city_q, "conditionId": cid, "umaResolutionStatus": "resolved",
+            "outcomePrices": '["1", "0"]' if yes_won else '["0", "1"]',
+            "clobTokenIds": f'["{cid}-Y", "{cid}-N"]',
+        }],
+    }
+
+
+class _BackfillClient:
+    def __init__(self, events_by_min: dict[str, list], history: dict[str, list]):
+        self.events_by_min, self.history, self.history_calls = events_by_min, history, 0
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+    async def get(self, url, params=None, timeout=None):
+        req = httpx.Request("GET", url)
+        if url.endswith("/events"):
+            events = self.events_by_min.get(params["end_date_min"][:10], [])
+            return httpx.Response(200, json=events[params["offset"]:], request=req)
+        self.history_calls += 1
+        return httpx.Response(200, json={"history": self.history.get(params["market"], [])},
+                              request=req)
+
+
+def test_backfill_stores_history_and_outcomes_idempotently(store, monkeypatch):
+    q = "Will the highest temperature in New York City be between 70-71°F on September 20?"
+    client = _BackfillClient(
+        {"2026-09-20": [_event("09-20", q, True, "c1")],
+         "2026-09-21": [_event("09-21", q.replace("20?", "21?"), False, "c2"),
+                        {"title": "Will it snow in NYC?", "markets": []}]},
+        {"c1-Y": [{"t": 1790000000, "p": 0.3}, {"t": 1790003600, "p": 0.6}],
+         "c2-Y": [{"t": 1790090000, "p": "bad"}]},
+    )
+    monkeypatch.setattr(httpx, "AsyncClient", lambda *a, **k: client)
+    counts = asyncio.run(price_logger.backfill_history(store, days=6, today=date(2026, 9, 26)))
+    assert counts == {"markets": 2, "points": 2, "empty": 1, "skipped": 0}
+    got = dict(store.conn.execute("SELECT market_id, resolved_yes FROM markets").fetchall())
+    assert got == {"c1": 1, "c2": 0}
+    assert store.conn.execute("SELECT COUNT(*) FROM price_history").fetchone()[0] == 2
+
+    calls_before = client.history_calls
+    again = asyncio.run(price_logger.backfill_history(store, days=6, today=date(2026, 9, 26)))
+    assert again["skipped"] == 1 and client.history_calls == calls_before + 1  # c2 had none
+
+
+def test_unresolved_or_untracked_markets_are_ignored():
+    ev = _event("09-20", "Will the highest temperature in Zhengzhou be 22°C on September 20?",
+                True, "z1")
+    ev["title"] = "Highest temperature in Zhengzhou on September 20?"
+    assert price_logger._resolved_market(ev["markets"][0], ev) is None  # untracked city
+    q = "Will the highest temperature in New York City be between 70-71°F on September 20?"
+    ev = _event("09-20", q, True, "n1")
+    ev["markets"][0]["umaResolutionStatus"] = "proposed"
+    assert price_logger._resolved_market(ev["markets"][0], ev) is None

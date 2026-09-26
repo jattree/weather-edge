@@ -221,6 +221,26 @@ def log_prices(
         store.close()
 
 
+@cli.command("backfill-prices")
+@click.option("--days", default=35, show_default=True, type=click.IntRange(1),
+              help="How many days of resolved markets to fetch (history is kept ~1 month)")
+@click.option("--db", type=click.Path(dir_okay=False), default=None,
+              help="SQLite file (default: prices.db in the repo root)")
+def backfill_prices(days: int, db: str | None) -> None:
+    """Fetch hourly price history and outcomes of recently resolved markets."""
+    from weather_edge.price_logger import DEFAULT_PRICE_DB, PriceLogStore, backfill_history
+
+    store = PriceLogStore(db or DEFAULT_PRICE_DB)
+    try:
+        counts = asyncio.run(backfill_history(store, days=days))
+    finally:
+        store.close()
+    console.print(
+        f"Backfilled {counts['markets']} markets ({counts['points']} price points, "
+        f"{counts['empty']} with no history), {counts['skipped']} already stored",
+    )
+
+
 @cli.command()
 def dashboard() -> None:
     """Launch the web dashboard."""
