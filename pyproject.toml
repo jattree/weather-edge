@@ -33,7 +33,7 @@ dev = [
 ]
 dashboard = [
     "fastapi>=0.109",
-    "uvicorn>=0.27",
+    "uvicorn[standard]>=0.27",  # [standard] brings WebSocket support
     "jinja2>=3.1",
 ]
 execution = [
