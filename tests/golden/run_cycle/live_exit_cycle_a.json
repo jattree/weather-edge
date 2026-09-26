@@ -968,7 +968,9 @@
    [
     "p-yes"
    ],
-   {}
+   {
+    "token_id": "a-yes"
+   }
   ],
   [
    "exec.cancel_order",
@@ -987,13 +989,14 @@
     "p-yes"
    ],
    {
-    "side": "SELL"
+    "side": "SELL",
+    "token_id": "a-yes"
    }
   ],
   [
-   "store.get_position_for_market",
+   "store.get_position_by_asset",
    [
-    "p-yes"
+    "a-yes"
    ],
    {}
   ],
@@ -1044,7 +1047,8 @@
     "p-no"
    ],
    {
-    "side": "SELL"
+    "side": "SELL",
+    "token_id": "a-no"
    }
   ],
   [
@@ -1052,7 +1056,9 @@
    [
     "p-no"
    ],
-   {}
+   {
+    "token_id": "a-no"
+   }
   ],
   [
    "exec.cancel_order",
@@ -1064,13 +1070,14 @@
     "p-no"
    ],
    {
-    "side": "SELL"
+    "side": "SELL",
+    "token_id": "a-no"
    }
   ],
   [
-   "store.get_position_for_market",
+   "store.get_position_by_asset",
    [
-    "p-no"
+    "a-no"
    ],
    {}
   ],
@@ -1121,7 +1128,8 @@
     "p-half"
    ],
    {
-    "side": "SELL"
+    "side": "SELL",
+    "token_id": "a-half"
    }
   ]
  ],

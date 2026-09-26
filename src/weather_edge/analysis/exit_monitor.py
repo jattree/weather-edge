@@ -498,7 +498,10 @@ Respond JSON only: \
             try:
                 from weather_edge.persistence import PersistentStore
                 s = PersistentStore()
-                pos = s.get_position_for_market(trade.market_id)
+                pos = (
+                    s.get_position_by_asset(trade.asset_id) if trade.asset_id
+                    else s.get_position_for_market(trade.market_id)
+                )
                 s.close()
                 if pos:
                     asset_id = pos.get("asset_id", "")

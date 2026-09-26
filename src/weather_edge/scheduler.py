@@ -2410,14 +2410,40 @@ def _live_exit_positions(store) -> list:
                 total_shares=shares,
                 description=pos.get("description", ""),
                 source="live",
+                asset_id=pos.get("asset_id", ""),
             ))
     return live_positions
 
 
-def _sell_half_done(store, market_id: str, city_id_str: str) -> bool:
-    """Sell-half guard: True (skip) if a sell is open or the position was already trimmed."""
+def _exit_position(store, trade, city_id_str: str) -> dict | None:
+    """The stored position a live exit should sell: the candidate's own token.
+
+    A market can hold two positions (a directional NO and a YES hedge, say),
+    so picking "the" position for the market could sell the wrong token and
+    size. Without a token id, only an unambiguous single position is used.
+    """
+    asset_id = getattr(trade, "asset_id", "")
+    if asset_id:
+        return store.get_position_by_asset(asset_id)
+    held = store.get_positions_for_market(trade.market_id)
+    if len(held) > 1:
+        logger.warning(
+            "LIVE EXIT SKIP: %s market %s holds %d positions and the exit has "
+            "no token id, not guessing which to sell",
+            city_id_str, trade.market_id[:16], len(held),
+        )
+        return None
+    return held[0] if held else None
+
+
+def _sell_half_done(store, market_id: str, city_id_str: str, token_id: str = "") -> bool:
+    """Sell-half guard: True (skip) if a sell is open or the position was already trimmed.
+
+    Scoped to ``token_id`` when known, so trimming one token of a market
+    doesn't block trimming the other.
+    """
     existing = store.get_open_order_for_market(
-        market_id, side="SELL",
+        market_id, side="SELL", token_id=token_id or None,
     )
     if existing:
         logger.info(
@@ -2428,9 +2454,10 @@ def _sell_half_done(store, market_id: str, city_id_str: str) -> bool:
     past_trim = store.conn.execute(
         "SELECT 1 FROM live_trades "
         "WHERE market_id = ? "
+        "AND (? = '' OR token_id = ?) "
         "AND description LIKE 'SELL_HALF%' "
         "LIMIT 1",
-        (market_id,),
+        (market_id, token_id, token_id),
     ).fetchone()
     if past_trim:
         logger.info(
@@ -2441,10 +2468,12 @@ def _sell_half_done(store, market_id: str, city_id_str: str) -> bool:
     return False
 
 
-async def _cancel_open_buy(ctx: CycleContext, market_id: str, city_id_str: str) -> None:
-    """Cancel any open BUY order on a market we are exiting."""
+async def _cancel_open_buy(
+    ctx: CycleContext, market_id: str, city_id_str: str, token_id: str = "",
+) -> None:
+    """Cancel any open BUY order for the token (or market) we are exiting."""
     store = ctx.store
-    open_buy = store.get_open_order_for_market(market_id)
+    open_buy = store.get_open_order_for_market(market_id, token_id=token_id or None)
     if open_buy and open_buy.get("side") in ("YES", "NO"):
         buy_id = open_buy["order_id"]
         # A buy that can't be cancelled stays tracked as open; the exit
@@ -2547,19 +2576,23 @@ async def _execute_live_exit(ctx: CycleContext, candidate) -> bool:
     city_id_str = candidate.trade.city_id
     market_id = candidate.trade.market_id
 
+    token_id = getattr(candidate.trade, "asset_id", "")
+
     # Sell-half guard: skip if already trimmed
-    if candidate.reason == "sell_half" and _sell_half_done(store, market_id, city_id_str):
+    if candidate.reason == "sell_half" and _sell_half_done(
+        store, market_id, city_id_str, token_id,
+    ):
         return False
 
     # 1. Cancel any open BUY orders if exiting
-    await _cancel_open_buy(ctx, market_id, city_id_str)
+    await _cancel_open_buy(ctx, market_id, city_id_str, token_id)
 
     # 2. Check for existing open SELL order
     existing_sell = store.get_open_order_for_market(
-        market_id, side="SELL",
+        market_id, side="SELL", token_id=token_id or None,
     )
 
-    position = store.get_position_for_market(market_id)
+    position = _exit_position(store, candidate.trade, city_id_str)
     if not (
         position
         and position.get("total_shares", 0) >= MIN_SELL_SHARES

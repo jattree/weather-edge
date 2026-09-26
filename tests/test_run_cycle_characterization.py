@@ -143,7 +143,8 @@ def make_store(path, events):
     recorded = (
         "save_ai_decision", "save_forecast_snapshot", "get_portfolio_summary",
         "get_positions", "get_open_order_for_market", "cancel_live_trade",
-        "get_position_for_market", "commit",
+        "get_position_for_market", "get_position_by_asset", "get_positions_for_market",
+        "commit",
     )
     for name in recorded:
         original = getattr(store, name)
@@ -170,13 +171,14 @@ def make_store(path, events):
 
 
 def seed_live_trade(store, order_id, market_id, side, limit_price, *, status="open",
-                    placed_ago_min=5.0, filled=0.0, description="entry", shares=10.0):
+                    placed_ago_min=5.0, filled=0.0, description="entry", shares=10.0,
+                    token_id=None):
     placed = (datetime.now(UTC) - timedelta(minutes=placed_ago_min)).isoformat()
     store.conn.execute(
         """INSERT INTO live_trades (order_id, market_id, token_id, city_id, side, status,
                limit_price, size_shares, filled_shares, size_usd, placed_at, description)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (order_id, market_id, f"{market_id}-tok", "nyc", side, status, limit_price,
+        (order_id, market_id, token_id or f"{market_id}-tok", "nyc", side, status, limit_price,
          shares, filled, round(shares * limit_price, 2), placed, description),
     )
     store.conn.commit()
@@ -958,14 +960,14 @@ async def test_live_exit_cycle(h, variant):
                   shares=3, avg_price=0.10, cost_basis=0.3)  # < 5 shares
     h.data_api = (200, [{"conditionId": f"p-{x}", "size": 1} for x in (
         "yes", "no", "half", "trim", "keep", "repl", "hold", "fail", "small")])
-    seed_live_trade(store, "buy-yes", "p-yes", "YES", 0.30)          # cancelled on exit
-    seed_live_trade(store, "buy-no", "p-no", "NO", 0.55)
+    seed_live_trade(store, "buy-yes", "p-yes", "YES", 0.30, token_id="a-yes")          # cancelled on exit
+    seed_live_trade(store, "buy-no", "p-no", "NO", 0.55, token_id="a-no")
     ex.cancel_fail.add("buy-no")
-    seed_live_trade(store, "sell-half", "p-half", "SELL", 0.30)      # sell-half skip
+    seed_live_trade(store, "sell-half", "p-half", "SELL", 0.30, token_id="a-half")      # sell-half skip
     seed_live_trade(store, "trimmed", "p-trim", "SELL", 0.50, status="filled",
-                    description="SELL_HALF: sell_half")
-    seed_live_trade(store, "sell-keep", "p-keep", "SELL", 0.40)      # keep (drift 0)
-    seed_live_trade(store, "sell-repl", "p-repl", "SELL", 0.70)      # replace
+                    description="SELL_HALF: sell_half", token_id="a-trim")
+    seed_live_trade(store, "sell-keep", "p-keep", "SELL", 0.40, token_id="a-keep")      # keep (drift 0)
+    seed_live_trade(store, "sell-repl", "p-repl", "SELL", 0.70, token_id="a-repl")      # replace
     ex.cancel_fail.add("sell-repl")                                   # so: no 2nd sell
     ex.sell_results["p-repl"] = "rejected"
     ex.sell_results["p-fail"] = RuntimeError("sell exploded")

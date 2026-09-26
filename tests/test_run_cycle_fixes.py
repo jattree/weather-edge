@@ -353,3 +353,40 @@ def test_gemini_skip_is_a_veto_at_any_dissent(dissent):
 ])
 def test_gemini_size_cuts_unchanged(dissent, sizing, mult):
     assert scheduler._gemini_size_multiplier(dissent, sizing) == mult
+
+
+# ---------------------------------------------------------------------------
+# live exits sell the candidate's own token
+# ---------------------------------------------------------------------------
+
+def _two_token_store(tmp_path):
+    from weather_edge.persistence import PersistentStore
+    store = PersistentStore(tmp_path / "exit.db")
+    for asset, outcome, shares in (("a-yes", "YES", 100.0), ("a-no", "NO", 20.0)):
+        store.conn.execute(
+            "INSERT INTO positions (asset_id, condition_id, city_id, side, outcome, "
+            "total_shares, avg_price, cost_basis) VALUES (?, 'm1', 'nyc', 'BUY', ?, ?, 0.5, ?)",
+            (asset, outcome, shares, shares * 0.5),
+        )
+    store.conn.commit()
+    return store
+
+
+def test_exit_sells_the_flagged_token_not_the_bigger_hedge(tmp_path):
+    # Codex's scenario: 100 YES hedge + 20 directional NO on one market,
+    # NO flagged for exit -> must sell 20 NO, never 100 YES.
+    store = _two_token_store(tmp_path)
+    live = {p.asset_id: p for p in scheduler._live_exit_positions(store)}
+    assert set(live) == {"a-yes", "a-no"}
+    pos = scheduler._exit_position(store, live["a-no"], "nyc")
+    assert (pos["asset_id"], pos["total_shares"]) == ("a-no", 20.0)
+    store.close()
+
+
+def test_exit_without_token_id_refuses_to_guess(tmp_path, caplog):
+    from weather_edge.models.position import Position
+    store = _two_token_store(tmp_path)
+    legacy = Position(market_id="m1", city_id="nyc", side="NO", source="live")
+    assert scheduler._exit_position(store, legacy, "nyc") is None
+    assert "not guessing which to sell" in caplog.text
+    store.close()

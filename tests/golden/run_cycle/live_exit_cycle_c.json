@@ -1007,7 +1007,9 @@
    [
     "p-fail"
    ],
-   {}
+   {
+    "token_id": "a-fail"
+   }
   ],
   [
    "store.get_open_order_for_market",
@@ -1015,13 +1017,14 @@
     "p-fail"
    ],
    {
-    "side": "SELL"
+    "side": "SELL",
+    "token_id": "a-fail"
    }
   ],
   [
-   "store.get_position_for_market",
+   "store.get_position_by_asset",
    [
-    "p-fail"
+    "a-fail"
    ],
    {}
   ],
@@ -1071,7 +1074,9 @@
    [
     "p-keep"
    ],
-   {}
+   {
+    "token_id": "a-keep"
+   }
   ],
   [
    "store.get_open_order_for_market",
@@ -1079,13 +1084,14 @@
     "p-keep"
    ],
    {
-    "side": "SELL"
+    "side": "SELL",
+    "token_id": "a-keep"
    }
   ],
   [
-   "store.get_position_for_market",
+   "store.get_position_by_asset",
    [
-    "p-keep"
+    "a-keep"
    ],
    {}
   ],

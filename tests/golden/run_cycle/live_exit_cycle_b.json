@@ -946,7 +946,8 @@
     "p-trim"
    ],
    {
-    "side": "SELL"
+    "side": "SELL",
+    "token_id": "a-trim"
    }
   ],
   [
@@ -982,7 +983,9 @@
    [
     "p-keep"
    ],
-   {}
+   {
+    "token_id": "a-keep"
+   }
   ],
   [
    "store.get_open_order_for_market",
@@ -990,13 +993,14 @@
     "p-keep"
    ],
    {
-    "side": "SELL"
+    "side": "SELL",
+    "token_id": "a-keep"
    }
   ],
   [
-   "store.get_position_for_market",
+   "store.get_position_by_asset",
    [
-    "p-keep"
+    "a-keep"
    ],
    {}
   ],
@@ -1033,7 +1037,9 @@
    [
     "p-repl"
    ],
-   {}
+   {
+    "token_id": "a-repl"
+   }
   ],
   [
    "store.get_open_order_for_market",
@@ -1041,13 +1047,14 @@
     "p-repl"
    ],
    {
-    "side": "SELL"
+    "side": "SELL",
+    "token_id": "a-repl"
    }
   ],
   [
-   "store.get_position_for_market",
+   "store.get_position_by_asset",
    [
-    "p-repl"
+    "a-repl"
    ],
    {}
   ],

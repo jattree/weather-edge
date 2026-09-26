@@ -58,6 +58,10 @@ class Position:
     source: str = ""           # "paper" or "live"
     strategy: str = "core"     # "core", "penny", "spread", "exit"
     price_basis: str = PRICE_BASIS_YES
+    # Live positions: the token (asset) id actually held. A market can hold
+    # both a YES and a NO position, so exits must act on this token, never
+    # on "the" position for the market.
+    asset_id: str = ""
 
     def __post_init__(self):
         self.side = normalize_side(self.side)

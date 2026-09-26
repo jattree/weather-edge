@@ -400,18 +400,25 @@ class PersistentStore:
         ).fetchall()
         return [dict(r) for r in rows]
 
-    def get_open_order_for_market(self, market_id: str, side: str | None = None) -> dict | None:
+    def get_open_order_for_market(
+        self, market_id: str, side: str | None = None, token_id: str | None = None,
+    ) -> dict | None:
         """Check if there's already an open/partial order on this market.
-        
+
         Args:
             market_id: The condition_id.
             side: Optional side to filter by (e.g. 'YES', 'NO', 'SELL').
+            token_id: Optional token to filter by (a market has a YES and a
+                NO token; exits must only touch the one being sold).
         """
         query = "SELECT * FROM live_trades WHERE market_id = ? AND status IN ('open', 'partial')"
         params = [market_id]
         if side:
             query += " AND side = ?"
             params.append(side)
+        if token_id:
+            query += " AND token_id = ?"
+            params.append(token_id)
         query += " LIMIT 1"
         
         row = self.conn.execute(query, params).fetchone()
@@ -542,6 +549,22 @@ class PersistentStore:
     def get_positions(self) -> list[dict]:
         rows = self.conn.execute(
             "SELECT * FROM positions WHERE total_shares > 0 ORDER BY cost_basis DESC",
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_position_by_asset(self, asset_id: str) -> dict | None:
+        """The held position for one token, or None."""
+        row = self.conn.execute(
+            "SELECT * FROM positions WHERE asset_id = ? AND total_shares > 0",
+            (asset_id,),
+        ).fetchone()
+        return dict(row) if row else None
+
+    def get_positions_for_market(self, condition_id: str) -> list[dict]:
+        """Every held position (YES and/or NO token) on a market."""
+        rows = self.conn.execute(
+            "SELECT * FROM positions WHERE condition_id = ? AND total_shares > 0",
+            (condition_id,),
         ).fetchall()
         return [dict(r) for r in rows]
 
