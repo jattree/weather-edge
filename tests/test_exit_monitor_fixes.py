@@ -67,5 +67,7 @@ def test_hong_kong_guard_uses_integer_part_rule():
 
 
 def test_dashboard_quiets_httpx_url_logging():
+    import pytest
+    pytest.importorskip("fastapi")  # dashboard extra
     import weather_edge.dashboard.app  # noqa: F401 - import configures logging
     assert logging.getLogger("httpx").getEffectiveLevel() >= logging.WARNING

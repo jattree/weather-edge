@@ -21,7 +21,7 @@ jobs:
           python-version: '3.12'
 
       - name: Install
-        run: pip install -e ".[dev]"
+        run: pip install -e ".[dev,dashboard]"
 
       - name: Tests (no network or keys needed)
         run: python -m pytest -q
@@ -51,8 +51,11 @@ jobs:
         env:
           COMPLEXITY_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: |
-          # A new branch's first push has an all-zero "before" SHA.
-          case "$COMPLEXITY_BASE" in ""|0000000000000000000000000000000000000000) COMPLEXITY_BASE=HEAD^;; esac
+          # A new branch's first push has an all-zero "before" SHA, and after a
+          # force-push the "before" commit no longer exists: compare to HEAD^.
+          if [ -z "$COMPLEXITY_BASE" ] || ! git cat-file -e "$COMPLEXITY_BASE^{commit}" 2>/dev/null; then
+            COMPLEXITY_BASE=HEAD^
+          fi
           python3 .githooks/complexity-check.py --base "$COMPLEXITY_BASE" --head HEAD
 
       - name: Hook self-tests
