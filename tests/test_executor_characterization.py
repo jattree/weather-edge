@@ -393,3 +393,31 @@ class TestSell:
         assert run(e.place_sell_order("tok", 10, 0.5, "m1", city_id="chi")) is None
         assert logs()[-1] == ("ERROR", f"LIVE SELL {label}: chi, boom")
         assert fake_store.saved == [] and tracked == []
+
+
+# ---------------------------------------------------------------------------
+# cancel_order trusts only a confirmed cancel
+# ---------------------------------------------------------------------------
+
+class TestCancelConfirmation:
+    def _cancel(self, response, monkeypatch):
+        untracked = []
+        monkeypatch.setattr(ex, "untrack_order", untracked.append)
+        client = make_client()
+        client.cancel.return_value = response
+        return run(live_executor(client).cancel_order("0xold")), untracked
+
+    def test_listed_as_canceled(self, monkeypatch):
+        ok, untracked = self._cancel({"canceled": ["0xold"], "not_canceled": {}}, monkeypatch)
+        assert ok is True and untracked == ["0xold"]
+
+    def test_already_matched_is_not_cancelled(self, monkeypatch):
+        # The documented response when the order filled mid-cancel.
+        resp = {"canceled": [], "not_canceled": {"0xold": "order already matched"}}
+        ok, untracked = self._cancel(resp, monkeypatch)
+        assert ok is False and untracked == []
+
+    @pytest.mark.parametrize("resp", [None, "ok", {"canceled": ["0xother"]}, {}])
+    def test_unexpected_shapes_are_not_cancelled(self, resp, monkeypatch):
+        ok, untracked = self._cancel(resp, monkeypatch)
+        assert ok is False and untracked == []

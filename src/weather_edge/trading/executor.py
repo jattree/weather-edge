@@ -140,6 +140,26 @@ def classify_post_response(response) -> tuple[bool, str, str]:
     return False, "pending", ""
 
 
+def _cancel_confirmed(response, order_id: str) -> bool:
+    """True only if the CLOB cancel response lists ``order_id`` as cancelled.
+
+    The endpoint answers 200 even when it refuses, e.g. an order that filled
+    while the cancel was in flight comes back as
+    ``{"canceled": [], "not_canceled": {id: "order already matched"}}``.
+    Treating that as cancelled would let the caller place a replacement and
+    double the exposure. Any other shape is treated as not cancelled.
+    """
+    if not isinstance(response, dict):
+        logger.error("Cancel %s: unexpected response %r, treating as NOT cancelled",
+                     order_id, response)
+        return False
+    if order_id in (response.get("canceled") or []):
+        return True
+    reason = (response.get("not_canceled") or {}).get(order_id, "not listed as canceled")
+    logger.warning("Cancel %s refused by exchange: %s", order_id, reason)
+    return False
+
+
 def _parse_post_response(response) -> tuple[bool, str, str, dict, str]:
     """Classify a post_order response and normalise it for OrderResult.
 
@@ -687,7 +707,9 @@ class TradeExecutor:
 
         try:
             loop = asyncio.get_running_loop()
-            await loop.run_in_executor(None, self._client.cancel, order_id)
+            response = await loop.run_in_executor(None, self._client.cancel, order_id)
+            if not _cancel_confirmed(response, order_id):
+                return False
             untrack_order(order_id)
             logger.info("Cancelled order %s", order_id)
             return True
