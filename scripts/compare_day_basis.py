@@ -177,6 +177,9 @@ def run(city_ids: list[City], start: date, end: date, lead: int = 0) -> dict:
         if i:
             time.sleep(IEM_PAUSE_S)
         obs = fetch_batch_metar_observations(city.icao, start, end, city.timezone)
+        if not obs:  # usually IEM throttling: wait and try once more
+            time.sleep(IEM_PAUSE_S * 5)
+            obs = fetch_batch_metar_observations(city.icao, start, end, city.timezone)
         if not obs:
             print(f"{cid.value}: no observations, skipped", file=sys.stderr)
             continue
@@ -202,6 +205,8 @@ def run(city_ids: list[City], start: date, end: date, lead: int = 0) -> dict:
 
 def summarise(results: dict) -> dict:
     both = [r for r in results.values() if r.get("utc", {}).get("n") and r.get("local", {}).get("n")]
+    if not both:
+        return {"cities": 0}
 
     def avg(basis, key):
         return mean(r[basis][key] for r in both)
